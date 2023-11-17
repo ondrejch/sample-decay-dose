@@ -95,7 +95,8 @@ def get_burned_salt_atom_dens(f71file: str, position: int) -> dict:
             if float(data[position]) > ATOM_DENS_MINIMUM:
                 # The [x] here is what causes the code to return only the densities at position x of the f71 file
                 densities[nuclide] = float(data[position])
-    return densities
+    sorted_densities = {k: v for k, v in sorted(densities.items(), key=lambda item: -item[1])}
+    return sorted_densities
 
 
 def atom_dens_for_origen(dens: dict) -> str:
@@ -160,9 +161,7 @@ class DoseEstimator:
 
     def read_burned_material(self):
         """ Reads atom density from F71 file """
-        data_burned_atom_dens = get_burned_salt_atom_dens(self.BURNED_SALT_F71_file_name, self.BURNED_SALT_F71_position)
-        self.burned_atom_dens = {k: v for k, v in
-                                 sorted(data_burned_atom_dens.items(), key=lambda item: -item[1])}  # sort atom density
+        self.burned_atom_dens = get_burned_salt_atom_dens(self.BURNED_SALT_F71_file_name, self.BURNED_SALT_F71_position)
         if self.debug > 2:
             print(list(self.burned_atom_dens.items())[:25])
 
@@ -180,8 +179,8 @@ class DoseEstimator:
         print(f"\nRUNNING {ORIGEN_input_file_name}")
         run_scale(ORIGEN_input_file_name)
 
-        decayed_atom_dens = get_burned_salt_atom_dens(self.DECAYED_SALT_F71_file_name, self.DECAYED_SALT_F71_position)
-        self.decayed_atom_dens = {k: v for k, v in sorted(decayed_atom_dens.items(), key=lambda item: -item[1])}
+        self.decayed_atom_dens = get_burned_salt_atom_dens(self.DECAYED_SALT_F71_file_name,
+                                                           self.DECAYED_SALT_F71_position)
         if self.debug > 2:
             print(list(self.decayed_atom_dens.items())[:25])
 
@@ -294,12 +293,12 @@ end
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation
         """
-        ADJOINT_FLUX_file = MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
+        adjoint_flux_file = MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
         mavric_output = f'''
 =shell
 cp -r ${{INPDIR}}/{self.DECAYED_SALT_F71_file_name} .
 cp -r ${{INPDIR}}/{SAMPLE_ATOM_DENS_file_name_MAVRIC} .
-'cp -r ${{INPDIR}}/{ADJOINT_FLUX_file} .
+'cp -r ${{INPDIR}}/{adjoint_flux_file} .
 end
 
 =mavric parm=(   )
@@ -383,7 +382,7 @@ end sources
 
 read importanceMap
    gridGeometryID=1
-'   adjointFLuxes="{ADJOINT_FLUX_file}"
+'   adjointFLuxes="{adjoint_flux_file}"
    adjointSource 1
         locationID=1
         responseID=1
