@@ -15,17 +15,17 @@ from bisect import bisect_left
 SCALE_bin_path = os.getenv('SCALE_BIN', '/opt/scale6.3.1/bin/')
 ORIGEN_input_file_name: str = 'fuel_salt_decay.inp'  # SCALE deck name for sample decay
 MAVRIC_input_file_name: str = 'my_sample.inp'  # SCALE deck name for MAVRIC/Monaco transport
-SAMPLE_ATOM_DENS_file_name_Origen: str = 'my_sample_atomdens_origen.inp'
-SAMPLE_ATOM_DENS_file_name_MAVRIC: str = 'my_sample_atomdens_mavric.inp'
+SAMPLE_ATOM_DENS_file_name_Origen: str = 'my_sample_atom_dens_origen.inp'
+SAMPLE_ATOM_DENS_file_name_MAVRIC: str = 'my_sample_atom_dens_mavric.inp'
 ATOM_DENS_MINIMUM: float = 1e-60
 MAVRIC_NG_XSLIB: str = 'v7.1-28n19g'
 
 
-def get_cyl_r(cyl_V: float) -> float:
+def get_cyl_r(cyl_volume: float) -> float:
     """ Radius of a square cylinder from its volume
         V = pi r^2 h = pi r^2 2 r = 2 pi r^3
     """
-    return (cyl_V / (2.0 * math.pi)) ** (1.0 / 3.0)
+    return (cyl_volume / (2.0 * math.pi)) ** (1.0 / 3.0)
 
 
 def run_scale(deck_file: str):
@@ -120,14 +120,23 @@ def atom_dens_for_mavric(dens: dict) -> str:
 
 
 class DoseEstimator:
+    """ """
     def __init__(self, _f71: str = './SCALE_FILE.f71', _mass: float = 0.1, _density: float = 2.406):
-        self.burned_atom_dens = None
+        self.debug: int = 3  # Debugging flag
         self.BURNED_SALT_F71_file_name: str = _f71  # Burned core F71 file from TRITON
         self.SAMPLE_MASS: float = _mass  # Mass of the sample [g]
-        self.SAMPLE_DENSITY: float = _density # Mass density of the sample [g/cm3]. TODO: Calculate from obiwan data
+        self.SAMPLE_DENSITY: float = _density  # Mass density of the sample [g/cm3]. TODO: Calculate from obiwan data
         self.BURNED_SALT_F71_index: dict = get_positions_index(self.BURNED_SALT_F71_file_name)
         self.BURNED_SALT_F71_position: int = 16
-        self.decks = None         # ScaleInput instance
+        self.decks = None  # ScaleInput instance
+        self.case_dir: str = f'run_{_mass:.5}_g'  # Directory to run the case
+        self.cwd: str = os.getcwd()  # Current running fir
+        self.burned_atom_dens: dict = {}  # Atom density of the burned material from F71 file
+        self.DECAYED_SALT_F71_file_name: str = MAVRIC_input_file_name.replace('inp', 'f71')
+        self.DECAYED_SALT_out_file_name: str = MAVRIC_input_file_name.replace('inp', 'out')
+        self.DECAYED_SALT_F71_position: int = 12
+        self.decayed_atom_dens: dict = {}  # Atom density of the decayed sample
+        self.responses: dict = {}  # Dose responses
 
     def set_f71_pos(self, t: float = 5184000.0, case: str = '1'):
         """ Returns closest position in the F71 file for a case """
@@ -146,41 +155,87 @@ class DoseEstimator:
     def define_decks(self):
         """ Initializes Origen and Mavric deck writers """
         self.decks = ScaleInput(self.SAMPLE_MASS, self.SAMPLE_DENSITY)
+        self.decks.DECAYED_SALT_F71_file_name = self.DECAYED_SALT_F71_file_name
+        self.decks.DECAYED_SALT_F71_position = self.DECAYED_SALT_F71_position
 
     def read_burned_material(self):
         """ Reads atom density from F71 file """
         data_burned_atom_dens = get_burned_salt_atom_dens(self.BURNED_SALT_F71_file_name, self.BURNED_SALT_F71_position)
         self.burned_atom_dens = {k: v for k, v in
                                  sorted(data_burned_atom_dens.items(), key=lambda item: -item[1])}  # sort atom density
-        print(list(self.burned_atom_dens.items())[:25])
-
+        if self.debug > 2:
+            print(list(self.burned_atom_dens.items())[:25])
 
     def run_decay_sample(self):
+        if not os.path.exists(self.case_dir):
+            os.mkdir(self.case_dir)
+        os.chdir(self.cwd + '/' + self.case_dir)
+
         with open(SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
             f.write(atom_dens_for_origen(self.burned_atom_dens))
 
-        with open(ORIGEN_input_file_name, 'w') as f:             # write ORIGEN input deck
+        with open(ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
             f.write(self.decks.origen_deck())
 
         print(f"\nRUNNING {ORIGEN_input_file_name}")
         run_scale(ORIGEN_input_file_name)
 
-#        decayed_salt_atom_dens = get_burned_salt_atom_dens(self.DECAYED_SALT_F71_file_name, DECAYED_SALT_F71_position)
-#        decayed_atdens_sorted =  {k: v for k, v in sorted(decayed_salt_atom_dens.items(), key=lambda item: -item[1])}  # sort atom density
-#        print( list(decayed_atdens_sorted.items())[:25] )
+        decayed_atom_dens = get_burned_salt_atom_dens(self.DECAYED_SALT_F71_file_name, self.DECAYED_SALT_F71_position)
+        self.decayed_atom_dens = {k: v for k, v in sorted(decayed_atom_dens.items(), key=lambda item: -item[1])}
+        if self.debug > 2:
+            print(list(self.decayed_atom_dens.items())[:25])
 
     def run_mavric(self):
+        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SALT_F71_file_name):
+            raise FileNotFoundError("Expected decayed sample F71 file: \n" +
+                                    self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SALT_F71_file_name)
+        os.chdir(self.cwd + '/' + self.case_dir)
+
         with open(SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
-            f.write(atom_dens_for_mavric(decayed_atdens_sorted))
+            f.write(atom_dens_for_mavric(self.decayed_atom_dens))
 
         with open(MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
-            f.write(decks.mavric_deck())
+            f.write(self.decks.mavric_deck())
 
         print(f"\nRUNNING {MAVRIC_input_file_name}")
         run_scale(MAVRIC_input_file_name)
 
+    def get_responses(self):
+        """ Reads over the MAVRIC output and returns responses for rem/h doses """
+        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SALT_out_file_name):
+            raise FileNotFoundError("Expected decayed sample MAVRIC output file: \n" +
+                                    self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SALT_out_file_name)
+        os.chdir(self.cwd + '/' + self.case_dir)
 
+        tally_sep: str = 'Final Tally Results Summary'
+        is_in_tally: bool = False
+
+        with open(self.DECAYED_SALT_out_file_name, 'r') as f:
+            for line in f.read().splitlines():
+                if line.count(tally_sep) > 0:
+                    is_in_tally = True
+                if is_in_tally:
+                    if line.count('response') == 1:
+                        s = line.split()
+                        self.responses[s[1]] = {'value': s[2], 'stdev': s[3]}
+
+        if self.debug > 3:
+            print(self.responses)
+
+    def print_response(self):
+        if self.responses is not {}:
+            r1 = self.responses['1']
+            r2 = self.responses['2']
+            print(self.SAMPLE_MASS, r1['value'], r1['stdev'], r2['value'], r2['stdev'])
+
+
+# -------------------------------------------------------------------------------------------------------------
 class ScaleInput:
+    """ This class writes SCALE decks for
+    1. Origen - to decay sample
+    2. MAVRIC - to calculate dose at det_x distance
+    """
+
     def __init__(self, _sample_weight: float = 0.1, _sample_density: float = 2.406):
         self.SAMPLE_ATOM_DENS_file_name_Origen = None
         self.DECAYED_SALT_F71_file_name: str = 'my_sample.f71'
@@ -189,8 +244,8 @@ class ScaleInput:
         self.sample_density: float = _sample_density  # [g/cm^3]
         self.sample_volume = self.sample_weight / self.sample_density
         self.cyl_r = get_cyl_r(self.sample_volume)
-        self.box_a: float = 40.0  # Problem box distance [cm]
         self.det_x: float = 30.0  # Detector distance [cm]
+        self.box_a: float = self.det_x + 10.0  # Problem box distance [cm]
         self.N_planes_box: int = 10  # Planes per box
         self.N_planes_cyl: int = 8  # Planes per cylinder
 
@@ -360,38 +415,38 @@ end
         return mavric_output
 
 
-class OutputReaderMonaco:
-    def __init__(self):
-        self.file_in_name = 'my_sample.out'
-        self.responses: dict = None
-
-    def get_responses(self) -> dict:
-        tally_sep: str = 'Final Tally Results Summary'
-        is_in_tally: bool = False
-
-        with open(self.file_in_name, 'r') as f:
-            for l in f.read().splitlines():
-                if l.count(tally_sep) > 0:
-                    is_in_tally = True
-                if is_in_tally:
-                    if l.count('response') == 1:
-                        s = l.split()
-                        self.responses[s[1]] = {'value': s[2], 'stdev': s[3]}
-
-        # print(responses)
-        # return responses
-
-    def read_response(self):
-        cwd = os.getcwd()
-        with os.scandir(cwd) as it:
-            for entry in it:
-                if entry.name.startswith('g_') and entry.is_dir():
-                    # print(entry.name)
-                    mass_g = entry.name.replace('g_', '')
-                    resps = self.get_responses(entry.name + '/' + self.file_in_name)
-                    r1 = resps['1']
-                    r2 = resps['2']
-                    print(mass_g, r1['value'], r1['stdev'], r2['value'], r2['stdev'])
+# class OutputReaderMonaco:
+#     def __init__(self):
+#         self.file_in_name = 'my_sample.out'
+#         self.responses: dict = None
+#
+#     def get_responses(self) -> dict:
+#         tally_sep: str = 'Final Tally Results Summary'
+#         is_in_tally: bool = False
+#
+#         with open(self.file_in_name, 'r') as f:
+#             for l in f.read().splitlines():
+#                 if l.count(tally_sep) > 0:
+#                     is_in_tally = True
+#                 if is_in_tally:
+#                     if l.count('response') == 1:
+#                         s = l.split()
+#                         self.responses[s[1]] = {'value': s[2], 'stdev': s[3]}
+#
+#         # print(responses)
+#         # return responses
+#
+#     def read_response(self):
+#         cwd = os.getcwd()
+#         with os.scandir(cwd) as it:
+#             for entry in it:
+#                 if entry.name.startswith('g_') and entry.is_dir():
+#                     # print(entry.name)
+#                     mass_g = entry.name.replace('g_', '')
+#                     resps = self.get_responses(entry.name + '/' + self.file_in_name)
+#                     r1 = resps['1']
+#                     r2 = resps['2']
+#                     print(mass_g, r1['value'], r1['stdev'], r2['value'], r2['stdev'])
 
 
 if __name__ == "__main__":
