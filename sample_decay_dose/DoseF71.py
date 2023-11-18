@@ -2,6 +2,8 @@
 """
 Handling dose in SCALE
 Ondrej Chvala <ochvala@utexas.edu>
+
+TODO - calculate beta dose by scaling gamma dose using ratio of spectral integrals
 """
 
 # import sys
@@ -70,7 +72,7 @@ def get_positions_index(f71file: str) -> dict:
     return f71_idx
 
 
-def get_burned_salt_atom_dens(f71file: str, position: int) -> dict:
+def get_burned_material_atom_dens(f71file: str, position: int) -> dict:
     """ Read atom density of nuclides from SCALE's F71 file
     """
     output = subprocess.run(
@@ -99,6 +101,24 @@ def get_burned_salt_atom_dens(f71file: str, position: int) -> dict:
     return sorted_densities
 
 
+def get_burned_material_total_mass_dens(f71file: str, position: int) -> float:
+    """ Read mass density of nuclides from SCALE's F71 file, calculate total \rho [g/cm^3]
+    """
+    output = subprocess.run(
+        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=gper", "-idform='{:Ee}{:AAA}{:m}'",
+         f71file], capture_output=True)
+    output = output.stdout.decode().split("\n")
+    my_rho: float = 0
+    skip = ["case", "step", "time", "power", "flux", "volume"]
+    for line in output:
+        data = line.split(',')
+        if data[0].strip() in skip:
+            continue
+        elif len(data) > 1:
+            my_rho = my_rho + float(data[position])
+    return my_rho
+
+
 def atom_dens_for_origen(dens: dict) -> str:
     """ Print atom densities in ORIGEN-input format
     """
@@ -122,13 +142,14 @@ def atom_dens_for_mavric(dens: dict) -> str:
 
 class DoseEstimator:
     """ """
-    def __init__(self, _f71: str = './SCALE_FILE.f71', _mass: float = 0.1, _density: float = 2.406):
+
+    def __init__(self, _f71: str = './SCALE_FILE.f71', _mass: float = 0.1):
         self.debug: int = 3  # Debugging flag
-        self.BURNED_SALT_F71_file_name: str = _f71  # Burned core F71 file from TRITON
+        self.BURNED_MATERIAL_F71_file_name: str = _f71  # Burned core F71 file from TRITON
         self.SAMPLE_MASS: float = _mass  # Mass of the sample [g]
-        self.SAMPLE_DENSITY: float = _density  # Mass density of the sample [g/cm3]. TODO: Calculate from obiwan data
-        self.BURNED_SALT_F71_index: dict = get_positions_index(self.BURNED_SALT_F71_file_name)
-        self.BURNED_SALT_F71_position: int = 16
+        self.SAMPLE_DENSITY: float = -1.0  # Mass density of the sample [g/cm3]
+        self.BURNED_MATERIAL_F71_index: dict = get_positions_index(self.BURNED_MATERIAL_F71_file_name)
+        self.BURNED_MATERIAL_F71_position: int = 16
         self.decks = None  # ScaleInput instance
         self.case_dir: str = f'run_{_mass:.5}_g'  # Directory to run the case
         self.cwd: str = os.getcwd()  # Current running fir
@@ -136,15 +157,16 @@ class DoseEstimator:
         self.MAVRIC_input_file_name: str = MAVRIC_input_file_name
         self.SAMPLE_ATOM_DENS_file_name_Origen: str = SAMPLE_ATOM_DENS_file_name_Origen
         self.SAMPLE_ATOM_DENS_file_name_MAVRIC: str = SAMPLE_ATOM_DENS_file_name_MAVRIC
-        self.DECAYED_SALT_F71_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'f71')
-        self.DECAYED_SALT_out_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'out')
-        self.DECAYED_SALT_F71_position: int = 12
+        self.DECAYED_SAMPLE_F71_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'f71')
+        self.DECAYED_SAMPLE_out_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'out')
+        self.DECAYED_SAMPLE_F71_position: int = 12
+        self.DECAYED_SAMPLE_days: float = 30.0  # Sample decay time [days]
         self.decayed_atom_dens: dict = {}  # Atom density of the decayed sample
         self.responses: dict = {}  # Dose responses
 
     def set_f71_pos(self, t: float = 5184000.0, case: str = '1'):
         """ Returns closest position in the F71 file for a case """
-        pos_times = [(k, float(v['time'])) for k, v in self.BURNED_SALT_F71_index.items() if v['case'] == case]
+        pos_times = [(k, float(v['time'])) for k, v in self.BURNED_MATERIAL_F71_index.items() if v['case'] == case]
         times = [x[1] for x in pos_times]
         t_min = min(times)
         t_max = max(times)
@@ -154,19 +176,23 @@ class DoseEstimator:
         if t > t_max:
             print(f"Error: Time {t} seconds is longer than {t_max} s, the maximum time in records.")
         #    return None
-        self.BURNED_SALT_F71_position = bisect_left(times, t)
+        self.BURNED_MATERIAL_F71_position = bisect_left(times, t)
 
     def define_decks(self):
         """ Initializes Origen and Mavric deck writers """
         self.decks = ScaleInput(self.SAMPLE_MASS, self.SAMPLE_DENSITY)
-        self.decks.DECAYED_SALT_F71_file_name = self.DECAYED_SALT_F71_file_name
-        self.decks.DECAYED_SALT_F71_position = self.DECAYED_SALT_F71_position
+        self.decks.DECAYED_SAMPLE_F71_file_name = self.DECAYED_SAMPLE_F71_file_name
+        self.decks.DECAYED_SAMPLE_F71_position = self.DECAYED_SAMPLE_F71_position
         self.decks.SAMPLE_ATOM_DENS_file_name_Origen = self.SAMPLE_ATOM_DENS_file_name_Origen
         self.decks.SAMPLE_ATOM_DENS_file_name_MAVRIC = self.SAMPLE_ATOM_DENS_file_name_MAVRIC
+        self.decks.DECAYED_SAMPLE_days = self.DECAYED_SAMPLE_days
 
     def read_burned_material(self):
-        """ Reads atom density from F71 file """
-        self.burned_atom_dens = get_burned_salt_atom_dens(self.BURNED_SALT_F71_file_name, self.BURNED_SALT_F71_position)
+        """ Reads atom density and rho from F71 file """
+        self.SAMPLE_DENSITY = get_burned_material_total_mass_dens(self.BURNED_MATERIAL_F71_file_name,
+                                                                  self.BURNED_MATERIAL_F71_position)
+        self.burned_atom_dens = get_burned_material_atom_dens(self.BURNED_MATERIAL_F71_file_name,
+                                                              self.BURNED_MATERIAL_F71_position)
         if self.debug > 2:
             print(list(self.burned_atom_dens.items())[:25])
 
@@ -187,16 +213,16 @@ class DoseEstimator:
         print(f"\nRUNNING {ORIGEN_input_file_name}")
         run_scale(ORIGEN_input_file_name)
 
-        self.decayed_atom_dens = get_burned_salt_atom_dens(self.DECAYED_SALT_F71_file_name,
-                                                           self.DECAYED_SALT_F71_position)
+        self.decayed_atom_dens = get_burned_material_atom_dens(self.DECAYED_SAMPLE_F71_file_name,
+                                                               self.DECAYED_SAMPLE_F71_position)
         os.chdir(self.cwd)
         if self.debug > 2:
             print(list(self.decayed_atom_dens.items())[:25])
 
     def run_mavric(self):
-        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SALT_F71_file_name):
+        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
             raise FileNotFoundError("Expected decayed sample F71 file: \n" +
-                                    self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SALT_F71_file_name)
+                                    self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
         os.chdir(self.cwd + '/' + self.case_dir)
 
         with open(SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
@@ -212,15 +238,15 @@ class DoseEstimator:
     def get_responses(self):
         """ Reads over the MAVRIC output and returns responses for rem/h doses
         """
-        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SALT_out_file_name):
+        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_out_file_name):
             raise FileNotFoundError("Expected decayed sample MAVRIC output file: \n" +
-                                    self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SALT_out_file_name)
+                                    self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_out_file_name)
         os.chdir(self.cwd + '/' + self.case_dir)
 
         tally_sep: str = 'Final Tally Results Summary'
         is_in_tally: bool = False
 
-        with open(self.DECAYED_SALT_out_file_name, 'r') as f:
+        with open(self.DECAYED_SAMPLE_out_file_name, 'r') as f:
             for line in f.read().splitlines():
                 if line.count(tally_sep) > 0:
                     is_in_tally = True
@@ -248,10 +274,11 @@ class ScaleInput:
     """
 
     def __init__(self, _sample_weight: float = 0.1, _sample_density: float = 2.406):
-        self.SAMPLE_ATOM_DENS_file_name_MAVRIC:str = SAMPLE_ATOM_DENS_file_name_MAVRIC
-        self.SAMPLE_ATOM_DENS_file_name_Origen:str = SAMPLE_ATOM_DENS_file_name_Origen
-        self.DECAYED_SALT_F71_file_name: str = 'my_sample.f71'
-        self.DECAYED_SALT_F71_position: int = 12
+        self.SAMPLE_ATOM_DENS_file_name_MAVRIC: str = SAMPLE_ATOM_DENS_file_name_MAVRIC
+        self.SAMPLE_ATOM_DENS_file_name_Origen: str = SAMPLE_ATOM_DENS_file_name_Origen
+        self.DECAYED_SAMPLE_F71_file_name: str = 'my_sample.f71'
+        self.DECAYED_SAMPLE_F71_position: int = 12
+        self.DECAYED_SAMPLE_days: float = 30.0  # Decay time [days]
         self.sample_weight: float = _sample_weight  # [g]
         self.sample_density: float = _sample_density  # [g/cm^3]
         self.sample_volume = self.sample_weight / self.sample_density
@@ -262,8 +289,12 @@ class ScaleInput:
         self.N_planes_cyl: int = 8  # Planes per cylinder
 
     def origen_deck(self) -> str:
-        """ Salt decay Origen deck
+        """ Sample decay Origen deck
         """
+        time_interp_steps = self.DECAYED_SAMPLE_F71_position - 3
+        if time_interp_steps < 1:
+            raise ValueError("Too few time steps")
+
         origen_output = f'''
 =shell
 cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
@@ -276,10 +307,12 @@ options{{
 bounds {{
     neutron="scale.rev13.xn200g47v7.1"
     gamma="scale.rev13.xn200g47v7.1"
+    beta="scale.rev13.xn200g47v7.1"
 }}
 case {{
     gamma=yes
     neutron=yes
+    beta=yes
     lib {{ % decay only library
         file="end7dec"
     }}
@@ -292,13 +325,43 @@ case {{
     }}
     time {{
         units=DAYS
-        t=[0.0001 0.001 0.01 0.1 0.5 1 2 5 10 15 30]
+        t=[{time_interp_steps}L 0.0001 {self.DECAYED_SAMPLE_days}]
         start=0
     }}
     save {{
-        file="{self.DECAYED_SALT_F71_file_name}"
+        file="{self.DECAYED_SAMPLE_F71_file_name}"
     }}
 }}
+end
+
+=opus
+data='{self.DECAYED_SAMPLE_F71_file_name}'
+title='Neutrons'
+typarams=nspectrum
+units=intensity
+time=days
+tmin={self.DECAYED_SAMPLE_days}
+tmax={self.DECAYED_SAMPLE_days}
+end
+
+=opus
+data='{self.DECAYED_SAMPLE_F71_file_name}'
+title='Gamma'
+typarams=gspectrum
+units=intensity
+time=days
+tmin={self.DECAYED_SAMPLE_days}
+tmax={self.DECAYED_SAMPLE_days}
+end
+
+=opus
+data='{self.DECAYED_SAMPLE_F71_file_name}'
+title='Beta'
+typarams=bspectrum
+units=intensity
+time=days
+tmin={self.DECAYED_SAMPLE_days}
+tmax={self.DECAYED_SAMPLE_days}
 end
 '''
         return origen_output
@@ -309,7 +372,7 @@ end
         adjoint_flux_file = MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
         mavric_output = f'''
 =shell
-cp -r ${{INPDIR}}/{self.DECAYED_SALT_F71_file_name} .
+cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_F71_file_name} .
 cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
 'cp -r ${{INPDIR}}/{adjoint_flux_file} .
 end
@@ -353,16 +416,16 @@ read definitions
     end response
 
     distribution 1
-        title="Fuel salt after 1 month, neutrons"
+        title="Decayed sammple after {self.DECAYED_SAMPLE_days} days, neutrons"
         special="origensBinaryConcentrationFile"
         parameters 1 1 end
-        filename="{self.DECAYED_SALT_F71_file_name}"
+        filename="{self.DECAYED_SAMPLE_F71_file_name}"
     end distribution
     distribution 2
-        title="Fuel salt after 1 month, photons"
+        title="Decayed sammple after {self.DECAYED_SAMPLE_days} days,, photons"
         special="origensBinaryConcentrationFile"
         parameters 1 5 end
-        filename="{self.DECAYED_SALT_F71_file_name}"
+        filename="{self.DECAYED_SAMPLE_F71_file_name}"
     end distribution
 
     gridGeometry 1

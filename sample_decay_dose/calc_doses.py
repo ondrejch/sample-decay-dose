@@ -6,6 +6,7 @@ Ondrej Chvala <ochvala@utexas.edu>
 
 from sample_decay_dose import DoseF71
 import numpy as np
+import json5
 
 # de = DoseF71.DoseEstimator('../SCALE_FILE.f71', 0.2)  # 0.2 g salt
 # de.read_burned_material()
@@ -25,3 +26,6 @@ for mass in np.geomspace(1e-3,1,30):
     r[mass] = de.responses
 
 print(r)
+
+with open('doses.json','w') as fout:
+    json5.dump(r, fout, indent=4)
