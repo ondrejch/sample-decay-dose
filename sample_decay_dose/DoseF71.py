@@ -12,7 +12,7 @@ import subprocess
 import math
 from bisect import bisect_left
 
-SCALE_bin_path = os.getenv('SCALE_BIN', '/opt/scale6.3.1/bin/')
+SCALE_bin_path: str = os.getenv('SCALE_BIN', '/opt/scale6.3.1/bin/')
 ORIGEN_input_file_name: str = 'fuel_salt_decay.inp'  # SCALE deck name for sample decay
 MAVRIC_input_file_name: str = 'my_sample.inp'  # SCALE deck name for MAVRIC/Monaco transport
 SAMPLE_ATOM_DENS_file_name_Origen: str = 'my_sample_atom_dens_origen.inp'
@@ -133,8 +133,11 @@ class DoseEstimator:
         self.case_dir: str = f'run_{_mass:.5}_g'  # Directory to run the case
         self.cwd: str = os.getcwd()  # Current running fir
         self.burned_atom_dens: dict = {}  # Atom density of the burned material from F71 file
-        self.DECAYED_SALT_F71_file_name: str = MAVRIC_input_file_name.replace('inp', 'f71')
-        self.DECAYED_SALT_out_file_name: str = MAVRIC_input_file_name.replace('inp', 'out')
+        self.MAVRIC_input_file_name: str = MAVRIC_input_file_name
+        self.SAMPLE_ATOM_DENS_file_name_Origen: str = SAMPLE_ATOM_DENS_file_name_Origen
+        self.SAMPLE_ATOM_DENS_file_name_MAVRIC: str = SAMPLE_ATOM_DENS_file_name_MAVRIC
+        self.DECAYED_SALT_F71_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'f71')
+        self.DECAYED_SALT_out_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'out')
         self.DECAYED_SALT_F71_position: int = 12
         self.decayed_atom_dens: dict = {}  # Atom density of the decayed sample
         self.responses: dict = {}  # Dose responses
@@ -158,6 +161,8 @@ class DoseEstimator:
         self.decks = ScaleInput(self.SAMPLE_MASS, self.SAMPLE_DENSITY)
         self.decks.DECAYED_SALT_F71_file_name = self.DECAYED_SALT_F71_file_name
         self.decks.DECAYED_SALT_F71_position = self.DECAYED_SALT_F71_position
+        self.decks.SAMPLE_ATOM_DENS_file_name_Origen = self.SAMPLE_ATOM_DENS_file_name_Origen
+        self.decks.SAMPLE_ATOM_DENS_file_name_MAVRIC = self.SAMPLE_ATOM_DENS_file_name_MAVRIC
 
     def read_burned_material(self):
         """ Reads atom density from F71 file """
@@ -166,6 +171,9 @@ class DoseEstimator:
             print(list(self.burned_atom_dens.items())[:25])
 
     def run_decay_sample(self):
+        if not self.decks:
+            self.define_decks()
+
         if not os.path.exists(self.case_dir):
             os.mkdir(self.case_dir)
         os.chdir(self.cwd + '/' + self.case_dir)
@@ -181,6 +189,7 @@ class DoseEstimator:
 
         self.decayed_atom_dens = get_burned_salt_atom_dens(self.DECAYED_SALT_F71_file_name,
                                                            self.DECAYED_SALT_F71_position)
+        os.chdir(self.cwd)
         if self.debug > 2:
             print(list(self.decayed_atom_dens.items())[:25])
 
@@ -193,14 +202,16 @@ class DoseEstimator:
         with open(SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
             f.write(atom_dens_for_mavric(self.decayed_atom_dens))
 
-        with open(MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
+        with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
             f.write(self.decks.mavric_deck())
 
-        print(f"\nRUNNING {MAVRIC_input_file_name}")
-        run_scale(MAVRIC_input_file_name)
+        print(f"\nRUNNING {self.MAVRIC_input_file_name}")
+        run_scale(self.MAVRIC_input_file_name)
+        os.chdir(self.cwd)
 
     def get_responses(self):
-        """ Reads over the MAVRIC output and returns responses for rem/h doses """
+        """ Reads over the MAVRIC output and returns responses for rem/h doses
+        """
         if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SALT_out_file_name):
             raise FileNotFoundError("Expected decayed sample MAVRIC output file: \n" +
                                     self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SALT_out_file_name)
@@ -218,6 +229,7 @@ class DoseEstimator:
                         s = line.split()
                         self.responses[s[1]] = {'value': s[2], 'stdev': s[3]}
 
+        os.chdir(self.cwd)
         if self.debug > 3:
             print(self.responses)
 
@@ -236,7 +248,8 @@ class ScaleInput:
     """
 
     def __init__(self, _sample_weight: float = 0.1, _sample_density: float = 2.406):
-        self.SAMPLE_ATOM_DENS_file_name_Origen = None
+        self.SAMPLE_ATOM_DENS_file_name_MAVRIC:str = SAMPLE_ATOM_DENS_file_name_MAVRIC
+        self.SAMPLE_ATOM_DENS_file_name_Origen:str = SAMPLE_ATOM_DENS_file_name_Origen
         self.DECAYED_SALT_F71_file_name: str = 'my_sample.f71'
         self.DECAYED_SALT_F71_position: int = 12
         self.sample_weight: float = _sample_weight  # [g]
@@ -253,7 +266,7 @@ class ScaleInput:
         """
         origen_output = f'''
 =shell
-cp -r ${{INPDIR}}/{SAMPLE_ATOM_DENS_file_name_Origen} .
+cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
 end
 
 =origen
@@ -297,7 +310,7 @@ end
         mavric_output = f'''
 =shell
 cp -r ${{INPDIR}}/{self.DECAYED_SALT_F71_file_name} .
-cp -r ${{INPDIR}}/{SAMPLE_ATOM_DENS_file_name_MAVRIC} .
+cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
 'cp -r ${{INPDIR}}/{adjoint_flux_file} .
 end
 
