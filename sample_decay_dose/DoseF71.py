@@ -253,7 +253,10 @@ class DoseEstimator:
                 if is_in_tally:
                     if line.count('response') == 1:
                         s = line.split()
-                        self.responses[s[1]] = {'value': s[2], 'stdev': s[3]}
+                        if float(s[2]) == 0:
+                            self.responses[s[1]] = {'value': float(s[2]), 'stdev': 0.0}
+                        else:
+                            self.responses[s[1]] = {'value': float(s[2]), 'stdev': float(s[3])}
 
         os.chdir(self.cwd)
         if self.debug > 3:
@@ -307,7 +310,7 @@ options{{
 bounds {{
     neutron="scale.rev13.xn200g47v7.1"
     gamma="scale.rev13.xn200g47v7.1"
-    beta="100L 1e7 1e-3"
+    beta=[100L 1.0e7 1.0e-3]
 }}
 case {{
     gamma=yes
