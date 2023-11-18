@@ -307,7 +307,7 @@ options{{
 bounds {{
     neutron="scale.rev13.xn200g47v7.1"
     gamma="scale.rev13.xn200g47v7.1"
-    beta="scale.rev13.xn200g47v7.1"
+    beta="100L 1e7 1e-3"
 }}
 case {{
     gamma=yes
@@ -418,13 +418,13 @@ read definitions
     distribution 1
         title="Decayed sammple after {self.DECAYED_SAMPLE_days} days, neutrons"
         special="origensBinaryConcentrationFile"
-        parameters 1 1 end
+        parameters {self.DECAYED_SAMPLE_F71_position:} 1 end
         filename="{self.DECAYED_SAMPLE_F71_file_name}"
     end distribution
     distribution 2
         title="Decayed sammple after {self.DECAYED_SAMPLE_days} days,, photons"
         special="origensBinaryConcentrationFile"
-        parameters 1 5 end
+        parameters {self.DECAYED_SAMPLE_F71_position} 5 end
         filename="{self.DECAYED_SAMPLE_F71_file_name}"
     end distribution
 
