@@ -2,17 +2,14 @@
 """
 Handling dose in SCALE
 Ondrej Chvala <ochvala@utexas.edu>
-
-TODO - calculate beta dose by scaling gamma dose using ratio of spectral integrals
 """
 
-# import sys
 import os
 import re
-# import argparse
 import subprocess
 import math
 from bisect import bisect_left
+from sample_decay_dose.read_opus import integrate_opus
 
 SCALE_bin_path: str = os.getenv('SCALE_BIN', '/opt/scale6.3.1/bin/')
 ORIGEN_input_file_name: str = 'fuel_salt_decay.inp'  # SCALE deck name for sample decay
@@ -21,25 +18,6 @@ SAMPLE_ATOM_DENS_file_name_Origen: str = 'my_sample_atom_dens_origen.inp'
 SAMPLE_ATOM_DENS_file_name_MAVRIC: str = 'my_sample_atom_dens_mavric.inp'
 ATOM_DENS_MINIMUM: float = 1e-60
 MAVRIC_NG_XSLIB: str = 'v7.1-28n19g'
-
-
-def get_cyl_r(cyl_volume: float) -> float:
-    """ Radius of a square cylinder from its volume
-        V = pi r^2 h = pi r^2 2 r = 2 pi r^3
-    """
-    return (cyl_volume / (2.0 * math.pi)) ** (1.0 / 3.0)
-
-
-def run_scale(deck_file: str):
-    """ Run a SCALE deck """
-    scale_out = subprocess.run([f"{SCALE_bin_path}/scalerte", "-m", deck_file], capture_output=True)
-    scale_out = scale_out.stdout.decode().split("\n")
-    if scale_out.count('Error') > 0:
-        print('Failed run: ', deck_file)
-        return False
-    else:
-        print('OK run: ', deck_file)
-        return True
 
 
 def get_positions_index(f71file: str) -> dict:
@@ -119,6 +97,25 @@ def get_burned_material_total_mass_dens(f71file: str, position: int) -> float:
     return my_rho
 
 
+def get_cyl_r(cyl_volume: float) -> float:
+    """ Radius of a square cylinder from its volume
+        V = pi r^2 h = pi r^2 2 r = 2 pi r^3
+    """
+    return (cyl_volume / (2.0 * math.pi)) ** (1.0 / 3.0)
+
+
+def run_scale(deck_file: str):
+    """ Run a SCALE deck """
+    scale_out = subprocess.run([f"{SCALE_bin_path}/scalerte", "-m", deck_file], capture_output=True)
+    scale_out = scale_out.stdout.decode().split("\n")
+    if scale_out.count('Error') > 0:
+        print('Failed run: ', deck_file)
+        return False
+    else:
+        print('OK run: ', deck_file)
+        return True
+
+
 def atom_dens_for_origen(dens: dict) -> str:
     """ Print atom densities in ORIGEN-input format
     """
@@ -141,7 +138,7 @@ def atom_dens_for_mavric(dens: dict) -> str:
 
 
 class DoseEstimator:
-    """ """
+    """ Main class for handling dose """
 
     def __init__(self, _f71: str = './SCALE_FILE.f71', _mass: float = 0.1):
         self.debug: int = 3  # Debugging flag
@@ -154,6 +151,7 @@ class DoseEstimator:
         self.case_dir: str = f'run_{_mass:.5}_g'  # Directory to run the case
         self.cwd: str = os.getcwd()  # Current running fir
         self.burned_atom_dens: dict = {}  # Atom density of the burned material from F71 file
+        self.ORIGEN_input_file_name: str = ORIGEN_input_file_name
         self.MAVRIC_input_file_name: str = MAVRIC_input_file_name
         self.SAMPLE_ATOM_DENS_file_name_Origen: str = SAMPLE_ATOM_DENS_file_name_Origen
         self.SAMPLE_ATOM_DENS_file_name_MAVRIC: str = SAMPLE_ATOM_DENS_file_name_MAVRIC
@@ -162,7 +160,14 @@ class DoseEstimator:
         self.DECAYED_SAMPLE_F71_position: int = 12
         self.DECAYED_SAMPLE_days: float = 30.0  # Sample decay time [days]
         self.decayed_atom_dens: dict = {}  # Atom density of the decayed sample
-        self.responses: dict = {}  # Dose responses
+        self.beta_over_gamma: float = -1.0  # beta over gamma spectral ratio
+        self.responses: dict = {}  # Dose responses 1: neutron, 2: gamma, 3: beta
+
+    def set_decay_time(self, decay_days: float = 30.0):
+        """ Use this to change decay time, as it also updates the case directory
+        """
+        self.DECAYED_SAMPLE_days = decay_days
+        self.case_dir: str = f'run_{self.SAMPLE_MASS:.5}_g-{decay_days:.5}_days'  # Directory to run the case
 
     def set_f71_pos(self, t: float = 5184000.0, case: str = '1'):
         """ Returns closest position in the F71 file for a case """
@@ -204,14 +209,14 @@ class DoseEstimator:
             os.mkdir(self.case_dir)
         os.chdir(self.cwd + '/' + self.case_dir)
 
-        with open(SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
+        with open(self.SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
             f.write(atom_dens_for_origen(self.burned_atom_dens))
 
-        with open(ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
+        with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
             f.write(self.decks.origen_deck())
 
-        print(f"\nRUNNING {ORIGEN_input_file_name}")
-        run_scale(ORIGEN_input_file_name)
+        print(f"\nRUNNING {self.ORIGEN_input_file_name}")
+        run_scale(self.ORIGEN_input_file_name)
 
         self.decayed_atom_dens = get_burned_material_atom_dens(self.DECAYED_SAMPLE_F71_file_name,
                                                                self.DECAYED_SAMPLE_F71_position)
@@ -234,6 +239,21 @@ class DoseEstimator:
         print(f"\nRUNNING {self.MAVRIC_input_file_name}")
         run_scale(self.MAVRIC_input_file_name)
         os.chdir(self.cwd)
+
+    def get_beta_to_gamma(self) -> float:
+        """ Calculates beta / gamma dose ratio as a ratio of respective spectral integrals
+        """
+        gamma_spectrum_file = self.cwd + '/' + self.case_dir + \
+                              '/' + self.ORIGEN_input_file_name.replace(".inp", ".000000000000000001.plt")
+        beta_spectrum_file = self.cwd + '/' + self.case_dir + \
+                             '/' + self.ORIGEN_input_file_name.replace(".inp", ".000000000000000002.plt")
+        if not os.path.isfile(gamma_spectrum_file):
+            raise FileNotFoundError("Expected OPUS file file:" + gamma_spectrum_file)
+        if not os.path.isfile(beta_spectrum_file):
+            raise FileNotFoundError("Expected OPUS file file:" + beta_spectrum_file)
+        gamma_spectrum_integral = integrate_opus(gamma_spectrum_file)
+        beta_spectrum_integral = integrate_opus(beta_spectrum_file)
+        return beta_spectrum_integral / gamma_spectrum_integral
 
     def get_responses(self):
         """ Reads over the MAVRIC output and returns responses for rem/h doses
@@ -258,15 +278,31 @@ class DoseEstimator:
                         else:
                             self.responses[s[1]] = {'value': float(s[2]), 'stdev': float(s[3])}
 
+        self.beta_over_gamma = self.get_beta_to_gamma()
+        self.responses['3'] = {'value': self.beta_over_gamma * float(s[2]), 'stdev': self.beta_over_gamma * float(s[3])}
+
         os.chdir(self.cwd)
         if self.debug > 3:
             print(self.responses)
 
     def print_response(self):
         if self.responses is not {}:
-            r1 = self.responses['1']
-            r2 = self.responses['2']
-            print(self.SAMPLE_MASS, r1['value'], r1['stdev'], r2['value'], r2['stdev'])
+            r1: dict = self.responses['1']
+            r2: dict = self.responses['2']
+            r3: dict = self.responses['3']
+            print(self.SAMPLE_MASS, r1['value'], r1['stdev'], r2['value'], r2['stdev'], r3['value'], r3['stdev'])
+
+    @property
+    def total_dose(self) -> dict:
+        """ Return total dose, which is a sum of all responses """
+        d: dict = {'value': 0, 'stdev': -1}
+        relsig: float = 0
+        for k, v in self.responses.items():
+            d['value'] += v['value']
+            if v['value'] > 0:
+                relsig += (v['stdev'] / v['value']) ** 2
+        d['stdev'] = d['value'] * math.sqrt(relsig)
+        return d
 
 
 # -------------------------------------------------------------------------------------------------------------
@@ -288,7 +324,7 @@ class ScaleInput:
         self.cyl_r = get_cyl_r(self.sample_volume)
         self.det_x: float = 30.0  # Detector distance [cm]
         self.box_a: float = self.det_x + 10.0  # Problem box distance [cm]
-        self.N_planes_box: int = 10  # Planes per box
+        self.N_planes_box: int = 5  # Planes per box
         self.N_planes_cyl: int = 8  # Planes per cylinder
 
     def origen_deck(self) -> str:
@@ -389,7 +425,7 @@ read parameters
     ceLibrary="ce_v7.1_endf.xml"
     neutrons  photons
     fissionMult=1  secondaryMult=0
-    perBatch=1000000 batches=10
+    perBatch=100000 batches=10
 end parameters
 
 read comp
