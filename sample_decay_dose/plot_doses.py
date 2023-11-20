@@ -10,9 +10,9 @@ import matplotlib.pyplot as plt
 
 # For sample mass dependency, set LABEL='m'.
 # For decay time dependency, set LABEL='dt'
-LABEL = 'dt'
-labels = {'m' : ['mass', 'grams'],
-          'dt': ['decay time', 'days']}
+LABEL = 'm'
+labels = {'m' : ['mass', 'grams', 'Fuel salt sample, 1 year burn, 30 days decay time'],
+          'dt': ['decay time', 'days', 'Fuel salt sample, 1 year burn, 0.1 grams']}
 
 particles = {'1': 'Neutron', '2': 'Gamma', '3': 'Beta'}
 colors = {'1': 'sandybrown', '2': 'slategrey', '3': 'cornflowerblue'}
@@ -34,6 +34,7 @@ plt.close('all')
 plt.xscale('linear')
 plt.yscale('linear')
 plt.grid()
+plt.title(labels[LABEL][2])
 plt.xlabel(f'Sample {labels[LABEL][0]} [{labels[LABEL][1]}]')
 plt.ylabel('Dose at 30 cm [rem/h]')
 for p in particles.keys():
