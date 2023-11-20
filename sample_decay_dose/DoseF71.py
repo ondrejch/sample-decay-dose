@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Handling dose in SCALE
+Handling dose [rem/h] in SCALE
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
@@ -446,22 +446,22 @@ read definitions
         position {self.det_x} 0 0
     end location
     response 1
-        title="ANSI standard (1991) flux-to-dose-rate factors, neutrons"
+        title="ANSI standard (1991) flux-to-dose-rate factors [rem/h], neutrons"
         doseData=9031
     end response
     response 2
-        title="ANSI standard (1991) flux-to-dose-rate factors, photons"
+        title="ANSI standard (1991) flux-to-dose-rate factors [rem/h], photons"
         doseData=9505
     end response
 
     distribution 1
-        title="Decayed sammple after {self.DECAYED_SAMPLE_days} days, neutrons"
+        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"
         special="origensBinaryConcentrationFile"
-        parameters {self.DECAYED_SAMPLE_F71_position:} 1 end
+        parameters {self.DECAYED_SAMPLE_F71_position} 1 end
         filename="{self.DECAYED_SAMPLE_F71_file_name}"
     end distribution
     distribution 2
-        title="Decayed sammple after {self.DECAYED_SAMPLE_days} days,, photons"
+        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, photons"
         special="origensBinaryConcentrationFile"
         parameters {self.DECAYED_SAMPLE_F71_position} 5 end
         filename="{self.DECAYED_SAMPLE_F71_file_name}"
