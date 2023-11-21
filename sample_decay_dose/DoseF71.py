@@ -230,7 +230,7 @@ class DoseEstimator:
                                     self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
         os.chdir(self.cwd + '/' + self.case_dir)
 
-        with open(SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
+        with open(self.SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
             f.write(atom_dens_for_mavric(self.decayed_atom_dens))
 
         with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
@@ -429,7 +429,7 @@ read parameters
 end parameters
 
 read comp
-<{SAMPLE_ATOM_DENS_file_name_MAVRIC}
+<{self.SAMPLE_ATOM_DENS_file_name_MAVRIC}
 end comp
 
 read geometry
