@@ -103,6 +103,7 @@ def get_burned_material_total_mass_dens(f71file: str, position: int) -> float:
 def get_cyl_r(cyl_volume: float) -> float:
     """ Radius of a square cylinder from its volume
         V = pi r^2 h = pi r^2 2 r = 2 pi r^3
+        r = (V / 2 pi) ^ 1/3
     """
     return (cyl_volume / (2.0 * math.pi)) ** (1.0 / 3.0)
 
@@ -143,12 +144,20 @@ def atom_dens_for_mavric(dens: dict) -> str:
 class Origen:
     """ORIGEN handling class"""
 
-    def __int__(self):
+    def __init__(self):
         self.debug: int = 3  # Debugging flag
         self.cwd: str = os.getcwd()  # Current running fir
         self.ORIGEN_input_file_name: str = 'origen.inp'
         self.decayed_atom_dens: dict = {}  # Atom density of the decayed sample
         self.case_dir: str = ''
+        self.DECAYED_SAMPLE_ATOM_DENS_file_name_Origen: str = 'my_sample_atom_dens_origen.inp'
+        self.DECAYED_SAMPLE_input_file_name: str = self.ORIGEN_input_file_name.replace('inp', 'f71')
+        self.DECAYED_SAMPLE_F71_file_name: str = self.ORIGEN_input_file_name.replace('inp', 'f71')
+        self.DECAYED_SAMPLE_F71_position: int = 12
+        self.DECAYED_SAMPLE_days: float = 30.0  # Sample decay time [days]
+        self.sample_weight: float = np.NaN  # Mass of the sample [g]
+        self.sample_density: float = np.NaN  # Mass density of the sample [g/cm3]
+        self.sample_volume: float = np.NaN  # Sample volume [cm3]
 
     def get_beta_to_gamma(self) -> float:
         """ Calculates beta / gamma dose ratio as a ratio of respective spectral integrals
@@ -167,18 +176,14 @@ class Origen:
 
 
 class OrigenFromTriton(Origen):
-    def __int__(self, _f71: str = './SCALE_FILE.f71', _mass: float = 0.1):
+    def __init__(self, _f71: str = './SCALE_FILE.f71', _mass: float = 0.1):
         Origen.__init__(self)
         self.BURNED_MATERIAL_F71_file_name: str = _f71  # Burned core F71 file from TRITON
         self.BURNED_MATERIAL_F71_index: dict = get_f71_positions_index(self.BURNED_MATERIAL_F71_file_name)
         self.BURNED_MATERIAL_F71_position: int = 16
-        self.sample_weight: float = _mass  # Mass of the sample [g]
-        self.sample_density: float = -1.0  # Mass density of the sample [g/cm3]
-        self.decks = None  # ScaleInput instance
-        self.case_dir: str = f'run_{_mass:.5}_g'  # Directory to run the case
-        self.cwd: str = os.getcwd()  # Current running fir
         self.burned_atom_dens: dict = {}  # Atom density of the burned material from F71 file
-        self.SAMPLE_ATOM_DENS_file_name_Origen: str = 'my_sample_atom_dens_origen.inp'
+        self.sample_weight: float = _mass  # Mass of the sample [g]
+        self.case_dir: str = f'run_{_mass:.5}_g'  # Directory to run the case
 
     def set_f71_pos(self, t: float = 5184000.0, case: str = '1'):
         """ Returns closest position in the F71 file for a case """
@@ -207,6 +212,7 @@ class OrigenFromTriton(Origen):
         """ Reads atom density and rho from F71 file """
         self.sample_density = get_burned_material_total_mass_dens(self.BURNED_MATERIAL_F71_file_name,
                                                                   self.BURNED_MATERIAL_F71_position)
+        self.sample_volume = self.sample_weight / self.sample_density
         self.burned_atom_dens = get_burned_material_atom_dens(self.BURNED_MATERIAL_F71_file_name,
                                                               self.BURNED_MATERIAL_F71_position)
         if self.debug > 2:
@@ -217,7 +223,7 @@ class OrigenFromTriton(Origen):
             os.mkdir(self.case_dir)
         os.chdir(self.cwd + '/' + self.case_dir)
 
-        with open(self.SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
+        with open(self.DECAYED_SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
             f.write(atom_dens_for_origen(self.burned_atom_dens))
 
         with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
@@ -241,7 +247,7 @@ class OrigenFromTriton(Origen):
 
         origen_output = f'''
 =shell
-cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
+cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_ATOM_DENS_file_name_Origen} .
 end
 
 =origen
@@ -262,7 +268,7 @@ case {{
     }}
     mat {{
         iso [
-<{self.SAMPLE_ATOM_DENS_file_name_Origen}
+<{self.DECAYED_SAMPLE_ATOM_DENS_file_name_Origen}
         ]
         units=ATOMS-PER-BARN-CM
         volume={self.sample_volume}
@@ -316,7 +322,7 @@ class DoseEstimator:
 
     def __init__(self, _f71: str = './decayed_sample.f71', _mass: float = 0.1):
         self.debug: int = 3  # Debugging flag
-        self.sample_weigth: float = _mass  # Mass of the sample [g]
+        self.sample_weight: float = _mass  # Mass of the sample [g]
         self.sample_density: float = -1.0  # Mass density of the sample [g/cm3]
         self.case_dir: str = f'run_{_mass:.5}_g'  # Directory to run the case
         self.cwd: str = os.getcwd()  # Current running fir
@@ -387,7 +393,7 @@ class DoseEstimator:
             r1: dict = self.responses['1']
             r2: dict = self.responses['2']
             r3: dict = self.responses['3']
-            print(self.sample_weigth, r1['value'], r1['stdev'], r2['value'], r2['stdev'], r3['value'], r3['stdev'])
+            print(self.sample_weight, r1['value'], r1['stdev'], r2['value'], r2['stdev'], r3['value'], r3['stdev'])
 
     @property
     def total_dose(self) -> dict:
@@ -529,26 +535,26 @@ end
 
 
 # -------------------------------------------------------------------------------------------------------------
-class ScaleInput:
-    """ This class writes SCALE decks for
-    1. Origen - to decay sample
-    2. MAVRIC - to calculate dose at det_x distance
-    """
-
-    def __init__(self, _sample_weight: float = 0.1, _sample_density: float = 2.406):
-        self.SAMPLE_ATOM_DENS_file_name_MAVRIC: str = SAMPLE_ATOM_DENS_file_name_MAVRIC
-        self.SAMPLE_ATOM_DENS_file_name_Origen: str = SAMPLE_ATOM_DENS_file_name_Origen
-        self.DECAYED_SAMPLE_F71_file_name: str = 'my_sample.f71'
-        self.DECAYED_SAMPLE_F71_position: int = 12
-        self.DECAYED_SAMPLE_days: float = 30.0  # Decay time [days]
-        self.sample_weight: float = _sample_weight  # [g]
-        self.sample_density: float = _sample_density  # [g/cm^3]
-        self.sample_volume = self.sample_weight / self.sample_density
-        self.cyl_r = get_cyl_r(self.sample_volume)
-        self.det_x: float = 30.0  # Detector distance [cm]
-        self.box_a: float = self.det_x + 10.0  # Problem box distance [cm]
-        self.N_planes_box: int = 5  # Planes per box
-        self.N_planes_cyl: int = 8  # Planes per cylinder
+# class ScaleInput:
+#     """ This class writes SCALE decks for
+#     1. Origen - to decay sample
+#     2. MAVRIC - to calculate dose at det_x distance
+#     """
+#
+#     def __init__(self, _sample_weight: float = 0.1, _sample_density: float = 2.406):
+#         self.SAMPLE_ATOM_DENS_file_name_MAVRIC: str = SAMPLE_ATOM_DENS_file_name_MAVRIC
+#         self.SAMPLE_ATOM_DENS_file_name_Origen: str = SAMPLE_ATOM_DENS_file_name_Origen
+#         self.DECAYED_SAMPLE_F71_file_name: str = 'my_sample.f71'
+#         self.DECAYED_SAMPLE_F71_position: int = 12
+#         self.DECAYED_SAMPLE_days: float = 30.0  # Decay time [days]
+#         self.sample_weight: float = _sample_weight  # [g]
+#         self.sample_density: float = _sample_density  # [g/cm^3]
+#         self.sample_volume = self.sample_weight / self.sample_density
+#         self.cyl_r = get_cyl_r(self.sample_volume)
+#         self.det_x: float = 30.0  # Detector distance [cm]
+#         self.box_a: float = self.det_x + 10.0  # Problem box distance [cm]
+#         self.N_planes_box: int = 5  # Planes per box
+#         self.N_planes_cyl: int = 8  # Planes per cylinder
 
 
 # class OutputReaderMonaco:
