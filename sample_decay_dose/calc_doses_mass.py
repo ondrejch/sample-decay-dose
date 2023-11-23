@@ -13,7 +13,8 @@ d = {}
 
 for mass in np.geomspace(1e-3, 1, 30):
     print(f'***--> Sample mass {mass} g <--***')
-    de = DoseF71.DoseEstimator('../SCALE_FILE.f71', mass)  # 0.2 g salt
+    de = DoseF71.DoseEstimator('../SCALE_FILE.f71', mass)  # x g salt
+    de.set_f71_pos(365.24 * 24.0 * 60.0 * 60.0)  # 1 year
     de.read_burned_material()
     de.run_decay_sample()
     de.run_mavric()

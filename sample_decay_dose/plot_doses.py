@@ -10,9 +10,13 @@ import matplotlib.pyplot as plt
 
 # For sample mass dependency, set LABEL='m'.
 # For decay time dependency, set LABEL='dt'
-LABEL = 'm'
+LABEL = 'dt12'
 labels = {'m' : ['mass', 'grams', 'Fuel salt sample, 1 year burn, 30 days decay time'],
-          'dt': ['decay time', 'days', 'Fuel salt sample, 1 year burn, 0.1 grams']}
+          'dt': ['decay time', 'days', 'Fuel salt sample, 1 year burn, 0.1 grams'],
+         'dt2': ['decay time', 'days', 'Fuel salt sample, 2 year burn, 0.1 grams'],
+        'dt04': ['decay time', 'days', 'Fuel salt sample, 4 day burn, 0.1 grams'],
+        'dt12': ['decay time', 'days', 'Fuel salt sample, 12 day burn, 0.1 grams'],
+        'dt28': ['decay time', 'days', 'Fuel salt sample, 28 day burn, 0.1 grams']}
 
 particles = {'1': 'Neutron', '2': 'Gamma', '3': 'Beta'}
 colors = {'1': 'sandybrown', '2': 'slategrey', '3': 'cornflowerblue'}
@@ -38,7 +42,7 @@ plt.title(labels[LABEL][2])
 plt.xlabel(f'Sample {labels[LABEL][0]} [{labels[LABEL][1]}]')
 plt.ylabel('Dose at 30 cm [rem/h]')
 for p in particles.keys():
-    if sum(dose[p]) > 0:    # Only plot of there is dose form that particle
+    if sum(dose[p]) > 1e-6:    # Only plot of there is dose form that particle
         plt.errorbar(x, dose[p], errd[p], ls='none', color=f'{colors[p]}', capsize=1.2)
         plt.scatter(x, dose[p], color=f'{colors[p]}', s=5, label=f'{particles[p]}')
 
