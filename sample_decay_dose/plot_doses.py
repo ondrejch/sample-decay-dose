@@ -48,7 +48,7 @@ for p in particles.keys():
 
 plt.legend()
 plt.tight_layout()
-label_file_name = labels[LABEL][0].replace(' ','_')
+label_file_name = labels[LABEL][0].replace(' ', '_')
 plt.savefig(f'dose_{label_file_name}.png', dpi=1000)
 
 plt.xscale('log')
