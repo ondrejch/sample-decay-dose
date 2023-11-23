@@ -159,13 +159,18 @@ class Origen:
         self.sample_density: float = np.NaN  # Mass density of the sample [g/cm3]
         self.sample_volume: float = np.NaN  # Sample volume [cm3]
 
+    def set_decay_time(self, decay_days: float = 30.0):
+        """ Use this to change decay time, as it also updates the case directory
+        """
+        self.DECAYED_SAMPLE_days = decay_days
+        self.case_dir: str = f'run_{self.sample_weight:.5}_g-{decay_days:.5}_days'  # Directory to run the case
+
     def get_beta_to_gamma(self) -> float:
         """ Calculates beta / gamma dose ratio as a ratio of respective spectral integrals
         """
-        gamma_spectrum_file = self.cwd + '/' + self.case_dir + '/' + \
-                              self.ORIGEN_input_file_name.replace(".inp", ".000000000000000001.plt")
-        beta_spectrum_file = self.cwd + '/' + self.case_dir + '/' + \
-                             self.ORIGEN_input_file_name.replace(".inp", ".000000000000000002.plt")
+        my_inp = self.ORIGEN_input_file_name  # temp variable to make the code PEP-8 compliant...
+        gamma_spectrum_file = self.cwd + '/' + self.case_dir + '/' + my_inp.replace(".inp", ".000000000000000001.plt")
+        beta_spectrum_file = self.cwd + '/' + self.case_dir + '/' + my_inp.replace(".inp", ".000000000000000002.plt")
         if not os.path.isfile(gamma_spectrum_file):
             raise FileNotFoundError("Expected OPUS file file:" + gamma_spectrum_file)
         if not os.path.isfile(beta_spectrum_file):
@@ -320,27 +325,29 @@ end
 class DoseEstimator:
     """ MAVRIC calculation of doses"""
 
-    def __init__(self, _f71: str = './decayed_sample.f71', _mass: float = 0.1):
+    def __init__(self, _o: Origen = None):
+        """ This reads decayed sample information from the Origen object
+        """
         self.debug: int = 3  # Debugging flag
-        self.sample_weight: float = _mass  # Mass of the sample [g]
-        self.sample_density: float = -1.0  # Mass density of the sample [g/cm3]
-        self.case_dir: str = f'run_{_mass:.5}_g'  # Directory to run the case
-        self.cwd: str = os.getcwd()  # Current running fir
+        self.sample_weight: float = _o.sample_weight  # Mass of the sample [g]
+        self.sample_density: float = _o.sample_density  # Mass density of the sample [g/cm3]
+        self.sample_volume: float = _o.sample_volume  # Sample volume [cm3]
+        self.DECAYED_SAMPLE_F71_file_name: str = _o.DECAYED_SAMPLE_F71_file_name
+        self.DECAYED_SAMPLE_F71_position: int = _o.DECAYED_SAMPLE_F71_position
+        self.DECAYED_SAMPLE_days: float = _o.DECAYED_SAMPLE_days  # Sample decay time [days]
+        self.decayed_atom_dens: dict = _o.decayed_atom_dens  # Atom density of the decayed sample
+        self.beta_over_gamma: float = _o.get_beta_to_gamma()  # beta over gamma spectral ratio
+        self.case_dir: str = _o.case_dir  # Directory to run the case
+        self.cwd: str = _o.cwd  # Current running fir
+        self.DECAYED_SAMPLE_out_file_name: str = self.DECAYED_SAMPLE_F71_file_name.replace('f71', 'out')
         self.MAVRIC_input_file_name: str = 'my_dose.inp'
         self.SAMPLE_ATOM_DENS_file_name_MAVRIC: str = 'my_sample_atom_dens_mavric.inp'
-        self.DECAYED_SAMPLE_F71_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'f71')
-        self.DECAYED_SAMPLE_out_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'out')
-        self.DECAYED_SAMPLE_F71_position: int = 12
-        self.DECAYED_SAMPLE_days: float = 30.0  # Sample decay time [days]
-        self.decayed_atom_dens: dict = {}  # Atom density of the decayed sample
-        self.beta_over_gamma: float = -1.0  # beta over gamma spectral ratio
         self.responses: dict = {}  # Dose responses 1: neutron, 2: gamma, 3: beta
         self.det_x: float = 30.0  # Detector distance [cm]
         self.N_planes_box: int = 5  # Planes per box
         self.N_planes_cyl: int = 8  # Planes per cylinder
         self.box_a: float = np.NaN
         self.cyl_r: float = np.NaN
-        self.sample_volume: float = np.NaN
 
     def run_mavric(self):
         if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
@@ -352,7 +359,7 @@ class DoseEstimator:
             f.write(atom_dens_for_mavric(self.decayed_atom_dens))
 
         with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
-            f.write(self.decks.mavric_deck())
+            f.write(self.mavric_deck())
 
         print(f"\nRUNNING {self.MAVRIC_input_file_name}")
         run_scale(self.MAVRIC_input_file_name)
@@ -381,7 +388,6 @@ class DoseEstimator:
                         else:
                             self.responses[s[1]] = {'value': float(s[2]), 'stdev': float(s[3])}
 
-        self.beta_over_gamma = self.get_beta_to_gamma()
         self.responses['3'] = {'value': self.beta_over_gamma * float(s[2]), 'stdev': self.beta_over_gamma * float(s[3])}
 
         os.chdir(self.cwd)
@@ -410,7 +416,6 @@ class DoseEstimator:
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation
         """
-        self.sample_volume = self.sample_weight / self.sample_density
         self.cyl_r = get_cyl_r(self.sample_volume)
         self.box_a: float = self.det_x + 10.0  # Problem box distance [cm]
         adjoint_flux_file = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')

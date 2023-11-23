@@ -16,7 +16,7 @@ for decay_days in np.geomspace(1./24., 360, 60):
 #    de = DoseF71.DoseEstimator('../SCALE_FILE.f71', 0.1)  # 0.1 grams
 #    de.set_f71_pos(2.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 2 years
     de = DoseF71.DoseEstimator('../SCALE_FILE_60days.f71', 0.1)  # 0.1 grams
-    de.set_f71_pos(12.0 * 24.0 * 60.0 * 60.0)  # 4 days
+    de.set_f71_pos(4.0 * 24.0 * 60.0 * 60.0)  # 4 days
     de.read_burned_material()
     de.set_decay_time(decay_days)
     de.run_decay_sample()

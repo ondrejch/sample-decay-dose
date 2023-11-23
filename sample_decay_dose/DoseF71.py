@@ -243,10 +243,9 @@ class DoseEstimator:
     def get_beta_to_gamma(self) -> float:
         """ Calculates beta / gamma dose ratio as a ratio of respective spectral integrals
         """
-        gamma_spectrum_file = self.cwd + '/' + self.case_dir + \
-                              '/' + self.ORIGEN_input_file_name.replace(".inp", ".000000000000000001.plt")
-        beta_spectrum_file = self.cwd + '/' + self.case_dir + \
-                             '/' + self.ORIGEN_input_file_name.replace(".inp", ".000000000000000002.plt")
+        my_inp = self.ORIGEN_input_file_name  # temp variable to make the code PEP-8 compliant...
+        gamma_spectrum_file = self.cwd + '/' + self.case_dir + '/' + my_inp.replace(".inp", ".000000000000000001.plt")
+        beta_spectrum_file = self.cwd + '/' + self.case_dir + '/' + my_inp.replace(".inp", ".000000000000000002.plt")
         if not os.path.isfile(gamma_spectrum_file):
             raise FileNotFoundError("Expected OPUS file file:" + gamma_spectrum_file)
         if not os.path.isfile(beta_spectrum_file):
