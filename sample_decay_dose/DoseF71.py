@@ -1,5 +1,7 @@
 #!/bin/env python3
 """
+!!! OBSOLETE CODE !!!
+--> Use SampleDose module instead <---
 Handling dose [rem/h] in SCALE
 Ondrej Chvala <ochvala@utexas.edu>
 """

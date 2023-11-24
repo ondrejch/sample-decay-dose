@@ -3,24 +3,57 @@
 Handling dose [rem/h] in SCALE
 Ondrej Chvala <ochvala@utexas.edu>
 """
-
 import os
 import re
 import subprocess
 import math
-from bisect import bisect_left
-
 import numpy as np
-
+from bisect import bisect_left
 from sample_decay_dose.read_opus import integrate_opus
 
 SCALE_bin_path: str = os.getenv('SCALE_BIN', '/opt/scale6.3.1/bin/')
-# ORIGEN_input_file_name: str = 'fuel_salt_decay.inp'  # SCALE deck name for sample decay
-# MAVRIC_input_file_name: str = 'my_sample.inp'  # SCALE deck name for MAVRIC/Monaco transport
-# SAMPLE_ATOM_DENS_file_name_Origen: str = 'my_sample_atom_dens_origen.inp'
-# SAMPLE_ATOM_DENS_file_name_MAVRIC: str = 'my_sample_atom_dens_mavric.inp'
 ATOM_DENS_MINIMUM: float = 1e-60
 MAVRIC_NG_XSLIB: str = 'v7.1-28n19g'
+
+# https://www.sandmeyersteel.com/316H.html
+ATOM_DENS_SS316H_HOT = """c = 0.0002384
+n-14 = 0.000254609
+n-15 = 9.30164e-07
+al-27 = 5.30544e-05
+si-28 = 1.56475e-05
+si-29 = 7.94907e-07
+si-30 = 5.24622e-07
+p-31 = 6.93324e-05
+s-32 = 4.23788e-05
+s-33 = 3.34604e-07
+s-34 = 1.89609e-06
+s-36 = 4.46139e-09
+ti-46 = 3.28985e-06
+ti-47 = 2.96684e-06
+ti-48 = 2.93973e-05
+ti-49 = 2.15734e-06
+ti-50 = 2.06562e-06
+cr-50 = 0.000677912
+cr-52 = 0.0130729
+cr-53 = 0.00148236
+cr-54 = 0.00036899
+mn-55 = 1.73977e-05
+fe-54 = 0.00390032
+fe-56 = 0.0612267
+fe-57 = 0.00141399
+fe-58 = 0.000188176
+ni-58 = 6.64309e-05
+ni-60 = 2.55891e-05
+ni-61 = 1.11234e-06
+ni-62 = 3.54662e-06
+ni-64 = 9.03221e-07
+mo-92 = 0.00018364
+mo-94 = 0.00011476
+mo-95 = 0.00019769
+mo-96 = 0.000207388
+mo-97 = 0.000118863
+mo-98 = 0.000300762
+mo-100 = 0.00012023"""
 
 
 def get_f71_positions_index(f71file: str) -> dict:
@@ -100,6 +133,19 @@ def get_burned_material_total_mass_dens(f71file: str, position: int) -> float:
     return my_rho
 
 
+def get_F33_num_sets(f33file: str) -> int:
+    """ Returns the number of numSets in SCALE F33 file
+    """
+    output = subprocess.run(
+        [f"{SCALE_bin_path}/obiwan", "info", f33file], capture_output=True)
+    output = output.stdout.decode().split("\n")
+    for line in output:
+        data = line.split()
+        if f33file == data[0]:
+            return int(data[2])
+    return -1
+
+
 def get_cyl_r(cyl_volume: float) -> float:
     """ Radius of a square cylinder from its volume
         V = pi r^2 h = pi r^2 2 r = 2 pi r^3
@@ -142,19 +188,17 @@ def atom_dens_for_mavric(dens: dict) -> str:
 
 
 class Origen:
-    """ORIGEN handling class"""
-
+    """ ORIGEN handling parent class """
     def __init__(self):
         self.debug: int = 3  # Debugging flag
         self.cwd: str = os.getcwd()  # Current running fir
         self.ORIGEN_input_file_name: str = 'origen.inp'
         self.decayed_atom_dens: dict = {}  # Atom density of the decayed sample
         self.case_dir: str = ''
-        self.DECAYED_SAMPLE_ATOM_DENS_file_name_Origen: str = 'my_sample_atom_dens_origen.inp'
-        self.DECAYED_SAMPLE_input_file_name: str = self.ORIGEN_input_file_name.replace('inp', 'f71')
-        self.DECAYED_SAMPLE_F71_file_name: str = self.ORIGEN_input_file_name.replace('inp', 'f71')
-        self.DECAYED_SAMPLE_F71_position: int = 12
-        self.DECAYED_SAMPLE_days: float = 30.0  # Sample decay time [days]
+        self.SAMPLE_ATOM_DENS_file_name_Origen: str = 'my_sample_atom_dens_origen.inp'
+        self.SAMPLE_F71_file_name: str = self.ORIGEN_input_file_name.replace('inp', 'f71')
+        self.SAMPLE_F71_position: int = 12
+        self.SAMPLE_DECAY_days: float = 30.0  # Sample decay time [days]
         self.sample_weight: float = np.NaN  # Mass of the sample [g]
         self.sample_density: float = np.NaN  # Mass density of the sample [g/cm3]
         self.sample_volume: float = np.NaN  # Sample volume [cm3]
@@ -162,7 +206,7 @@ class Origen:
     def set_decay_time(self, decay_days: float = 30.0):
         """ Use this to change decay time, as it also updates the case directory
         """
-        self.DECAYED_SAMPLE_days = decay_days
+        self.SAMPLE_DECAY_days = decay_days
         self.case_dir: str = f'run_{self.sample_weight:.5}_g-{decay_days:.5}_days'  # Directory to run the case
 
     def get_beta_to_gamma(self) -> float:
@@ -204,15 +248,6 @@ class OrigenFromTriton(Origen):
         #    return None
         self.BURNED_MATERIAL_F71_position = bisect_left(times, t)
 
-    # def define_decks(self):
-    #     """ Initializes Origen and Mavric deck writers """
-    #     self.decks = ScaleInput(self.SAMPLE_MASS, self.SAMPLE_DENSITY)
-    #     self.decks.DECAYED_SAMPLE_F71_file_name = self.DECAYED_SAMPLE_F71_file_name
-    #     self.decks.DECAYED_SAMPLE_F71_position = self.DECAYED_SAMPLE_F71_position
-    #     self.decks.SAMPLE_ATOM_DENS_file_name_Origen = self.SAMPLE_ATOM_DENS_file_name_Origen
-    #     self.decks.SAMPLE_ATOM_DENS_file_name_MAVRIC = self.SAMPLE_ATOM_DENS_file_name_MAVRIC
-    #     self.decks.DECAYED_SAMPLE_days = self.DECAYED_SAMPLE_days
-
     def read_burned_material(self):
         """ Reads atom density and rho from F71 file """
         self.sample_density = get_burned_material_total_mass_dens(self.BURNED_MATERIAL_F71_file_name,
@@ -224,11 +259,14 @@ class OrigenFromTriton(Origen):
             print(list(self.burned_atom_dens.items())[:25])
 
     def run_decay_sample(self):
+        """  Writes Origen input file, runs Origen to decay it and Opus to plot spectra.
+        Finally, it reads atom density of the decayed sample, used later as a mixture for Mavric.
+        """
         if not os.path.exists(self.case_dir):
             os.mkdir(self.case_dir)
-        os.chdir(self.cwd + '/' + self.case_dir)
+        os.chdir(self.case_dir)
 
-        with open(self.DECAYED_SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
+        with open(self.SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
             f.write(atom_dens_for_origen(self.burned_atom_dens))
 
         with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
@@ -237,22 +275,21 @@ class OrigenFromTriton(Origen):
         print(f"\nRUNNING {self.ORIGEN_input_file_name}")
         run_scale(self.ORIGEN_input_file_name)
 
-        self.decayed_atom_dens = get_burned_material_atom_dens(self.DECAYED_SAMPLE_F71_file_name,
-                                                               self.DECAYED_SAMPLE_F71_position)
+        self.decayed_atom_dens = get_burned_material_atom_dens(self.SAMPLE_F71_file_name,
+                                                               self.SAMPLE_F71_position)
         os.chdir(self.cwd)
         if self.debug > 2:
             print(list(self.decayed_atom_dens.items())[:25])
 
     def origen_deck(self) -> str:
-        """ Sample decay Origen deck
-        """
-        time_interp_steps = self.DECAYED_SAMPLE_F71_position - 3
+        """ Sample decay Origen deck """
+        time_interp_steps = self.SAMPLE_F71_position - 3
         if time_interp_steps < 1:
             raise ValueError("Too few time steps")
 
         origen_output = f'''
 =shell
-cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_ATOM_DENS_file_name_Origen} .
+cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
 end
 
 =origen
@@ -273,57 +310,202 @@ case {{
     }}
     mat {{
         iso [
-<{self.DECAYED_SAMPLE_ATOM_DENS_file_name_Origen}
+<{self.SAMPLE_ATOM_DENS_file_name_Origen}
         ]
         units=ATOMS-PER-BARN-CM
         volume={self.sample_volume}
     }}
     time {{
         units=DAYS
-        t=[{time_interp_steps}L 0.0001 {self.DECAYED_SAMPLE_days}]
+        t=[{time_interp_steps}L 0.0001 {self.SAMPLE_DECAY_days}]
         start=0
     }}
     save {{
-        file="{self.DECAYED_SAMPLE_F71_file_name}"
+        file="{self.SAMPLE_F71_file_name}"
     }}
 }}
 end
 
 =opus
-data='{self.DECAYED_SAMPLE_F71_file_name}'
+data='{self.SAMPLE_F71_file_name}'
 title='Neutrons'
 typarams=nspectrum
 units=intensity
 time=days
-tmin={self.DECAYED_SAMPLE_days}
-tmax={self.DECAYED_SAMPLE_days}
+tmin={self.SAMPLE_DECAY_days}
+tmax={self.SAMPLE_DECAY_days}
 end
 
 =opus
-data='{self.DECAYED_SAMPLE_F71_file_name}'
+data='{self.SAMPLE_F71_file_name}'
 title='Gamma'
 typarams=gspectrum
 units=intensity
 time=days
-tmin={self.DECAYED_SAMPLE_days}
-tmax={self.DECAYED_SAMPLE_days}
+tmin={self.SAMPLE_DECAY_days}
+tmax={self.SAMPLE_DECAY_days}
 end
 
 =opus
-data='{self.DECAYED_SAMPLE_F71_file_name}'
+data='{self.SAMPLE_F71_file_name}'
 title='Beta'
 typarams=bspectrum
 units=intensity
 time=days
-tmin={self.DECAYED_SAMPLE_days}
-tmax={self.DECAYED_SAMPLE_days}
+tmin={self.SAMPLE_DECAY_days}
+tmax={self.SAMPLE_DECAY_days}
 end
 '''
         return origen_output
 
 
+class OrigenIrradiation(Origen):
+    """ Irradiate and decay sample in Origen. Uses F33 file and total flux to irradiate a sample.
+    F33 does not provide time index, by default the last one is taken.
+    If the index needs to be set, use a corresponding F71 file.
+    """
+    def __init__(self, _f33: str = './SCALE_FILE.mix0007.f33', _mass: float = 0.1):
+        Origen.__init__(self)
+        self.F33_file_name: str = _f33  # Burned core F71 file from TRITON
+        self.F33_position: int = get_F33_num_sets(self.F33_file_name)
+        self.sample_weight: float = _mass  # Mass of the sample [g]
+        self.case_dir: str = f'irr_{_mass:.5}_g'  # Directory to run the case
+        self.irradiate_flux: float = 1.0e12  # Irradiation total flux [n/cm2/s]
+        self.irradiate_days: float = 365.24  # Sample irradiation time [days]
+        self.irradiate_steps: int = 30  # How many irradiation steps
+        self.irradiate_F71_file_name: str = 'irradiate.f71'  # Saves the sample irradiation
+
+    def write_atom_dens(self, str_atom_dens: str = ATOM_DENS_SS316H_HOT):
+        """ Writes atom density of the fresh material to be irradiated """
+        if not os.path.exists(self.case_dir):
+            os.mkdir(self.case_dir)
+        os.chdir(self.case_dir)
+
+        with open(self.SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write at-dens input for Origen irradiation
+            f.write(str_atom_dens)
+        os.chdir(self.cwd)
+
+    def run_irradiate_decay_sample(self):
+        """  Writes Origen input file, runs Origen to irradiate and decay it, and Opus to plot spectra.
+        Finally, it reads atom density of the decayed sample, used later as a mixture for Mavric.
+        """
+        if not os.path.exists(self.case_dir + '/' + self.SAMPLE_ATOM_DENS_file_name_Origen):
+            raise FileNotFoundError("Write atom density for Origen first")
+        os.chdir(self.case_dir)
+
+        with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
+            f.write(self.origen_deck())
+
+        print(f"\nRUNNING {self.ORIGEN_input_file_name}")
+        run_scale(self.ORIGEN_input_file_name)
+
+        self.decayed_atom_dens = get_burned_material_atom_dens(self.SAMPLE_F71_file_name,
+                                                               self.SAMPLE_F71_position)
+        os.chdir(self.cwd)
+        if self.debug > 2:
+            print(list(self.decayed_atom_dens.items())[:25])
+
+    def read_irradiated_material_density(self):
+        """ Reads rho from irradiated F71 file """
+        self.sample_density = get_burned_material_total_mass_dens(self.irradiate_F71_file_name, 1)
+        self.sample_volume = self.sample_weight / self.sample_density
+
+    def origen_deck(self) -> str:
+        """ Sample irradiation and decay Origen deck   """
+        self.sample_volume = self.sample_weight / self.sample_density
+        time_interp_steps = self.SAMPLE_F71_position - 3
+        if time_interp_steps < 1:
+            raise ValueError("Too few time steps")
+        origen_output = f'''
+=shell
+cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
+cp -r ${{INPDIR}}/{self.F33_file_name} .
+end
+
+=origen
+options{{
+    digits=6
+}}
+bounds {{
+    neutron="scale.rev13.xn200g47v7.1"
+    gamma="scale.rev13.xn200g47v7.1"
+    beta=[100L 1.0e7 1.0e-3]
+}}
+case(irrad) {{
+    lib {{ 
+        file="{self.F33_file_name}" 
+        pos={self.F33_position} 
+    }}
+    mat{{
+        iso=[
+<{self.SAMPLE_ATOM_DENS_file_name_Origen}
+]
+        units=ATOMS-PER-BARN-CM
+        volume={self.sample_volume}
+    }}
+    time {{
+        units=DAYS
+        start=0
+        t=[{self.irradiate_steps}L 0.001 {self.irradiate_days}]
+    }}
+    flux=[{self.irradiate_steps}R {self.irradiate_flux}]
+    save {{
+        file="{self.irradiate_F71_file_name}"
+    }}
+}}
+case(decay) {{
+    gamma=yes
+    neutron=yes
+    beta=yes
+    lib {{
+        file="end7dec"
+    }}    
+    time {{
+        units=DAYS
+        start=0
+        t=[{time_interp_steps}L 0.001 {self.SAMPLE_DECAY_days}]
+    }}
+    save {{
+        file="{self.SAMPLE_F71_file_name}"
+    }}
+}}
+end
+
+=opus
+data='{self.SAMPLE_F71_file_name}'
+title='Neutrons'
+typarams=nspectrum
+units=intensity
+time=days
+tmin={self.SAMPLE_DECAY_days}
+tmax={self.SAMPLE_DECAY_days}
+end
+
+=opus
+data='{self.SAMPLE_F71_file_name}'
+title='Gamma'
+typarams=gspectrum
+units=intensity
+time=days
+tmin={self.SAMPLE_DECAY_days}
+tmax={self.SAMPLE_DECAY_days}
+end
+
+=opus
+data='{self.SAMPLE_F71_file_name}'
+title='Beta'
+typarams=bspectrum
+units=intensity
+time=days
+tmin={self.SAMPLE_DECAY_days}
+tmax={self.SAMPLE_DECAY_days}
+'''
+        return origen_output
+
+
 class DoseEstimator:
-    """ MAVRIC calculation of doses"""
+    """ MAVRIC calculation of rem/h doses from the decayed sample
+    """
 
     def __init__(self, _o: Origen = None):
         """ This reads decayed sample information from the Origen object
@@ -332,15 +514,15 @@ class DoseEstimator:
         self.sample_weight: float = _o.sample_weight  # Mass of the sample [g]
         self.sample_density: float = _o.sample_density  # Mass density of the sample [g/cm3]
         self.sample_volume: float = _o.sample_volume  # Sample volume [cm3]
-        self.DECAYED_SAMPLE_F71_file_name: str = _o.DECAYED_SAMPLE_F71_file_name
-        self.DECAYED_SAMPLE_F71_position: int = _o.DECAYED_SAMPLE_F71_position
-        self.DECAYED_SAMPLE_days: float = _o.DECAYED_SAMPLE_days  # Sample decay time [days]
+        self.DECAYED_SAMPLE_F71_file_name: str = _o.SAMPLE_F71_file_name
+        self.DECAYED_SAMPLE_F71_position: int = _o.SAMPLE_F71_position
+        self.DECAYED_SAMPLE_days: float = _o.SAMPLE_DECAY_days  # Sample decay time [days]
         self.decayed_atom_dens: dict = _o.decayed_atom_dens  # Atom density of the decayed sample
         self.beta_over_gamma: float = _o.get_beta_to_gamma()  # beta over gamma spectral ratio
         self.case_dir: str = _o.case_dir  # Directory to run the case
         self.cwd: str = _o.cwd  # Current running fir
-        self.DECAYED_SAMPLE_out_file_name: str = self.DECAYED_SAMPLE_F71_file_name.replace('f71', 'out')
         self.MAVRIC_input_file_name: str = 'my_dose.inp'
+        self.MAVRIC_out_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'out')
         self.SAMPLE_ATOM_DENS_file_name_MAVRIC: str = 'my_sample_atom_dens_mavric.inp'
         self.responses: dict = {}  # Dose responses 1: neutron, 2: gamma, 3: beta
         self.det_x: float = 30.0  # Detector distance [cm]
@@ -368,15 +550,15 @@ class DoseEstimator:
     def get_responses(self):
         """ Reads over the MAVRIC output and returns responses for rem/h doses
         """
-        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_out_file_name):
+        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name):
             raise FileNotFoundError("Expected decayed sample MAVRIC output file: \n" +
-                                    self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_out_file_name)
+                                    self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name)
         os.chdir(self.cwd + '/' + self.case_dir)
 
         tally_sep: str = 'Final Tally Results Summary'
         is_in_tally: bool = False
 
-        with open(self.DECAYED_SAMPLE_out_file_name, 'r') as f:
+        with open(self.MAVRIC_out_file_name, 'r') as f:
             for line in f.read().splitlines():
                 if line.count(tally_sep) > 0:
                     is_in_tally = True
