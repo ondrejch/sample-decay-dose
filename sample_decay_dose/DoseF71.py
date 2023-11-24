@@ -53,8 +53,7 @@ def get_positions_index(f71file: str) -> dict:
 
 
 def get_burned_material_atom_dens(f71file: str, position: int) -> dict:
-    """ Read atom density of nuclides from SCALE's F71 file
-    """
+    """ Read atom density of nuclides from SCALE's F71 file """
     output = subprocess.run(
         [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=atom", "-idform='{:Ee}{:AAA}{:m}'",
          f71file], capture_output=True)
@@ -82,8 +81,7 @@ def get_burned_material_atom_dens(f71file: str, position: int) -> dict:
 
 
 def get_burned_material_total_mass_dens(f71file: str, position: int) -> float:
-    """ Read mass density of nuclides from SCALE's F71 file, calculate total \rho [g/cm^3]
-    """
+    """ Read mass density of nuclides from SCALE's F71 file, calculate total \rho [g/cm^3] """
     output = subprocess.run(
         [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=gper", "-idform='{:Ee}{:AAA}{:m}'",
          f71file], capture_output=True)
@@ -119,8 +117,7 @@ def run_scale(deck_file: str):
 
 
 def atom_dens_for_origen(dens: dict) -> str:
-    """ Print atom densities in ORIGEN-input format
-    """
+    """ Print atom densities in ORIGEN-input format """
     output = ''
     for k, v in dens.items():
         if v > 0.0:
@@ -129,8 +126,7 @@ def atom_dens_for_origen(dens: dict) -> str:
 
 
 def atom_dens_for_mavric(dens: dict) -> str:
-    """ Print atom densities in SCALE-input format
-    """
+    """ Print atom densities in SCALE-input format """
     output = ''
     for k, v in dens.items():
         if v > 0.0:
@@ -141,7 +137,6 @@ def atom_dens_for_mavric(dens: dict) -> str:
 
 class DoseEstimator:
     """ Main class for handling dose """
-
     def __init__(self, _f71: str = './SCALE_FILE.f71', _mass: float = 0.1):
         self.debug: int = 3  # Debugging flag
         self.BURNED_MATERIAL_F71_file_name: str = _f71  # Burned core F71 file from TRITON
@@ -166,8 +161,7 @@ class DoseEstimator:
         self.responses: dict = {}  # Dose responses 1: neutron, 2: gamma, 3: beta
 
     def set_decay_time(self, decay_days: float = 30.0):
-        """ Use this to change decay time, as it also updates the case directory
-        """
+        """ Use this to change decay time, as it also updates the case directory """
         self.DECAYED_SAMPLE_days = decay_days
         self.case_dir: str = f'run_{self.SAMPLE_MASS:.5}_g-{decay_days:.5}_days'  # Directory to run the case
 
@@ -204,6 +198,8 @@ class DoseEstimator:
             print(list(self.burned_atom_dens.items())[:25])
 
     def run_decay_sample(self):
+        """ Runs Origen to decay the sample, and Opus to plot spectra.
+        Reads atom densities for Mavric mixture. """
         if not self.decks:
             self.define_decks()
 
@@ -227,6 +223,7 @@ class DoseEstimator:
             print(list(self.decayed_atom_dens.items())[:25])
 
     def run_mavric(self):
+        """ Writes and runs Mavric input file """
         if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
             raise FileNotFoundError("Expected decayed sample F71 file: \n" +
                                     self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
@@ -243,8 +240,7 @@ class DoseEstimator:
         os.chdir(self.cwd)
 
     def get_beta_to_gamma(self) -> float:
-        """ Calculates beta / gamma dose ratio as a ratio of respective spectral integrals
-        """
+        """ Calculates beta / gamma dose ratio as a ratio of respective spectral integrals """
         my_inp = self.ORIGEN_input_file_name  # temp variable to make the code PEP-8 compliant...
         gamma_spectrum_file = self.cwd + '/' + self.case_dir + '/' + my_inp.replace(".inp", ".000000000000000001.plt")
         beta_spectrum_file = self.cwd + '/' + self.case_dir + '/' + my_inp.replace(".inp", ".000000000000000002.plt")
@@ -257,8 +253,7 @@ class DoseEstimator:
         return beta_spectrum_integral / gamma_spectrum_integral
 
     def get_responses(self):
-        """ Reads over the MAVRIC output and returns responses for rem/h doses
-        """
+        """ Reads over the MAVRIC output and returns responses for rem/h doses """
         if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_out_file_name):
             raise FileNotFoundError("Expected decayed sample MAVRIC output file: \n" +
                                     self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_out_file_name)
@@ -287,6 +282,7 @@ class DoseEstimator:
             print(self.responses)
 
     def print_response(self):
+        """ Prints dose responses """
         if self.responses is not {}:
             r1: dict = self.responses['1']
             r2: dict = self.responses['2']
