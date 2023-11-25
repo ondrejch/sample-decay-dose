@@ -2,7 +2,7 @@
 
 This is a Python framework that calculates a handling dose of a sample from either
 (A) a nuclide composition (SCALE F71 file), such as fuel salt sample; or
-(B) a atom density and a transition matrix (SCALE F33 file), such as an irradiated coupon.
+(B) an atom density and a transition matrix (SCALE F33 file), such as an irradiated coupon.
 
 Workflow:
 1. SCALE/ORIGEN to (irradiate and) decay a sample, generate sources spectra and intensities. 
