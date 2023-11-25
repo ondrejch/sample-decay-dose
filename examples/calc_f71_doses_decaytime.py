@@ -19,7 +19,7 @@ for decay_days in np.geomspace(1./24., 360, 60):
     origen_triton = SampleDose.OrigenFromTriton(F71_2y_burn_file_name, 0.1)
     origen_triton.set_f71_pos(365.24 * 24.0 * 60.0 * 60.0)  # 1 year
     origen_triton.read_burned_material()
-    origen_triton.set_decay_time(decay_days)
+    origen_triton.set_decay_days(decay_days)
     origen_triton.run_decay_sample()
 
     mavric = SampleDose.DoseEstimator(origen_triton)

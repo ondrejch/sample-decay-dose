@@ -23,5 +23,6 @@ origen_triton.run_decay_sample()
 
 mavric = SampleDose.DoseEstimator(origen_triton)
 mavric.run_mavric()
+mavric.get_responses()
 print(mavric.responses)
 print(mavric.total_dose)

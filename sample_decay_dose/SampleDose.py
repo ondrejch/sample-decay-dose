@@ -15,8 +15,9 @@ SCALE_bin_path: str = os.getenv('SCALE_BIN', '/opt/scale6.3.1/bin/')
 ATOM_DENS_MINIMUM: float = 1e-60
 MAVRIC_NG_XSLIB: str = 'v7.1-28n19g'
 
+RHO: float = 8.0  # TODO: replace with calculation from atomic density
 # https://www.sandmeyersteel.com/316H.html
-ATOM_DENS_SS316H_HOT = """c = 0.0002384
+ATOM_DENS_SS316H_HOT: str = """c = 0.0002384
 n-14 = 0.000254609
 n-15 = 9.30164e-07
 al-27 = 5.30544e-05
@@ -138,7 +139,7 @@ def get_F33_num_sets(f33file: str) -> int:
     output = output.stdout.decode().split("\n")
     for line in output:
         data = line.split()
-        if f33file == data[0]:
+        if data[0] in f33file:
             return int(data[2])
     return -1
 
@@ -195,10 +196,10 @@ class Origen:
         self.SAMPLE_F71_position: int = 12
         self.SAMPLE_DECAY_days: float = 30.0  # Sample decay time [days]
         self.sample_weight: float = np.NaN  # Mass of the sample [g]
-        self.sample_density: float = np.NaN  # Mass density of the sample [g/cm3]
+        self.sample_density: float = RHO  # np.NaN  # Mass density of the sample [g/cm3]
         self.sample_volume: float = np.NaN  # Sample volume [cm3]
 
-    def set_decay_time(self, decay_days: float = 30.0):
+    def set_decay_days(self, decay_days: float = 30.0):
         """ Use this to change decay time, as it also updates the case directory """
         self.SAMPLE_DECAY_days = decay_days
         self.case_dir: str = f'run_{self.sample_weight:.5}_g-{decay_days:.5}_days'  # Directory to run the case
@@ -215,6 +216,14 @@ class Origen:
         gamma_spectrum_integral = integrate_opus(gamma_spectrum_file)
         beta_spectrum_integral = integrate_opus(beta_spectrum_file)
         return beta_spectrum_integral / gamma_spectrum_integral
+
+    def get_neutron_integral(self) -> float:
+        """ Calculates spectral integral of neutrons to see if neutrons shoudl be transported by MAVRIC """
+        my_inp = self.ORIGEN_input_file_name  # temp variable to make the code PEP-8 compliant...
+        neutron_spectrum_file = self.cwd + '/' + self.case_dir + '/' + my_inp.replace(".inp", ".000000000000000000.plt")
+        if not os.path.isfile(neutron_spectrum_file):
+            raise FileNotFoundError("Expected OPUS file file:" + neutron_spectrum_file)
+        return integrate_opus(neutron_spectrum_file)
 
 
 class OrigenFromTriton(Origen):
@@ -410,6 +419,9 @@ class OrigenIrradiation(Origen):
         time_interp_steps = self.SAMPLE_F71_position - 3
         if time_interp_steps < 1:
             raise ValueError("Too few time steps")
+        # The self.F33_file_name potentially includes path to that file.
+        # It gets copied to temp directory, where it is just F33_file
+        F33_path, F33_file = os.path.split(self.F33_file_name)
         origen_output = f'''
 =shell
 cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
@@ -427,7 +439,7 @@ bounds {{
 }}
 case(irrad) {{
     lib {{ 
-        file="{self.F33_file_name}" 
+        file="{F33_file}" 
         pos={self.F33_position} 
     }}
     mat{{
@@ -440,7 +452,7 @@ case(irrad) {{
     time {{
         units=DAYS
         start=0
-        t=[{self.irradiate_steps}L 0.001 {self.irradiate_days}]
+        t=[{self.irradiate_steps - 2}L 0.001 {self.irradiate_days}]
     }}
     flux=[{self.irradiate_steps}R {self.irradiate_flux}]
     save {{
@@ -470,9 +482,10 @@ data='{self.SAMPLE_F71_file_name}'
 title='Neutrons'
 typarams=nspectrum
 units=intensity
-time=days
-tmin={self.SAMPLE_DECAY_days}
-tmax={self.SAMPLE_DECAY_days}
+'time=days
+'tmin={self.SAMPLE_DECAY_days}
+'tmax={self.SAMPLE_DECAY_days}
+npos={self.SAMPLE_F71_position} end
 end
 
 =opus
@@ -480,9 +493,10 @@ data='{self.SAMPLE_F71_file_name}'
 title='Gamma'
 typarams=gspectrum
 units=intensity
-time=days
-tmin={self.SAMPLE_DECAY_days}
-tmax={self.SAMPLE_DECAY_days}
+'time=days
+'tmin={self.SAMPLE_DECAY_days}
+'tmax={self.SAMPLE_DECAY_days}
+npos={self.SAMPLE_F71_position} end
 end
 
 =opus
@@ -490,9 +504,10 @@ data='{self.SAMPLE_F71_file_name}'
 title='Beta'
 typarams=bspectrum
 units=intensity
-time=days
-tmin={self.SAMPLE_DECAY_days}
-tmax={self.SAMPLE_DECAY_days}
+'time=days
+'tmin={self.SAMPLE_DECAY_days}
+'tmax={self.SAMPLE_DECAY_days}
+npos={self.SAMPLE_F71_position} end
 '''
         return origen_output
 
@@ -509,7 +524,8 @@ class DoseEstimator:
         self.DECAYED_SAMPLE_F71_position: int = _o.SAMPLE_F71_position
         self.DECAYED_SAMPLE_days: float = _o.SAMPLE_DECAY_days  # Sample decay time [days]
         self.decayed_atom_dens: dict = _o.decayed_atom_dens  # Atom density of the decayed sample
-        self.beta_over_gamma: float = _o.get_beta_to_gamma()  # beta over gamma spectral ratio
+        self.beta_over_gamma: float = _o.get_beta_to_gamma()  # Beta over gamma spectral ratio
+        self.neutron_intensity: float = _o.get_neutron_integral()  # Integral of neutron spectra
         self.case_dir: str = _o.case_dir  # Directory to run the case
         self.cwd: str = _o.cwd  # Current running fir
         self.MAVRIC_input_file_name: str = 'my_dose.inp'
@@ -607,7 +623,7 @@ read parameters
     randomSeed=00003ecd7b4e3e8b
     ceLibrary="ce_v7.1_endf.xml"
     neutrons  photons
-    fissionMult=1  secondaryMult=0
+    fissionMult=1  secondaryMult=1
     perBatch=100000 batches=10
 end parameters
 
@@ -635,14 +651,19 @@ read definitions
     response 2
         title="ANSI standard (1991) flux-to-dose-rate factors [rem/h], photons"
         doseData=9505
-    end response
+    end response 
+'''
 
+        if self.neutron_intensity > 0.0:
+            mavric_output += f'''
     distribution 1
         title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"
         special="origensBinaryConcentrationFile"
         parameters {self.DECAYED_SAMPLE_F71_position} 1 end
         filename="{self.DECAYED_SAMPLE_F71_file_name}"
-    end distribution
+    end distribution'''
+
+        mavric_output += f'''
     distribution 2
         title="Decayed sample after {self.DECAYED_SAMPLE_days} days, photons"
         special="origensBinaryConcentrationFile"
@@ -661,14 +682,18 @@ read definitions
     end gridGeometry
 end definitions
 
-read sources
+read sources'''
+        if self.neutron_intensity > 0.0:
+            mavric_output += f'''
     src 1
         title="Sample neutrons"
         neutron
         useNormConst
         cylinder {self.cyl_r} {self.cyl_r} -{self.cyl_r}
         eDistributionID=1
-    end src
+    end src'''
+
+        mavric_output += f'''
     src 2
         title="Sample photons"
         photon

@@ -160,7 +160,7 @@ class DoseEstimator:
         self.beta_over_gamma: float = -1.0  # beta over gamma spectral ratio
         self.responses: dict = {}  # Dose responses 1: neutron, 2: gamma, 3: beta
 
-    def set_decay_time(self, decay_days: float = 30.0):
+    def set_decay_days(self, decay_days: float = 30.0):
         """ Use this to change decay time, as it also updates the case directory """
         self.DECAYED_SAMPLE_days = decay_days
         self.case_dir: str = f'run_{self.SAMPLE_MASS:.5}_g-{decay_days:.5}_days'  # Directory to run the case
