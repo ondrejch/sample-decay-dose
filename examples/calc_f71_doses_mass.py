@@ -4,7 +4,6 @@ Example use case of DoseF71 -- calculate doses as a function of sample mass
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
-# from sample_decay_dose import DoseF71
 from sample_decay_dose import SampleDose
 
 import numpy as np
@@ -26,12 +25,6 @@ for mass in np.geomspace(1e-3, 1, 30):
     mavric.get_responses()
     print(mavric.responses)
 
-    # de = DoseF71.DoseEstimator('../SCALE_FILE.f71', mass)  # x g salt
-    # de.set_f71_pos(365.24 * 24.0 * 60.0 * 60.0)  # 1 year
-    # de.read_burned_material()
-    # de.run_decay_sample()
-    # de.run_mavric()
-    # de.get_responses()
     r[mass] = mavric.responses
     d[mass] = mavric.total_dose
 

@@ -425,7 +425,7 @@ class OrigenIrradiation(Origen):
         origen_output = f'''
 =shell
 cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
-cp -r ${{INPDIR}}/{self.F33_file_name} .
+cp -r {self.cwd}/{self.F33_file_name} .
 end
 
 =origen

@@ -4,7 +4,6 @@ Example use case of DoseF71 -- calculate doses as a function of decay times
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
-# from sample_decay_dose import DoseF71
 from sample_decay_dose import SampleDose
 import numpy as np
 import json5
