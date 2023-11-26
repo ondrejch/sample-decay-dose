@@ -19,7 +19,7 @@ the MAVRIC input deck in the DoseEstimator class.
 Module scripts are in sample\_decay\_dose directory
 * SampleDose.py - The main module
 * read\_opus - OPUS file reader for spectral integrals
-* isotopes.py - Relative isotopic mass for conversion from atom to mass density 
+* isotopes.py - Relative isotopic masses for conversion from atom to mass density 
 
 Scripts showing how to use the framework are in examples directory
 * calc\*py - scripts showing example calculations 
