@@ -10,13 +10,15 @@ import matplotlib.pyplot as plt
 
 # For sample mass dependency, set LABEL='m'.
 # For decay time dependency, set LABEL='dt'
-LABEL = 'dt12'
+LABEL = 'irr1'
 labels = {'m' : ['mass', 'grams', 'Fuel salt sample, 1 year burn, 30 days decay time'],
           'dt': ['decay time', 'days', 'Fuel salt sample, 1 year burn, 0.1 grams'],
          'dt2': ['decay time', 'days', 'Fuel salt sample, 2 year burn, 0.1 grams'],
         'dt04': ['decay time', 'days', 'Fuel salt sample, 4 day burn, 0.1 grams'],
         'dt12': ['decay time', 'days', 'Fuel salt sample, 12 day burn, 0.1 grams'],
-        'dt28': ['decay time', 'days', 'Fuel salt sample, 28 day burn, 0.1 grams']}
+        'dt28': ['decay time', 'days', 'Fuel salt sample, 28 day burn, 0.1 grams'],
+        'irr1': ['decay time', 'days', 'SS-316 coupon, 2 year irradiation at 1e13 n/s/cm2, 1 gram'],
+          }
 
 particles = {'1': 'Neutron', '2': 'Gamma', '3': 'Beta'}
 colors = {'1': 'sandybrown', '2': 'slategrey', '3': 'cornflowerblue'}
