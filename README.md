@@ -11,7 +11,7 @@ This is implemented in Origen class, which has one child class for reading the F
 for use case (A), and OrigenIrradiation for user case (B).
 2. Use MAVRIC/Monaco to calculate dose response for neutrons and gamma at 30 cm distance away from the sample.
 3. Since Monaco does not transport electrons, use the ratio of beta/gamma spectral integrals for beta dose estimate. 
-This assumes unshielded sample. If a sample container or other shielding is present, a used should modify  
+This assumes unshielded sample. If a sample container or other shielding is present, the user should modify  
 the MAVRIC input deck in DoseEstimator class.
 
 **Repository structure**   
