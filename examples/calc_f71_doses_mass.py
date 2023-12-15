@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Example use case of DoseF71 -- calculate doses as a function of sample mass
+Example use case of SampleDose -- calculate doses as a function of sample mass using F71 nuclides
 Ondrej Chvala <ochvala@utexas.edu>
 """
 

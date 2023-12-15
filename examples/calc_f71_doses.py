@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Example use case of DoseF71 - simple run
+Example use case of SampleDose - simple decay doses of F71 sample
 Ondrej Chvala <ochvala@utexas.edu>
 """
 

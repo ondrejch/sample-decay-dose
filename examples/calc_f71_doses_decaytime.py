@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Example use case of DoseF71 -- calculate doses as a function of decay times
+Example use case of SampleDose -- calculate decay doses of F71 sample as a function of decay times
 Ondrej Chvala <ochvala@utexas.edu>
 """
 

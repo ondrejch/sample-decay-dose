@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Example use case of DoseF71 - simple run
+Example use case of SampleDose - sample irradiation using F33 file
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
