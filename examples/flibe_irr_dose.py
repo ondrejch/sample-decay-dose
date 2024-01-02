@@ -22,7 +22,7 @@ my_flibe = {'3006': 1.383015e-06,
 r = {}
 d = {}
 for decay_days in np.geomspace(1. / 24., 360, 60):
-    irr = SampleDose.OrigenIrradiation('../SCALE_FILE.mix0007.f33', 1.0)
+    irr = SampleDose.OrigenIrradiation('../SCALE_FILE.mix0001.f33', 1e3)  # 1 kg
     irr.set_decay_days(decay_days)
     irr.irradiate_days = 30.0  # 30 days
     irr.irradiate_flux = 5e6  # n/s/cm2
