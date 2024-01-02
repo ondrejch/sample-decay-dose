@@ -8,17 +8,30 @@ from sample_decay_dose import SampleDose
 import numpy as np
 import json5
 
-'''atomflibe 1 1.95 3
+'''atomflibeLi7 1 1.95 3
          3000 2
          4000 1
          9000 4
          1.0 293.0
-         3007 99.995 3006 0.005 end'''
+         3007 99.995 3006 0.005 end
+atomflibeNat 1 1.95 3
+         3000 2
+         4000 1
+         9000 4
+         1.0 293.0
+         3007 95.15 3006 4.85 end
+         '''
 
-my_flibe = {'li-6': 1.383015e-06,
-            'li-7': 2.371318e-02,
-            'be-9': 1.185729e-02,
-            'f-19': 4.742914e-02}
+my_flibe_li7 = {'li-6': 1.383015e-06,
+                'li-7': 2.371318e-02,
+                'be-9': 1.185729e-02,
+                'f-19': 4.742914e-02}
+
+my_flibe_nat = {'li-6': 1.332305e-03,
+                'li-7': 2.240917e-02,
+                'be-9': 1.187073e-02,
+                'f-19': 4.748294e-02}
+
 r = {}
 d = {}
 for decay_days in np.geomspace(1. / 24., 360, 60):
@@ -26,7 +39,7 @@ for decay_days in np.geomspace(1. / 24., 360, 60):
     irr.set_decay_days(decay_days)
     irr.irradiate_days = 30.0  # 30 days
     irr.irradiate_flux = 5e6  # n/s/cm2
-    irr.write_atom_dens(my_flibe)
+    irr.write_atom_dens(my_flibe_nat)
     irr.run_irradiate_decay_sample()
 
     mavric = SampleDose.DoseEstimator(irr)
