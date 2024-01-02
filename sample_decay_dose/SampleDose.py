@@ -593,6 +593,10 @@ class DoseEstimator:
                         else:
                             self.responses[s[1]] = {'value': float(s[2]), 'stdev': float(s[3])}
 
+        if s is None:   # This should handle MONACO crashes
+            s[1] = -1.0
+            s[2] = -1.0
+            s[3] = -1.0
         self.responses['3'] = {'value': self.beta_over_gamma * float(s[2]), 'stdev': self.beta_over_gamma * float(s[3])}
 
         os.chdir(self.cwd)
@@ -636,7 +640,7 @@ Sample dose, {self.sample_weight} g, at x={self.det_x} cm
 {MAVRIC_NG_XSLIB}
 
 read parameters
-    randomSeed=00003ecd7b4e3e8b
+    randomSeed=0000000100000001
     ceLibrary="ce_v7.1_endf.xml"
     neutrons  photons
     fissionMult=1  secondaryMult=1
