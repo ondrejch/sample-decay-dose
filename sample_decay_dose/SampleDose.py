@@ -286,7 +286,7 @@ class OrigenFromTriton(Origen):
         with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
             f.write(self.origen_deck())
 
-        print(f"\nRUNNING {self.ORIGEN_input_file_name}")
+        print(f"\nRUNNING {self.case_dir}/{self.ORIGEN_input_file_name}")
         run_scale(self.ORIGEN_input_file_name)
 
         self.decayed_atom_dens = get_burned_material_atom_dens(self.SAMPLE_F71_file_name,
@@ -414,7 +414,7 @@ class OrigenIrradiation(Origen):
         with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
             f.write(self.origen_deck())
 
-        print(f"\nRUNNING {self.ORIGEN_input_file_name}")
+        print(f"\nRUNNING {self.case_dir}/{self.ORIGEN_input_file_name}")
         run_scale(self.ORIGEN_input_file_name)
 
         self.decayed_atom_dens = get_burned_material_atom_dens(self.SAMPLE_F71_file_name,
@@ -567,7 +567,7 @@ class DoseEstimator:
         with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
             f.write(self.mavric_deck())
 
-        print(f"\nRUNNING {self.MAVRIC_input_file_name}")
+        print(f"\nRUNNING {self.case_dir}/{self.MAVRIC_input_file_name}")
         run_scale(self.MAVRIC_input_file_name)
         os.chdir(self.cwd)
 
