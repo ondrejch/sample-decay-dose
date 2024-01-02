@@ -44,7 +44,7 @@ r = {}
 d = {}
 for decay_days in np.geomspace(1. / 24., 360, 60):
     irr = SampleDose.OrigenIrradiation('../SCALE_FILE.mix0007.f33', 1.0)
-    irr.set_decay_days(decay_days)  # 1 hour
+    irr.set_decay_days(decay_days)
     irr.irradiate_days = 2.0 * 365.24  # 2 years
     irr.irradiate_flux = 1e13  # n/s/cm2
     irr.write_atom_dens(my_SS316_w_cobalt)
