@@ -15,45 +15,40 @@ SCALE_bin_path: str = os.getenv('SCALE_BIN', '/opt/scale6.3.1/bin/')
 ATOM_DENS_MINIMUM: float = 1e-60
 MAVRIC_NG_XSLIB: str = 'v7.1-28n19g'
 
+# Predefined lists of atom densities for convenience. Check and make yours :)
 # https://www.sandmeyersteel.com/316H.html
-ADENS_SS316H_HOT: dict = {'c': 0.0002384,
-                          'n-14': 0.000254609,
-                          'n-15': 9.30164e-07,
-                          'al-27': 5.30544e-05,
-                          'si-28': 1.56475e-05,
-                          'si-29': 7.94907e-07,
-                          'si-30': 5.24622e-07,
-                          'p-31': 6.93324e-05,
-                          's-32': 4.23788e-05,
-                          's-33': 3.34604e-07,
-                          's-34': 1.89609e-06,
-                          's-36': 4.46139e-09,
-                          'ti-46': 3.28985e-06,
-                          'ti-47': 2.96684e-06,
-                          'ti-48': 2.93973e-05,
-                          'ti-49': 2.15734e-06,
-                          'ti-50': 2.06562e-06,
-                          'cr-50': 0.000677912,
-                          'cr-52': 0.0130729,
-                          'cr-53': 0.00148236,
-                          'cr-54': 0.00036899,
-                          'mn-55': 1.73977e-05,
-                          'fe-54': 0.00390032,
-                          'fe-56': 0.0612267,
-                          'fe-57': 0.00141399,
-                          'fe-58': 0.000188176,
-                          'ni-58': 6.64309e-05,
-                          'ni-60': 2.55891e-05,
-                          'ni-61': 1.11234e-06,
-                          'ni-62': 3.54662e-06,
-                          'ni-64': 9.03221e-07,
-                          'mo-92': 0.00018364,
-                          'mo-94': 0.00011476,
-                          'mo-95': 0.00019769,
-                          'mo-96': 0.000207388,
-                          'mo-97': 0.000118863,
-                          'mo-98': 0.000300762,
-                          'mo-100': 0.00012023}
+ADENS_SS316H_HOT: dict = {'c': 0.0002384, 'n-14': 0.000254609, 'n-15': 9.30164e-07, 'al-27': 5.30544e-05,
+                          'si-28': 1.56475e-05, 'si-29': 7.94907e-07, 'si-30': 5.24622e-07, 'p-31': 6.93324e-05,
+                          's-32': 4.23788e-05, 's-33': 3.34604e-07, 's-34': 1.89609e-06, 's-36': 4.46139e-09,
+                          'ti-46': 3.28985e-06, 'ti-47': 2.96684e-06, 'ti-48': 2.93973e-05, 'ti-49': 2.15734e-06,
+                          'ti-50': 2.06562e-06, 'cr-50': 0.000677912, 'cr-52': 0.0130729, 'cr-53': 0.00148236,
+                          'cr-54': 0.00036899, 'mn-55': 1.73977e-05, 'fe-54': 0.00390032, 'fe-56': 0.0612267,
+                          'fe-57': 0.00141399, 'fe-58': 0.000188176, 'ni-58': 6.64309e-05, 'ni-60': 2.55891e-05,
+                          'ni-61': 1.11234e-06, 'ni-62': 3.54662e-06, 'ni-64': 9.03221e-07, 'mo-92': 0.00018364,
+                          'mo-94': 0.00011476, 'mo-95': 0.00019769, 'mo-96': 0.000207388, 'mo-97': 0.000118863,
+                          'mo-98': 0.000300762, 'mo-100': 0.00012023}
+
+ADENS_SS316H_COLD: dict = {'c': 0.000311167, 'si-28': 0.00153402, 'si-29': 7.79293e-05, 'si-30': 5.14317e-05,
+                           'p-31': 6.78722e-05, 's-32': 4.15187e-05, 's-33': 3.27814e-07, 's-34': 1.85761e-06,
+                           's-36': 4.37085e-09, 'cr-50': 0.000663653, 'cr-52': 0.0127979, 'cr-53': 0.00145118,
+                           'cr-54': 0.000361229, 'mn-55': 0.00170071, 'fe-54': 0.0031951, 'fe-56': 0.0501563,
+                           'fe-57': 0.00115833, 'fe-58': 0.000154152, 'co-59': 7.93501e-05, 'ni-58': 0.00650228,
+                           'ni-60': 0.00250467, 'ni-61': 0.000108876, 'ni-62': 0.000347145, 'ni-64': 8.84075e-05,
+                           'mo-92': 0.000179806, 'mo-94': 0.000112364, 'mo-95': 0.000193563, 'mo-96': 0.000203058,
+                           'mo-97': 0.000116381, 'mo-98': 0.000294483, 'mo-100': 0.00011772}
+ADENS_HDPE_COLD: dict = {'c-12': 3.992647e-02, 'c-13': 4.318339e-04, 'h-poly': 8.071660e-02}
+ADENS_CONCRETE_COLD: dict = {'h-1': 0.01373939, 'o-16': 0.04606872, 'na-23': 0.001747024, 'al-27': 0.001745235,
+                             'si-28': 0.01532717, 'si-29': 0.0007786319, 'si-30': 0.0005138805, 'ca-40': 0.001474023,
+                             'ca-42': 9.837866e-06, 'ca-43': 2.052723e-06, 'ca-44': 3.171838e-05, 'ca-46': 6.082143e-08,
+                             'ca-48': 2.843401e-06, 'fe-54': 2.029158e-05, 'fe-56': 0.0003185345, 'fe-57': 7.356349e-06,
+                             'fe-58': 9.789951e-07, 'co-59': 2.350275e-07, 'eu-151': 4.357685e-08,
+                             'eu-153': 4.756903e-08}
+ADENS_KAOWOOL_COLD: dict = {'b-10': 4.39982e-07, 'b-11': 1.77098e-06, 'o-16': 0.00300423, 'o-17': 1.14439e-06,
+                            'o-18': 6.17368e-06, 'al-27': 0.000850507, 'si-28': 0.000770832, 'si-29': 3.91588e-05,
+                            'si-30': 2.5844e-05, 'ca-40': 1.66602e-06, 'ca-42': 1.11193e-08, 'ca-43': 2.32009e-09,
+                            'ca-44': 3.58497e-08, 'ca-46': 6.87435e-11, 'ca-48': 3.21376e-09, 'ti-46': 1.69203e-06,
+                            'ti-47': 1.5259e-06, 'ti-48': 1.51195e-05, 'ti-49': 1.10956e-06, 'ti-50': 1.06239e-06,
+                            'fe-54': 7.05374e-07, 'fe-56': 1.10729e-05, 'fe-57': 2.55721e-07, 'fe-58': 3.40317e-08}
 
 
 def get_rho_from_atom_density(adens: dict) -> float:
@@ -182,13 +177,13 @@ def atom_dens_for_origen(adens: dict) -> str:
     return output
 
 
-def atom_dens_for_mavric(adens: dict) -> str:
+def atom_dens_for_mavric(adens: dict, mix_number: int = 1) -> str:
     """ Print atom densities in SCALE CSAS/MAVRIC input format """
     output = ''
     for k, v in adens.items():
         if v > 0.0:
             k = re.sub('m$', '', k)
-            output += f'{k} 1 0 {v} 873 end\n'
+            output += f'{k} {mix_number} 0 {v} 873 end\n'
     return output
 
 
@@ -551,6 +546,8 @@ class DoseEstimator:
         self.det_x: float = 30.0  # Detector distance [cm]
         self.N_planes_box: int = 5  # Planes per box
         self.N_planes_cyl: int = 8  # Planes per cylinder
+        self.histories_per_batch: int = 100000  # Monaco hist per batch
+        self.batches: int = 10  # Monaco number of batches in total
         self.box_a: float = np.NaN
         self.cyl_r: float = np.NaN
 
@@ -581,6 +578,7 @@ class DoseEstimator:
         tally_sep: str = 'Final Tally Results Summary'
         is_in_tally: bool = False
 
+        s: list[str] = ['']
         with open(self.MAVRIC_out_file_name, 'r') as f:
             for line in f.read().splitlines():
                 if line.count(tally_sep) > 0:
@@ -593,7 +591,7 @@ class DoseEstimator:
                         else:
                             self.responses[s[1]] = {'value': float(s[2]), 'stdev': float(s[3])}
 
-        if s is None:   # This should handle MONACO crashes
+        if not s:  # This should handle MONACO crashes
             s[1] = -1.0
             s[2] = -1.0
             s[3] = -1.0
@@ -644,7 +642,7 @@ read parameters
     ceLibrary="ce_v7.1_endf.xml"
     neutrons  photons
     fissionMult=1  secondaryMult=1
-    perBatch=100000 batches=10
+    perBatch={self.histories_per_batch} batches={self.batches}
 end parameters
 
 read comp
@@ -725,7 +723,187 @@ end sources
 
 read importanceMap
    gridGeometryID=1
-'   adjointFLuxes="{adjoint_flux_file}"
+'   adjointFluxes="{adjoint_flux_file}"
+   adjointSource 1
+        locationID=1
+        responseID=1
+   end adjointSource
+   adjointSource 2
+        locationID=1
+        responseID=2
+   end adjointSource
+end importanceMap
+
+read tallies
+    pointDetector 1
+        title="neutron detector"
+        neutron
+        locationID=1
+        responseID=1
+    end pointDetector
+    pointDetector 2
+        title="photon detector"
+        photon
+        locationID=1
+        responseID=2
+    end pointDetector
+end tallies
+
+end data
+end
+'''
+        return mavric_output
+
+
+class DoseEstimatorTank(DoseEstimator):
+    """ MAVRIC calculation of rem/h doses from the decayed sample in a tank made of materials """
+
+    def __init__(self, _o: Origen = None):
+        """ This reads decayed sample information from the Origen object """
+        super().__init__(_o)  # Init DoseEstimator
+        self.layers_thicknesses: list[float] = [2.54, 2.0 * 2.54, 3.0 * 2.54]
+        self.layers_mats: list[dict] = [ADENS_SS316H_HOT, ADENS_HDPE_COLD, ADENS_SS316H_COLD]
+        if len(self.layers_thicknesses) != len(self.layers_mats):
+            raise ValueError("There needs to be the same amount of layers in both lists.")
+
+    def run_mavric(self):
+        """ Writes Mavric inputs and runs the case """
+        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
+            raise FileNotFoundError("Expected decayed sample F71 file: \n" +
+                                    self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
+        os.chdir(self.cwd + '/' + self.case_dir)
+
+        with open(self.SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
+            f.write(atom_dens_for_mavric(self.decayed_atom_dens, 1))
+            for k in range(len(self.layers_mats)):
+                f.write(atom_dens_for_mavric(self.layers_mats[k], k + 10))
+
+        with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
+            f.write(self.mavric_deck())
+
+        print(f"\nRUNNING {self.case_dir}/{self.MAVRIC_input_file_name}")
+        run_scale(self.MAVRIC_input_file_name)
+        os.chdir(self.cwd)
+
+    def mavric_deck(self) -> str:
+        """ MAVRIC dose calculation input file """
+        self.cyl_r = get_cyl_r(self.sample_volume)
+        tank_r = self.cyl_r  # current outer layer [cm]
+        self.box_a: float = 10.0  # Problem box distance offset [cm]
+        adjoint_flux_file = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
+        mavric_output = f'''
+=shell
+cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_F71_file_name} .
+cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
+'cp -r ${{INPDIR}}/{adjoint_flux_file} .
+end
+
+=mavric parm=(   )
+Sample dose, {self.sample_weight} g, at x={self.det_x} cm
+{MAVRIC_NG_XSLIB}
+
+read parameters
+    randomSeed=0000000100000001
+    ceLibrary="ce_v7.1_endf.xml"
+    neutrons  photons
+    fissionMult=1  secondaryMult=1
+    perBatch={self.histories_per_batch} batches={self.batches}
+end parameters
+
+read comp
+<{self.SAMPLE_ATOM_DENS_file_name_MAVRIC}
+end comp
+
+read geometry
+global unit 1
+    cylinder 1 {self.cyl_r} 2p {self.cyl_r}
+    media 1 1 1
+'''
+        x_planes: list[float] = []  # list of cylinder boundaries for gridgeometry
+        k: int = 0
+        for k in range(len(self.layers_mats)):
+            tank_r += self.layers_thicknesses[k]
+            mavric_output += f'''
+    cylinder {k + 2} {tank_r} 2p {tank_r}   
+    media {k + 10}  1 -{k + 1} {k + 2}'''
+            x_planes.append(tank_r)
+        self.det_x = tank_r + 0.5  # Detector is 5mm next to the tank
+        self.box_a += tank_r
+        x_planes_str: str = " ".join([f' {x:.5f} -{x:.5f}' for x in x_planes])
+
+        mavric_output += f'''
+    cuboid 99999  6p {self.box_a}
+    media 0 1 99999 -{k + 2}
+boundary 99999
+end geometry
+
+read definitions
+     location 1
+        position {self.det_x} 0 0
+    end location
+    response 1
+        title="ANSI standard (1991) flux-to-dose-rate factors [rem/h], neutrons"
+        doseData=9031
+    end response
+    response 2
+        title="ANSI standard (1991) flux-to-dose-rate factors [rem/h], photons"
+        doseData=9505
+    end response 
+'''
+
+        if self.neutron_intensity > 0.0:
+            mavric_output += f'''
+    distribution 1
+        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"
+        special="origensBinaryConcentrationFile"
+        parameters {self.DECAYED_SAMPLE_F71_position} 1 end
+        filename="{self.DECAYED_SAMPLE_F71_file_name}"
+    end distribution'''
+
+        mavric_output += f'''
+    distribution 2
+        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, photons"
+        special="origensBinaryConcentrationFile"
+        parameters {self.DECAYED_SAMPLE_F71_position} 5 end
+        filename="{self.DECAYED_SAMPLE_F71_file_name}"
+    end distribution
+
+    gridGeometry 1
+        title="Grid over the problem"
+        xLinear {self.N_planes_box} -{self.box_a} {self.box_a}
+        yLinear {self.N_planes_box} -{self.box_a} {self.box_a}
+        zLinear {self.N_planes_box} -{self.box_a} {self.box_a}
+        xLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
+        yLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
+        zLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
+        xPlanes {x_planes_str} end
+    end gridGeometry
+end definitions
+
+read sources'''
+        if self.neutron_intensity > 0.0:
+            mavric_output += f'''
+    src 1
+        title="Sample neutrons"
+        neutron
+        useNormConst
+        cylinder {self.cyl_r} {self.cyl_r} -{self.cyl_r}
+        eDistributionID=1
+    end src'''
+
+        mavric_output += f'''
+    src 2
+        title="Sample photons"
+        photon
+        useNormConst
+        cylinder {self.cyl_r} {self.cyl_r} -{self.cyl_r}
+        eDistributionID=2
+    end src
+end sources
+
+read importanceMap
+   gridGeometryID=1
+'   adjointFluxes="{adjoint_flux_file}"
    adjointSource 1
         locationID=1
         responseID=1

@@ -14,6 +14,9 @@ This is implemented in the **DoseEstimator** class.
 3. Since Monaco does not transport electrons, the ratio of beta/gamma spectral integrals is used for the beta dose estimate. 
 This assumes an unshielded sample. If a sample container or other shielding is present, the user shall modify  
 the MAVRIC input deck, **mavric_deck()** method of the **DoseEstimator** class.
+4. An example of how to modify the **DoseEstimator** class is its child **DoseEstimatorTank** class, where 
+the sample is surrounded by layers of shielding. Thicknesses and atom densities of the shielding layers can be easily specified. 
+Three layers of shielding are included as a default and an example.    
 
 ## Repository structure   
 
@@ -25,6 +28,7 @@ Module scripts are in the **sample\_decay\_dose** directory
 Scripts showing how to use the framework are in the **examples** directory
 * **calc\*py** - scripts showing example calculations 
 * **plot\_doses.py** - results plotter
+* ** ** 
 
 ## Installation
 
