@@ -7,8 +7,8 @@ Ondrej Chvala <ochvala@utexas.edu>
 
 from sample_decay_dose import SampleDose
 
-sample_mass: float = 500.0e3  # 500 kg
-decay_days: float = 10.0 / 24.0 / 60.0  # 10 minutes
+sample_mass: float = 1200.0e3  # 1200 kg
+decay_days: float = 2.0  # 2 days
 
 # Load and decay the nuclide vector from F71 file
 # Set F71 file path and sample mass [g]
@@ -46,6 +46,7 @@ mavric.batches = 20
 mavric.run_mavric()
 mavric.get_responses()
 
-# Print results
+# Print gamma dose
 print(mavric.responses)
-print(mavric.total_dose)
+print(f'Neutron dose {mavric.responses[1]["value"]} +- {mavric.responses[1]["stdev"]}  rem/h')
+print(f'Gamma dose   {mavric.responses[2]["value"]} +- {mavric.responses[2]["stdev"]}  rem/h')

@@ -1038,7 +1038,7 @@ end geometry
 
 read definitions
      location 1
-        position {self.det_x} 0 0
+        position {self.det_x} 0 {-self.sample_offset_z/2.0}
     end location
     response 1
         title="ANSI standard (1991) flux-to-dose-rate factors [rem/h], neutrons"
@@ -1086,7 +1086,7 @@ read sources'''
         title="Sample neutrons"
         neutron
         useNormConst
-        cylinder {self.cyl_r} {self.cyl_r} -{self.cyl_r}
+        cylinder {self.cyl_r} {tank_h2-self.sample_offset_z} {-tank_h2}
         eDistributionID=1
     end src'''
 
@@ -1095,7 +1095,7 @@ read sources'''
         title="Sample photons"
         photon
         useNormConst
-        cylinder {self.cyl_r} {self.cyl_r} -{self.cyl_r}
+        cylinder {self.cyl_r} {tank_h2-self.sample_offset_z} {-tank_h2}
         eDistributionID=2
     end src
 end sources
