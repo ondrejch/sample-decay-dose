@@ -156,24 +156,26 @@ def get_cyl_r(cyl_volume: float) -> float:
     return (cyl_volume / (2.0 * math.pi)) ** (1.0 / 3.0)
 
 
-def get_cyl_h_r_4_1(cyl_volume: float) -> float:
+def get_cyl_r_4_1(cyl_volume: float) -> float:
     """ Radius of a 4:1 H:R cylinder from its volume
         V = pi r^2 h = pi r^2 4 r = 4 pi r^3
         r = (V / 4 pi) ^ 1/3
+        h_cyl = 4 * r
     """
     return (cyl_volume / (4.0 * math.pi)) ** (1.0 / 3.0)
 
 
-def get_fill_height_4_1(sample_volume: float, cyl_volume: float) -> float:
+def get_fill_height_4_1(fill_volume: float, cyl_volume: float) -> float:
     """ Fill height of 4:1 H:R cylinder
         V_cyl = pi r^2 h_cyl = pi r^2 4 r = 4 pi r^3
-        r = (V_cyl / 4 pi) ^ 1/3
-        h_cyl = 4 * (V_cyl / 4 pi) ^ 1/3
+        r = (V_cyl / 4 pi) ^ 1/3;  h_cyl = 4 * r
+        V_fill = pi r^2 h_fill
+        h_fill = V_fill / (pi r^2)
     """
-    if not sample_volume < cyl_volume:
+    if not fill_volume < cyl_volume:
         raise ValueError("Fill volume is larger than the cylinder")
     r: float = (cyl_volume / (4.0 * math.pi)) ** (1.0 / 3.0)
-    return -1
+    return fill_volume / (math.pi * r ** 2)
 
 
 def run_scale(deck_file: str):
@@ -782,6 +784,8 @@ class DoseEstimatorSquareTank(DoseEstimator):
     def __init__(self, _o: Origen = None):
         """ This reads decayed sample information from the Origen object """
         super().__init__(_o)  # Init DoseEstimator
+        self.cyl_r: (None, float) = None  # tank cylinder inner radius = sample radius
+        self.box_a: float = 10.0  # Problem box distance offset [cm]
         self.layers_thicknesses: list[float] = [2.54, 2.0 * 2.54, 3.0 * 2.54]
         self.layers_mats: list[dict] = [ADENS_SS316H_HOT, ADENS_HDPE_COLD, ADENS_SS316H_COLD]
         self.layers_temperature_K: list[float] = [873.0, 300.0, 300.0]
@@ -810,8 +814,7 @@ class DoseEstimatorSquareTank(DoseEstimator):
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
         self.cyl_r = get_cyl_r(self.sample_volume)
-        tank_r = self.cyl_r  # current outer layer [cm]
-        self.box_a: float = 10.0  # Problem box distance offset [cm]
+        tank_r: float = self.cyl_r  # current outer layer [cm]
         adjoint_flux_file = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
         mavric_output = f'''
 =shell
@@ -821,7 +824,7 @@ cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
 end
 
 =mavric parm=(   )
-Sample dose, {self.sample_weight} g, at x={self.det_x} cm
+DoseEstimatorSquareTank, {self.sample_weight} g, layers {self.layers_thicknesses}
 {MAVRIC_NG_XSLIB}
 
 read parameters
@@ -957,46 +960,30 @@ end
         return mavric_output
 
 
-class DoseEstimatorStorageTank(DoseEstimator):
+class DoseEstimatorStorageTank(DoseEstimatorSquareTank):
     """ MAVRIC calculation of rem/h doses from the decayed sample in a storage tank made of materials
     The storage tank is 4:1  H:R cylinder, which volume is 20% larger than that of the sample.
     Tank plenum is filled with hot helium.
+    Geometry center is the middle of the tank, not the sample!
     """
 
     def __init__(self, _o: Origen = None):
         """ This reads decayed sample information from the Origen object """
+        self.plenum_volume_fraction: float = 0.2  # gas plenum above fill is +20% of sample volume
+        self.sample_offset_z: (None, float) = None  # tank cylinder z - sample cylinder z [cm]
+        self.sample_h2: (None, float) = None  # half-height of the sample
         super().__init__(_o)  # Init DoseEstimator
-        self.layers_thicknesses: list[float] = [2.54, 2.0 * 2.54, 3.0 * 2.54]
-        self.layers_mats: list[dict] = [ADENS_SS316H_HOT, ADENS_HDPE_COLD, ADENS_SS316H_COLD]
-        self.layers_temperature_K: list[float] = [873.0, 300.0, 300.0]
-        if len(self.layers_thicknesses) != len(self.layers_mats):
-            raise ValueError("There needs to be the same amount of layers in both lists.")
-
-    def run_mavric(self):
-        """ Writes Mavric inputs and runs the case """
-        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
-            raise FileNotFoundError("Expected decayed sample F71 file: \n" +
-                                    self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
-        os.chdir(self.cwd + '/' + self.case_dir)
-
-        with open(self.SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
-            f.write(atom_dens_for_mavric(self.decayed_atom_dens, 1, self.sample_temperature_K))
-            for k in range(len(self.layers_mats)):
-                f.write(atom_dens_for_mavric(self.layers_mats[k], k + 10, self.layers_temperature_K[k]))
-
-        with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
-            f.write(self.mavric_deck())
-
-        print(f"\nRUNNING {self.case_dir}/{self.MAVRIC_input_file_name}")
-        run_scale(self.MAVRIC_input_file_name)
-        os.chdir(self.cwd)
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
-        self.cyl_r = get_cyl_r(self.sample_volume)
-        tank_r = self.cyl_r  # current outer layer [cm]
-        self.box_a: float = 10.0  # Problem box distance offset [cm]
+        tank_inner_volume: float = self.sample_volume + self.sample_volume * self.plenum_volume_fraction
+        self.cyl_r = get_cyl_r_4_1(tank_inner_volume)
         adjoint_flux_file = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
+        tank_r: float = self.cyl_r  # current outer layer radius [cm]
+        tank_h2: float = 2.0 * self.cyl_r  # current outer layer half-height [cm]
+        self.sample_h2 = get_fill_height_4_1(self.sample_volume, tank_inner_volume) / 2.0
+        self.sample_offset_z = 2.0 * (tank_h2 - self.sample_h2)
+
         mavric_output = f'''
 =shell
 cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_F71_file_name} .
@@ -1005,7 +992,7 @@ cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
 end
 
 =mavric parm=(   )
-Sample dose, {self.sample_weight} g, at x={self.det_x} cm
+DoseEstimatorStorageTank, {self.sample_weight} g, layers {self.layers_thicknesses}, plenum fraction {self.plenum_volume_fraction}
 {MAVRIC_NG_XSLIB}
 
 read parameters
@@ -1018,20 +1005,26 @@ end parameters
 
 read comp
 <{self.SAMPLE_ATOM_DENS_file_name_MAVRIC}
+helium 2 end
 end comp
 
 read geometry
 global unit 1
-    cylinder 1 {self.cyl_r} 2p {self.cyl_r}
+    cylinder 1 {tank_r} {tank_h2-self.sample_offset_z} {-tank_h2}
+    cylinder 2 {tank_r} {tank_h2} {tank_h2-self.sample_offset_z} 
     media 1 1 1
+    media 2 1 2
 '''
-        x_planes: list[float] = []  # list of cylinder boundaries for gridgeometry
+        x_planes: list[float] = [tank_h2 - self.sample_offset_z]  # list of cylinder boundaries for gridgeometry
         k: int = 0
         for k in range(len(self.layers_mats)):
             tank_r += self.layers_thicknesses[k]
-            mavric_output += f'''
-    cylinder {k + 2} {tank_r} 2p {tank_r}   
-    media {k + 10}  1 -{k + 1} {k + 2}'''
+            tank_h2 += self.layers_thicknesses[k]
+            mavric_output += f'    cylinder {k + 3} {tank_r} 2p {tank_h2}\n'
+            if k == 0:
+                mavric_output += f'media 10 1 -1 -2 3\n'
+            else:
+                mavric_output += f'media {k + 10}  1 -{k + 2} {k + 3}\n'
             x_planes.append(tank_r)
         self.det_x = tank_r + 0.5  # Detector is 5mm next to the tank
         self.box_a += tank_r
@@ -1039,7 +1032,7 @@ global unit 1
 
         mavric_output += f'''
     cuboid 99999  6p {self.box_a}
-    media 0 1 99999 -{k + 2}
+    media 0 1 99999 -{k + 3}
 boundary 99999
 end geometry
 
