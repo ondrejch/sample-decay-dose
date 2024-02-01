@@ -27,13 +27,16 @@ origen_triton.set_decay_days(decay_days)
 origen_triton.run_decay_sample()
 
 # Calculate dose next to the tank
-mavric = SampleDose.DoseEstimatorTank(origen_triton)
+mavric = SampleDose.DoseEstimatorSquareTank(origen_triton)
 
 # Material composition of additional layers, in dictionaries of atom densities
 mavric.layers_mats = [SampleDose.ADENS_SS316H_HOT, SampleDose.ADENS_KAOWOOL_COLD, SampleDose.ADENS_CONCRETE_COLD]
 
 # Thicknesses of additional layers [cm]
 mavric.layers_thicknesses = [2.54, 2.0 * 2.54, 10.0 * 2.54]
+
+# Temperatures of additional layers [cm]
+mavric.layers_temperature_K = [873.0, 300.0, 300.0]
 
 # Monaco histories
 mavric.histories_per_batch = 150000
