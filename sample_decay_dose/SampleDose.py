@@ -4,6 +4,7 @@ Handling dose [rem/h] in SCALE
 Ondrej Chvala <ochvala@utexas.edu>
 """
 import os
+import shutil
 import re
 import subprocess
 import math
@@ -592,7 +593,8 @@ class DoseEstimator:
         self.decayed_atom_dens: dict = _o.decayed_atom_dens  # Atom density of the decayed sample
         self.beta_over_gamma: float = _o.get_beta_to_gamma()  # Beta over gamma spectral ratio
         self.neutron_intensity: float = _o.get_neutron_integral()  # Integral of neutron spectra
-        self.case_dir: str = _o.case_dir  # Directory to run the case
+        self.ORIGEN_dir: str = _o.case_dir  # Directory to run the case
+        self.case_dir: str = self.ORIGEN_dir + '_MAVRIC'
         self.cwd: str = _o.cwd  # Current running fir
         self.MAVRIC_input_file_name: str = 'my_dose.inp'
         self.MAVRIC_out_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'out')
@@ -608,15 +610,21 @@ class DoseEstimator:
 
     def run_mavric(self):
         """ Writes Mavric inputs and runs the case """
-        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
+        if not os.path.isfile(self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
             raise FileNotFoundError("Expected decayed sample F71 file: \n" +
-                                    self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
+                                    self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
+        if not os.path.exists(self.case_dir):
+            os.mkdir(self.case_dir)
+        os.chdir(self.case_dir)
+
+        shutil.copy2(self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name,
+                     self.cwd + '/' + self.case_dir)
         os.chdir(self.cwd + '/' + self.case_dir)
 
         with open(self.SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
             f.write(atom_dens_for_mavric(self.decayed_atom_dens, 1, self.sample_temperature_K))
 
-        with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
+        with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRIC input deck
             f.write(self.mavric_deck())
 
         if self.debug > 0:
@@ -829,9 +837,16 @@ class DoseEstimatorSquareTank(DoseEstimator):
 
     def run_mavric(self):
         """ Writes Mavric inputs and runs the case """
-        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
+        self.case_dir += "".join([f'_{s:.3f}' for s in self.layers_thicknesses])  # unique IDs for parallel run
+        if not os.path.isfile(self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
             raise FileNotFoundError("Expected decayed sample F71 file: \n" +
-                                    self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
+                                    self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
+        if not os.path.exists(self.case_dir):
+            os.mkdir(self.case_dir)
+        os.chdir(self.case_dir)
+
+        shutil.copy2(self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name,
+                     self.cwd + '/' + self.case_dir)
         os.chdir(self.cwd + '/' + self.case_dir)
 
         with open(self.SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
