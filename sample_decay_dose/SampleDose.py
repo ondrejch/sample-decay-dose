@@ -62,11 +62,11 @@ def nicely_print_atom_dens(adens: dict, n_top_nuc: int = 20, n_per_row: int = 5)
     while i_nuc < n_top_nuc:
         ele: str = nuclide_list[i_nuc][0]
         ade: float = nuclide_list[i_nuc][1]
-        output += f'{ele:>7s} {ade:.2e} '
+        output += f'{ele:>7s} {ade:.4e} '
         i_nuc += 1
         if i_nuc % n_per_row == 0:
             output += '\n'
-    print(output)
+    print(output.rstrip())
 
 
 def get_rho_from_atom_density(adens: dict) -> float:
@@ -350,6 +350,7 @@ cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
 end
 
 =origen
+' {NOW} 
 options{{
     digits=6
 }}
@@ -491,6 +492,7 @@ cp -r {self.cwd}/{self.F33_file_name} .
 end
 
 =origen
+' {NOW} 
 options{{
     digits=6
 }}
@@ -688,7 +690,7 @@ cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
 end
 
 =mavric parm=(   )
-Sample dose, {self.sample_weight} g, at x={self.det_x} cm
+{NOW} Sample dose, {self.sample_weight} g, at x={self.det_x} cm
 {MAVRIC_NG_XSLIB}
 
 read parameters
@@ -858,7 +860,7 @@ cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
 end
 
 =mavric parm=(   )
-DoseEstimatorSquareTank, {self.sample_weight} g, layers {self.layers_thicknesses}
+{NOW} DoseEstimatorSquareTank, {self.sample_weight} g, layers {self.layers_thicknesses}
 {MAVRIC_NG_XSLIB}
 
 read parameters
@@ -1031,7 +1033,7 @@ cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
 end
 
 =mavric parm=(   )
-DoseEstimatorStorageTank, {self.sample_weight} g, layers {self.layers_thicknesses}, plenum fraction {self.plenum_volume_fraction}
+{NOW} DoseEstimatorStorageTank, {self.sample_weight} g, layers {self.layers_thicknesses}, plenum fraction {self.plenum_volume_fraction}
 {MAVRIC_NG_XSLIB}
 
 read parameters
