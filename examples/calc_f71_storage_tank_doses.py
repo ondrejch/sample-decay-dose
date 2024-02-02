@@ -38,9 +38,12 @@ mavric.layers_thicknesses = [2.54, 2.0 * 2.54, 10.0 * 2.54]
 # Temperatures of additional layers [cm]
 mavric.layers_temperature_K = [873.0, 300.0, 300.0]
 
+# Add more planes since the source is large
+mavric.N_planes_cyl = 12
+
 # Monaco histories
-mavric.histories_per_batch = 150000
-mavric.batches = 20
+mavric.histories_per_batch = 15000  # 150000
+mavric.batches = 4  # 20
 
 # Run simulation
 mavric.run_mavric()
@@ -48,5 +51,5 @@ mavric.get_responses()
 
 # Print gamma dose
 print(mavric.responses)
-print(f'Neutron dose {mavric.responses[1]["value"]} +- {mavric.responses[1]["stdev"]}  rem/h')
-print(f'Gamma dose   {mavric.responses[2]["value"]} +- {mavric.responses[2]["stdev"]}  rem/h')
+print(f'Neutron dose {mavric.responses["1"]["value"]} +- {mavric.responses["1"]["stdev"]}  rem/h')
+print(f'Gamma dose   {mavric.responses["2"]["value"]} +- {mavric.responses["2"]["stdev"]}  rem/h')

@@ -972,6 +972,7 @@ class DoseEstimatorStorageTank(DoseEstimatorSquareTank):
         self.plenum_volume_fraction: float = 0.2  # gas plenum above fill is +20% of sample volume
         self.sample_offset_z: (None, float) = None  # tank cylinder z - sample cylinder z [cm]
         self.sample_h2: (None, float) = None  # half-height of the sample
+        self.det_z: (None, float) = None # z location of the detector
         super().__init__(_o)  # Init DoseEstimator
 
     def mavric_deck(self) -> str:
@@ -983,6 +984,8 @@ class DoseEstimatorStorageTank(DoseEstimatorSquareTank):
         tank_h2: float = 2.0 * self.cyl_r  # current outer layer half-height [cm]
         self.sample_h2 = get_fill_height_4_1(self.sample_volume, tank_inner_volume) / 2.0
         self.sample_offset_z = 2.0 * (tank_h2 - self.sample_h2)
+        sample_z_max: float = tank_h2 - self.sample_offset_z
+        sample_z_min: float = -tank_h2
 
         mavric_output = f'''
 =shell
@@ -1010,12 +1013,13 @@ end comp
 
 read geometry
 global unit 1
-    cylinder 1 {tank_r} {tank_h2-self.sample_offset_z} {-tank_h2}
-    cylinder 2 {tank_r} {tank_h2} {tank_h2-self.sample_offset_z} 
+    cylinder 1 {tank_r} {sample_z_max} {sample_z_min}
+    cylinder 2 {tank_r} {tank_h2} {sample_z_max} 
     media 1 1 1
     media 2 1 2
 '''
-        x_planes: list[float] = [tank_h2 - self.sample_offset_z]  # list of cylinder boundaries for gridgeometry
+        xy_planes: list[float] = []  # list of XY cylinder boundaries for gridgeometry
+        z_planes: list[float] = [sample_z_max, sample_z_min]  # list of Z cylinder boundaries for gridgeometry
         k: int = 0
         for k in range(len(self.layers_mats)):
             tank_r += self.layers_thicknesses[k]
@@ -1025,20 +1029,24 @@ global unit 1
                 mavric_output += f'media 10 1 -1 -2 3\n'
             else:
                 mavric_output += f'media {k + 10}  1 -{k + 2} {k + 3}\n'
-            x_planes.append(tank_r)
+            xy_planes.append(tank_r)
+            z_planes.append(tank_h2)
+            z_planes.append(-tank_h2)
         self.det_x = tank_r + 0.5  # Detector is 5mm next to the tank
-        self.box_a += tank_r
-        x_planes_str: str = " ".join([f' {x:.5f} -{x:.5f}' for x in x_planes])
-
+        xy_planes_str: str = " ".join([f' {x:.5f} -{x:.5f}' for x in xy_planes])
+        self.det_z = (sample_z_max + sample_z_min) / 2.0
+        z_planes.append(self.det_z + 0.3)
+        z_planes.append(self.det_z - 0.3)
+        z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
         mavric_output += f'''
-    cuboid 99999  6p {self.box_a}
+    cuboid 99999  4p {tank_r + self.box_a} 2p {tank_h2 + self.box_a}  
     media 0 1 99999 -{k + 3}
 boundary 99999
 end geometry
 
 read definitions
      location 1
-        position {self.det_x} 0 {-self.sample_offset_z/2.0}
+        position {self.det_x} 0 {self.det_z}
     end location
     response 1
         title="ANSI standard (1991) flux-to-dose-rate factors [rem/h], neutrons"
@@ -1068,14 +1076,16 @@ read definitions
     end distribution
 
     gridGeometry 1
-        title="Grid over the problem"
-        xLinear {self.N_planes_box} -{self.box_a} {self.box_a}
-        yLinear {self.N_planes_box} -{self.box_a} {self.box_a}
-        zLinear {self.N_planes_box} -{self.box_a} {self.box_a}
+        title="Grid over the problem, location at +x"
+        xLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a}
+'        yLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a} 
+'        zLinear {self.N_planes_box} {tank_h2} {tank_h2 + self.box_a}
         xLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         yLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
-        zLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
-        xPlanes {x_planes_str} end
+        zLinear {self.N_planes_cyl}  {sample_z_min} {sample_z_max}
+        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.det_x-0.3} {self.det_x+0.3} end
+        yPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} end
+        zPlanes {z_planes_str} {tank_h2 + self.box_a} {-tank_h2 - self.box_a} end
     end gridGeometry
 end definitions
 
@@ -1086,7 +1096,7 @@ read sources'''
         title="Sample neutrons"
         neutron
         useNormConst
-        cylinder {self.cyl_r} {tank_h2-self.sample_offset_z} {-tank_h2}
+        cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
         eDistributionID=1
     end src'''
 
@@ -1095,7 +1105,7 @@ read sources'''
         title="Sample photons"
         photon
         useNormConst
-        cylinder {self.cyl_r} {tank_h2-self.sample_offset_z} {-tank_h2}
+        cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
         eDistributionID=2
     end src
 end sources
