@@ -42,10 +42,15 @@ mavric.layers_temperature_K = [873.0, 300.0, 300.0]
 mavric.histories_per_batch = 150000
 mavric.batches = 20
 
+# Add more planes since the source is large
+mavric.N_planes_cyl = 12
+
 # Run simulation
 mavric.run_mavric()
 mavric.get_responses()
 
 # Print results
-print(mavric.responses)
-print(mavric.total_dose)
+# print(mavric.responses)
+# print(mavric.total_dose)
+print(f'Neutron dose {mavric.responses["1"]["value"]} +- {mavric.responses["1"]["stdev"]}  rem/h')
+print(f'Gamma dose   {mavric.responses["2"]["value"]} +- {mavric.responses["2"]["stdev"]}  rem/h')

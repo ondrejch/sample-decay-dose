@@ -786,6 +786,8 @@ class DoseEstimatorSquareTank(DoseEstimator):
         super().__init__(_o)  # Init DoseEstimator
         self.cyl_r: (None, float) = None  # tank cylinder inner radius = sample radius
         self.box_a: float = 10.0  # Problem box distance offset [cm]
+        self.det_standoff_distance: float = 1.0  # Detector is 1 cm off the tank
+        self.planes_xy_around_det: float = 0.5  # Additional +-dX/dY planes around detector for CADIS
         self.layers_thicknesses: list[float] = [2.54, 2.0 * 2.54, 3.0 * 2.54]
         self.layers_mats: list[dict] = [ADENS_SS316H_HOT, ADENS_HDPE_COLD, ADENS_SS316H_COLD]
         self.layers_temperature_K: list[float] = [873.0, 300.0, 300.0]
@@ -852,7 +854,7 @@ global unit 1
     cylinder {k + 2} {tank_r} 2p {tank_r}   
     media {k + 10}  1 -{k + 1} {k + 2}'''
             x_planes.append(tank_r)
-        self.det_x = tank_r + 0.5  # Detector is 5mm next to the tank
+        self.det_x = tank_r + self.det_standoff_distance  # Detector is next to the tank
         self.box_a += tank_r
         x_planes_str: str = " ".join([f' {x:.5f} -{x:.5f}' for x in x_planes])
 
@@ -895,13 +897,15 @@ read definitions
 
     gridGeometry 1
         title="Grid over the problem"
-        xLinear {self.N_planes_box} -{self.box_a} {self.box_a}
-        yLinear {self.N_planes_box} -{self.box_a} {self.box_a}
-        zLinear {self.N_planes_box} -{self.box_a} {self.box_a}
+        xLinear {self.N_planes_box} {self.cyl_r} {self.box_a}
+'        yLinear {self.N_planes_box} -{self.box_a} {self.box_a}
+'        zLinear {self.N_planes_box} -{self.box_a} {self.box_a}
         xLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         yLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         zLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
-        xPlanes {x_planes_str} end
+        xPlanes {x_planes_str} -{self.box_a} {self.box_a} {self.det_x+self.planes_xy_around_det} {self.det_x-self.planes_xy_around_det} end
+        yPlanes {x_planes_str} -{self.box_a} {self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
+        zPlanes {x_planes_str} -{self.box_a} {self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
     end gridGeometry
 end definitions
 
@@ -1032,7 +1036,7 @@ global unit 1
             xy_planes.append(tank_r)
             z_planes.append(tank_h2)
             z_planes.append(-tank_h2)
-        self.det_x = tank_r + 0.5  # Detector is 5mm next to the tank
+        self.det_x = tank_r + self.det_standoff_distance  # Detector is next to the tank
         xy_planes_str: str = " ".join([f' {x:.5f} -{x:.5f}' for x in xy_planes])
         self.det_z = (sample_z_max + sample_z_min) / 2.0
         z_planes.append(self.det_z + 0.3)
@@ -1083,8 +1087,8 @@ read definitions
         xLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         yLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         zLinear {self.N_planes_cyl}  {sample_z_min} {sample_z_max}
-        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.det_x-0.3} {self.det_x+0.3} end
-        yPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} end
+        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.det_x-0.5} {self.det_x+0.5} end
+        yPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} -0.5 0.5 end
         zPlanes {z_planes_str} {tank_h2 + self.box_a} {-tank_h2 - self.box_a} end
     end gridGeometry
 end definitions
