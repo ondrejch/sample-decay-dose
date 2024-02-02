@@ -38,7 +38,7 @@ for steel_shield_thick_in in np.geomspace(2, 15, 5):
         mavric = SampleDose.DoseEstimatorStorageTank(origen_triton)
 
         # Material composition of additional layers, in dictionaries of atom densities
-        mavric.layers_mats = [SampleDose.ADENS_SS316H_HOT, SampleDose.ADENS_KAOWOOL_COLD, SampleDose.ADENS_HDPE_COLD,
+        mavric.layers_mats = [SampleDose.ADENS_SS316H_HOT, SampleDose.ADENS_KAOWOOL_COLD, SampleDose.ADENS_SS316H_COLD,
                               SampleDose.ADENS_CONCRETE_COLD]
 
         # Thicknesses of additional layers [cm]
@@ -51,7 +51,7 @@ for steel_shield_thick_in in np.geomspace(2, 15, 5):
         mavric.N_planes_cyl = 12
 
         # Monaco histories
-        mavric.histories_per_batch =  150000
+        mavric.histories_per_batch = 150000
         mavric.batches = 20
 
         # Run simulation
