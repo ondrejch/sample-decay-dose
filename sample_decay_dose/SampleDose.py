@@ -7,9 +7,12 @@ import os
 import re
 import subprocess
 import math
+from datetime import datetime
 import numpy as np
 from bisect import bisect_left
 from sample_decay_dose.read_opus import integrate_opus
+
+NOW: str = datetime.now().replace(microsecond=0).isoformat()
 
 SCALE_bin_path: str = os.getenv('SCALE_BIN', '/opt/scale6.3.1/bin/')
 ATOM_DENS_MINIMUM: float = 1e-60
@@ -49,6 +52,21 @@ ADENS_KAOWOOL_COLD: dict = {'b-10': 4.39982e-07, 'b-11': 1.77098e-06, 'o-16': 0.
                             'ca-44': 3.58497e-08, 'ca-46': 6.87435e-11, 'ca-48': 3.21376e-09, 'ti-46': 1.69203e-06,
                             'ti-47': 1.5259e-06, 'ti-48': 1.51195e-05, 'ti-49': 1.10956e-06, 'ti-50': 1.06239e-06,
                             'fe-54': 7.05374e-07, 'fe-56': 1.10729e-05, 'fe-57': 2.55721e-07, 'fe-58': 3.40317e-08}
+
+
+def nicely_print_atom_dens(adens: dict, n_top_nuc: int = 20, n_per_row: int = 5):
+    """ Prints atom density of top nuclides """
+    nuclide_list: list = list(adens.items())[:n_top_nuc]
+    i_nuc: int = 0
+    output: str = ''
+    while i_nuc < n_top_nuc:
+        ele: str = nuclide_list[i_nuc][0]
+        ade: float = nuclide_list[i_nuc][1]
+        output += f'{ele:>7s} {ade:.2e} '
+        i_nuc += 1
+        if i_nuc % n_per_row == 0:
+            output += '\n'
+    print(output)
 
 
 def get_rho_from_atom_density(adens: dict) -> float:
@@ -229,7 +247,7 @@ class Origen:
     def set_decay_days(self, decay_days: float = 30.0):
         """ Use this to change decay time, as it also updates the case directory """
         self.SAMPLE_DECAY_days = decay_days
-        self.case_dir: str = f'run_{self.sample_weight:.5}_g-{decay_days:.5}_days'  # Directory to run the case
+        self.case_dir: str = f'run_{NOW}_{self.sample_weight:.5}_g-{decay_days:.5}_days'  # Directory to run the case
 
     def get_beta_to_gamma(self) -> float:
         """ Calculates beta / gamma dose ratio as a ratio of respective spectral integrals """
@@ -281,13 +299,18 @@ class OrigenFromTriton(Origen):
 
     def read_burned_material(self):
         """ Reads atom density and rho from F71 file """
+        if self.debug > 0:
+            print(f'ORIGEN: reading nuclides from {self.BURNED_MATERIAL_F71_file_name}, '
+                  f'position {self.BURNED_MATERIAL_F71_position}')
         self.sample_density = get_burned_material_total_mass_dens(self.BURNED_MATERIAL_F71_file_name,
                                                                   self.BURNED_MATERIAL_F71_position)
         self.sample_volume = self.sample_weight / self.sample_density
         self.burned_atom_dens = get_burned_material_atom_dens(self.BURNED_MATERIAL_F71_file_name,
                                                               self.BURNED_MATERIAL_F71_position)
         if self.debug > 2:
-            print(list(self.burned_atom_dens.items())[:25])
+            # print(list(self.burned_atom_dens.items())[:25])
+            print(f'Sample density {self.sample_density} g/cm3, volume {self.sample_volume} cm3')
+            nicely_print_atom_dens(self.burned_atom_dens)
 
     def run_decay_sample(self):
         """  Writes Origen input file, runs Origen to decay it and Opus to plot spectra.
@@ -303,14 +326,17 @@ class OrigenFromTriton(Origen):
         with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
             f.write(self.origen_deck())
 
-        print(f"\nRUNNING {self.case_dir}/{self.ORIGEN_input_file_name}")
+        if self.debug > 0:
+            print(f'ORIGEN: decaying sample for {self.SAMPLE_DECAY_days} days')
+            print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
         run_scale(self.ORIGEN_input_file_name)
 
         self.decayed_atom_dens = get_burned_material_atom_dens(self.SAMPLE_F71_file_name,
                                                                self.SAMPLE_F71_position)
         os.chdir(self.cwd)
         if self.debug > 2:
-            print(list(self.decayed_atom_dens.items())[:25])
+            # print(list(self.decayed_atom_dens.items())[:25])
+            nicely_print_atom_dens(self.decayed_atom_dens)
 
     def origen_deck(self) -> str:
         """ Sample decay Origen deck """
@@ -431,14 +457,18 @@ class OrigenIrradiation(Origen):
         with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
             f.write(self.origen_deck())
 
-        print(f"\nRUNNING {self.case_dir}/{self.ORIGEN_input_file_name}")
+        if self.debug > 0:
+            print(f'ORIGEN: burning sample for {self.irradiate_days} days at {self.irradiate_flux } n/cm2/s, '
+                  f'then decaying for {self.SAMPLE_DECAY_days} days')
+            print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
         run_scale(self.ORIGEN_input_file_name)
 
         self.decayed_atom_dens = get_burned_material_atom_dens(self.SAMPLE_F71_file_name,
                                                                self.SAMPLE_F71_position)
         os.chdir(self.cwd)
         if self.debug > 2:
-            print(list(self.decayed_atom_dens.items())[:25])
+            # print(list(self.decayed_atom_dens.items())[:25])
+            nicely_print_atom_dens(self.decayed_atom_dens)
 
     def read_irradiated_material_density(self):
         """ Reads rho from irradiated F71 file """
@@ -587,7 +617,8 @@ class DoseEstimator:
         with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
             f.write(self.mavric_deck())
 
-        print(f"\nRUNNING {self.case_dir}/{self.MAVRIC_input_file_name}")
+        if self.debug > 0:
+            print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
         run_scale(self.MAVRIC_input_file_name)
         os.chdir(self.cwd)
 
@@ -809,7 +840,8 @@ class DoseEstimatorSquareTank(DoseEstimator):
         with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
             f.write(self.mavric_deck())
 
-        print(f"\nRUNNING {self.case_dir}/{self.MAVRIC_input_file_name}")
+        if self.debug > 0:
+            print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
         run_scale(self.MAVRIC_input_file_name)
         os.chdir(self.cwd)
 
@@ -896,7 +928,7 @@ read definitions
     end distribution
 
     gridGeometry 1
-        title="Grid over the problem"
+        title="Grid over the problem, location at +x"
         xLinear {self.N_planes_box} {self.cyl_r} {self.box_a}
 '        yLinear {self.N_planes_box} -{self.box_a} {self.box_a}
 '        zLinear {self.N_planes_box} -{self.box_a} {self.box_a}
@@ -1039,8 +1071,8 @@ global unit 1
         self.det_x = tank_r + self.det_standoff_distance  # Detector is next to the tank
         xy_planes_str: str = " ".join([f' {x:.5f} -{x:.5f}' for x in xy_planes])
         self.det_z = (sample_z_max + sample_z_min) / 2.0
-        z_planes.append(self.det_z + 0.3)
-        z_planes.append(self.det_z - 0.3)
+        z_planes.append(self.det_z + self.planes_xy_around_det)
+        z_planes.append(self.det_z - self.planes_xy_around_det)
         z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
         mavric_output += f'''
     cuboid 99999  4p {tank_r + self.box_a} 2p {tank_h2 + self.box_a}  
@@ -1087,8 +1119,8 @@ read definitions
         xLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         yLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         zLinear {self.N_planes_cyl}  {sample_z_min} {sample_z_max}
-        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.det_x-0.5} {self.det_x+0.5} end
-        yPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} -0.5 0.5 end
+        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.det_x-self.planes_xy_around_det} {self.det_x+self.planes_xy_around_det} end
+        yPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
         zPlanes {z_planes_str} {tank_h2 + self.box_a} {-tank_h2 - self.box_a} end
     end gridGeometry
 end definitions
