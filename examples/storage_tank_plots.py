@@ -10,7 +10,7 @@ import json5
 import matplotlib.pyplot as plt
 from matplotlib import colors, cm, ticker
 
-# os.chdir('')
+os.chdir('.')
 my_data = {
     '1 day': '34-1_decay_days',
     '2 days': '33-2_decay_days',
@@ -18,7 +18,7 @@ my_data = {
 }
 
 
-def make_plot(title:str, dir: str):
+def make_plot(title: str, dir: str):
     with open(f'{dir}/doses.json') as fin:
         r = json5.load(fin)
 
@@ -57,15 +57,16 @@ def make_plot(title:str, dir: str):
     # https://matplotlib.org/stable/users/explain/colors/colormaps.html
     cs = ax.contourf(x, y, g_mrem_dose.T, levs, norm=colors.LogNorm(), locator=ticker.LogLocator(), cmap='jet')
     # cs = ax.contour(x, y, g_dose.T, levs)
-    ax.clabel(cs, inline=True, fontsize=10, manual=False, colors=['black'], fmt= "%.0e")
+    ax.clabel(cs, inline=True, fontsize=10, manual=False, colors=['black'], fmt="%.0e")
     # cbar = fig.colorbar(cs, format = "%.1e")
-    cbar = fig.colorbar(cs, format = "%.05g")
+    cbar = fig.colorbar(cs, format="%.05g")
     cbar.set_label('Gamma dose [mrem/h]')
-    plt.title(f'Gamma dose from 1.2 t of salt after {title} of decay')
+    plt.title(f'Gamma dose from 1,200 kg of fuel salt after {title} of decay')
     plt.xlabel('Steel shield thickness [cm]')
     plt.ylabel('Concrete shield thickness [cm]')
-    file_name_fig=f'dose_g_storage_tank-{title.replace(" ","_")}_decay.png'
-    plt.savefig(file_name_fig, dpi=1000)
+    file_name_fig = f'dose_g_storage_tank-{title.replace(" ", "_")}_decay.png'
+    plt.savefig(file_name_fig, dpi=1000, bbox_inches='tight', pad_inches=0.1)
+    plt.tight_layout()
     plt.show()
 
 
