@@ -16,7 +16,8 @@ This assumes an unshielded sample. If a sample container or other shielding is p
 the MAVRIC input deck, **mavric_deck()** method of the **DoseEstimator** class.
 4. An example of how to modify the **DoseEstimator** class is its child **DoseEstimatorSquareTank** class, where 
 the sample is surrounded by layers of shielding. Thicknesses and atom densities of the shielding layers can be easily specified. 
-Three layers of shielding are included as a default and an example.    
+Three layers of shielding are included as a default and an example.  
+5. **DoseEstimatorStorageTank** is another derived class that models a storage tank with a gas plenum above teh sample.
 
 ## Repository structure   
 
@@ -28,7 +29,7 @@ Module scripts are in the **sample\_decay\_dose** directory
 Scripts showing how to use the framework are in the **examples** directory
 * **calc\*py** - scripts showing example calculations 
 * **plot\_doses.py** - results plotter
-* ** ** 
+* **storage_tank_doses_scan_parallel.py**  - an example how to parallelize several MAVRIC calculations for the same decayed sample. 
 
 ## Installation
 

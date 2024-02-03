@@ -8,9 +8,7 @@ import os
 import numpy as np
 import json5
 import matplotlib.pyplot as plt
-from matplotlib import colors
-from matplotlib import cm, ticker
-from numpy import ma
+from matplotlib import colors, cm, ticker
 
 # os.chdir('')
 my_data = {
