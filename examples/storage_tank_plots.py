@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Plotting script for calc_doses_mass
+Plotting script for storage_tank_doses_scan_parallel.py
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
@@ -12,7 +12,7 @@ from matplotlib import colors
 from matplotlib import cm, ticker
 from numpy import ma
 
-os.chdir('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose')
+# os.chdir('')
 my_data = {
     '1 day': '34-1_decay_days',
     '2 days': '33-2_decay_days',
