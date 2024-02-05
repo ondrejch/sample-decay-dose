@@ -14,7 +14,8 @@ os.chdir('.')
 my_data = {
     '1 day': '34-1_decay_days',
     '2 days': '33-2_decay_days',
-    '7 days': '35-7_decay_days'
+    '7 days': '35-7_decay_days',
+    '30 days' : '36-30_decay_days'
 }
 
 
