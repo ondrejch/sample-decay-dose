@@ -13,7 +13,7 @@ import copy
 import os
 import numpy as np
 from bisect import bisect_left
-
+import json5
 from sample_decay_dose.SampleDose import NOW, nicely_print_atom_dens, atom_dens_for_origen, \
     get_f71_positions_index, get_burned_material_total_mass_dens, get_burned_material_atom_dens, run_scale
 
@@ -309,8 +309,8 @@ class DiffLeak:
             'Kr': self.removal_rate,
             'Xe': self.removal_rate
         }
-        self.nuclide_removal_rates = {'Kr': self.removal_rate,
-                                      'Xe': self.removal_rate}
+        # self.nuclide_removal_rates = {'Kr': self.removal_rate,
+        #                               'Xe': self.removal_rate}
         self.decay_base = base_case
         self.decay_leaks = copy.deepcopy(base_case)
         self.decay_leaks.case_dir = self.decay_base.case_dir + '_leak'
@@ -373,8 +373,8 @@ def main():
     origen_triton = DecaySalt('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/SCALE_FILE.f71', 1200e3)
     origen_triton.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
     origen_triton.read_burned_material()
-    origen_triton.DECAY_days = 0.1
-    origen_triton.DECAY_steps = 10
+    origen_triton.DECAY_days = 30
+    origen_triton.DECAY_steps = 300
     volume: float = origen_triton.volume
     print(volume)
 
@@ -389,22 +389,38 @@ def main():
     # minus box_B decay with leakage.
     # Since the concentrations differ at each timestep, each timestep is its own ORIGEN run.
 
-    box_B_origen: dict = {}
-    dl_C: dict = {}
+    box_B_origen: dict = {}  # ORIGEN runs that describe decay of box_B nuclides
+    dl_C: dict = {}  # Leaking into box_C calculated from box_B_origen runs
+    leaked_adens: dict = {}  # Atomic density that leaked into box_C in the current decay time step
+    box_C_adens: dict = {}  # Summary of box_C atomic density as a function of decay time
     for k, v in dl_B.leaked.items():
         print(k, v)
         if k == 1:  # Skip the first time step, there is nothing in box_B
             continue
-        box_B_origen[k] = DecayBox(v['adens'], volume)
+        box_B_adens_orig = v['adens']
+        # Remove nuclides that leaked in the previous step
+        box_B_adens_current: dict = {key: box_B_adens_orig[key] - leaked_adens.get(key, 0) for key in box_B_adens_orig}
+
+        box_B_origen[k] = DecayBox(box_B_adens_current, volume)
         box_B_origen[k].DECAY_steps = 5
         box_B_origen[k].DECAY_seconds = v['time']
         box_B_origen[k].case_dir = f'box_B_{k:03d}'
 
         dl_C[k] = DiffLeak()
-        dl_C[k].removal_rate = 0.1 * PCTperDAY
+        dl_C[k].removal_rate = 0.1 * PCTperDAY  # Removal rate to box_C
         dl_C[k].setup_cases(box_B_origen[k])
         dl_C[k].run_cases()
         dl_C[k].get_diff_rate()
+        leaked_adens = dl_C[k].leaked[box_B_origen[k].DECAY_steps]['adens']
+        box_C_adens[k] = {}
+        box_C_adens[k]['time'] = v['time']
+        box_C_adens[k]['adens'] = leaked_adens
+        print(k, v, box_C_adens[k])
+
+    with open('boxB.json5', 'w') as f:
+        json5.dump(dl_B.leaked, f, indent=4)
+    with open('boxC.json5', 'w') as f:
+        json5.dump(box_C_adens, f, indent=4)
 
 
 if __name__ == "__main__":
