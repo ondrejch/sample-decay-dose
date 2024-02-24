@@ -238,7 +238,6 @@ class DiffLeak:
         times: dict = get_f71_positions_index(f71_base_file)
         for i, vals in times.items():  # Time-dependent difference between sealed and leaky box
             t = float(vals['time'])
-            print(i, t)
             self.leaked[i]: dict = {}
             self.leaked[i]['time'] = t
             adens_base: dict = get_burned_material_atom_dens(f71_base_file, i)
@@ -254,6 +253,7 @@ class DiffLeak:
                                 False)  # only for elements that leak
                            }
             self.leaked[i]['feed_rate1'] = rate1
+            print(i, t, rate1)
 
         prev_t: float = -1.0
         prev_adens: dict = {}
@@ -282,6 +282,8 @@ def main():
     origen_triton = DecaySalt('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/SCALE_FILE.f71', 500e3)
     origen_triton.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
     origen_triton.read_burned_material()
+    origen_triton.DECAY_days = 0.1
+    origen_triton.DECAY_steps = 10
 
     dl = DiffLeak()
     dl.setup_cases(origen_triton)
