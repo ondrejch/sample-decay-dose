@@ -281,11 +281,11 @@ def main():
     """ Calculate which nuclides leak """
     origen_triton = DecaySalt('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/SCALE_FILE.f71', 500e3)
     origen_triton.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
-    # origen_triton.read_burned_material()
+    origen_triton.read_burned_material()
 
     dl = DiffLeak()
     dl.setup_cases(origen_triton)
-    # dl.run_cases()
+    dl.run_cases()
     dl.get_diff_rate()
 
 
