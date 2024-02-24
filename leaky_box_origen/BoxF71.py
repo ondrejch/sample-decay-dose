@@ -220,7 +220,7 @@ class DecayBox(Origen):
             f.write(self.origen_deck())
 
         if self.debug > 0:
-            print(f'ORIGEN: decaying sample for {self.DECAY_days} days')
+            print(f'ORIGEN: decaying sample for {self.DECAY_seconds} seconds')
             print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
         run_scale(self.ORIGEN_input_file_name)
 
@@ -321,6 +321,30 @@ class DiffLeak:
         self.decay_base.run_decay_sample()
         self.decay_leaks.run_decay_sample()
 
+    def _parallel_leak_calc(self, i, vals) -> dict:
+        f71_base_file: str = self.decay_base.case_dir + '/' + self.decay_base.F71_file_name
+        f71_leak_file: str = self.decay_leaks.case_dir + '/' + self.decay_leaks.F71_file_name
+        t = float(vals['time'])
+        print(f"Reading {i}, {t} s")
+        adens_base: dict = get_burned_material_atom_dens(f71_base_file, i)
+        adens_leak: dict = get_burned_material_atom_dens(f71_leak_file, i)
+        adens_diff: dict = {key: adens_base[key] - adens_leak.get(key, 0) for key in adens_base
+                            if (adens_base[key] - adens_leak.get(key, 0)) > 0}
+        return adens_diff
+
+    def get_diff_parallel(self):
+        from joblib import Parallel, delayed, cpu_count
+        """ Calculate difference between sealed and leaky box in parallel """
+        f71_base_file: str = self.decay_base.case_dir + '/' + self.decay_base.F71_file_name
+        times: dict = get_f71_positions_index(f71_base_file)
+        for k, v in times.items():
+            self.leaked[k]: dict = {}
+            self.leaked[k]['time'] = float(v['time'])
+        res_list = Parallel(n_jobs=cpu_count())(delayed(self._parallel_leak_calc)(k, v) for k,v in times.items())
+        for i, res in enumerate(res_list):
+            print(i, res)
+            self.leaked[i+1]['adens'] = res
+
     def get_diff_rate(self):
         """ Calculate difference between sealed and leaky box, and get equivalent ingress rate """
         f71_base_file: str = self.decay_base.case_dir + '/' + self.decay_base.F71_file_name
@@ -383,7 +407,8 @@ def main():
     dl_B = DiffLeak()
     dl_B.setup_cases(origen_triton)
     dl_B.run_cases()
-    dl_B.get_diff_rate()
+    #dl_B.get_diff_rate()
+    dl_B.get_diff_parallel()
 
     # Calculate concentrations of nuclides leaking from box_B as the difference between box_B decays without leakage
     # minus box_B decay with leakage.
@@ -410,7 +435,8 @@ def main():
         dl_C[k].removal_rate = 0.1 * PCTperDAY  # Removal rate to box_C
         dl_C[k].setup_cases(box_B_origen[k])
         dl_C[k].run_cases()
-        dl_C[k].get_diff_rate()
+        #dl_C[k].get_diff_rate()
+        dl_C[k].get_diff_parallel()
         leaked_adens = dl_C[k].leaked[box_B_origen[k].DECAY_steps]['adens']
         box_C_adens[k] = {}
         box_C_adens[k]['time'] = v['time']
