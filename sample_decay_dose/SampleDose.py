@@ -595,7 +595,7 @@ class DoseEstimator:
         self.neutron_intensity: float = _o.get_neutron_integral()  # Integral of neutron spectra
         self.ORIGEN_dir: str = _o.case_dir  # Directory to run the case
         self.case_dir: str = self.ORIGEN_dir + '_MAVRIC'
-        self.cwd: str = _o.cwd  # Current running fir
+        self.cwd: str = _o.cwd  # Current running directory
         self.MAVRIC_input_file_name: str = 'my_dose.inp'
         self.MAVRIC_out_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'out')
         self.SAMPLE_ATOM_DENS_file_name_MAVRIC: str = 'my_sample_atom_dens_mavric.inp'
