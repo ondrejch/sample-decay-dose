@@ -247,26 +247,31 @@ class DiffLeak:
             #                     if (adens_base[key] - adens_leak.get(key, 0)) > 0}
             adens_diff: dict = {key: adens_base[key] - adens_leak.get(key, 0) for key in adens_base}
             self.leaked[i]['adens'] = adens_diff
-            # for k, v in adens_diff.items():
-            #     if v > 0:
-            #         print(k, v)
+            # rate1 is calculated from leakage rate and the original concentration
+            rate1: dict = {key: adens_base[key] * PCTperDAY for key in adens_base
+                           if adens_base[key] > 0 and  # if nonzero
+                           next((True for s in [k.lower() for k in self.nuclide_removal_rates.keys()] if s in key),
+                                False)  # only for elements that leak
+                           }
+            self.leaked[i]['feed_rate1'] = rate1
 
         prev_t: float = -1.0
         prev_adens: dict = {}
-        for i, vals in self.leaked.items():   # Calculate leakage, turn it into feed rate
+        for i, vals in self.leaked.items():  # Calculate leakage, turn it into feed rate
             if i == 1:
                 prev_t = vals['time']
                 prev_adens = self.leaked[i]['adens']
                 continue
             dt: float = vals['time'] - prev_t
             adens: dict = self.leaked[i]['adens']
-            rate: dict = {key: (adens[key] - prev_adens[key]) * PCTperDAY / dt for key in adens  # rate times leak rate
-                          if (adens[key] - prev_adens[key]) > 0 and  # if nonzero
-                          next((True for s in [k.lower() for k in self.nuclide_removal_rates.keys()] if s in key),
-                               False)  # only for elements that leak
-                          }
-            self.leaked[i]['feed_rate'] = rate
-            print(i, vals['time'], dt, rate)
+            # rate2 is calculated using time derivative of concentration
+            rate2: dict = {key: (adens[key] - prev_adens[key]) / dt for key in adens  # leak rate
+                           if (adens[key] - prev_adens[key]) > 0 and  # if nonzero
+                           next((True for s in [k.lower() for k in self.nuclide_removal_rates.keys()] if s in key),
+                                False)  # only for elements that leak
+                           }
+            self.leaked[i]['feed_rate2'] = rate2
+            print(i, vals['time'], dt, rate2)
 
             prev_t = vals['time']
             prev_adens = adens
