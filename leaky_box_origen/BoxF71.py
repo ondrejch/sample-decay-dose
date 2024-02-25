@@ -12,6 +12,7 @@ Box A --> Box B --> outside
 import copy
 import os
 import numpy as np
+import pandas as pd
 from bisect import bisect_left
 import json5
 from sample_decay_dose.SampleDose import NOW, nicely_print_atom_dens, atom_dens_for_origen, \
@@ -391,14 +392,24 @@ class DiffLeak:
         #     prev_adens = adens
 
 
+def get_dataframe(leaky_box_adens: dict[dict]) -> pd.DataFrame:
+    """ Convert """
+    _list = []
+    for k, v in leaky_box_adens.items():
+        a = v['adens']
+        a['time'] = float(v['time'])
+        _list.append(a)
+    return pd.DataFrame(_list).set_index('time')
+
+
 def main():
     """ Calculate which nuclides leak """
     # Baseline decay calculation setup
     origen_triton = DecaySalt('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/SCALE_FILE.f71', 1200e3)
     origen_triton.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
     origen_triton.read_burned_material()
-    origen_triton.DECAY_days = 30
-    origen_triton.DECAY_steps = 300
+    origen_triton.DECAY_days = 180
+    origen_triton.DECAY_steps = 1800
     volume: float = origen_triton.volume
     print(volume)
 
@@ -443,11 +454,15 @@ def main():
         box_C_adens[k]['adens'] = leaked_adens
         print(k, v, box_C_adens[k])
 
-    with open('boxB.json5', 'w') as f:
+    with open('boxB.json5', 'w') as f:  # Save to json
         json5.dump(dl_B.leaked, f, indent=4)
     with open('boxC.json5', 'w') as f:
         json5.dump(box_C_adens, f, indent=4)
 
+    pd_B = get_dataframe(dl_B.leaked)
+    pd_C = get_dataframe(box_C_adens)
+    pd_B.to_excel('box_B.xls')
+    pd_C.to_excel('box_C.xls')
 
 if __name__ == "__main__":
     # pass
