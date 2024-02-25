@@ -408,8 +408,8 @@ def main():
     origen_triton = DecaySalt('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/SCALE_FILE.f71', 1200e3)
     origen_triton.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
     origen_triton.read_burned_material()
-    origen_triton.DECAY_days = 120
-    origen_triton.DECAY_steps = 1200
+    origen_triton.DECAY_days = 12
+    origen_triton.DECAY_steps = 12
     volume: float = origen_triton.volume
     print(volume)
 
@@ -465,7 +465,7 @@ def main():
 
     pd_B.to_excel(writer, 'box B')
     pd_C.to_excel(writer, 'box C')
-    writer.save()
+    writer.close()
 
 if __name__ == "__main__":
     # pass
