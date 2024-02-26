@@ -60,7 +60,7 @@ def nicely_print_atom_dens(adens: dict, n_top_nuc: int = 20, n_per_row: int = 5)
     nuclide_list: list = list(adens.items())[:n_top_nuc]
     i_nuc: int = 0
     output: str = ''
-    while i_nuc < n_top_nuc:
+    while i_nuc < min(n_top_nuc, len(nuclide_list)):
         ele: str = nuclide_list[i_nuc][0]
         ade: float = nuclide_list[i_nuc][1]
         output += f'{ele:>7s} {ade:.4e} '
