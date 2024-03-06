@@ -406,8 +406,8 @@ is_xe_136_testing: bool = True  # Use 1 Xe-136 at / b-sm instead of read composi
 is_xe_135_testing: bool = False  # Use 1 Xe-135 at / b-sm instead of read composition
 
 
-def main():
-    """ Calculate which nuclides leak """
+def main_old():
+    """ Calculate which nuclides leak using concentrations in box B """
     # Baseline decay calculation setup
     origen_triton = DecaySalt('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/SCALE_FILE.f71', 1200e3)
     origen_triton.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
@@ -483,6 +483,23 @@ b=0.0000000115740740741
 df['anaB'] = a * (1.0 - np.exp(-b*df['time'])) /b
 df['anaC'] = a * np.exp(-b*df['time']) * ( np.exp(b*df['time']) * (b*df['time'] -1.0) +1.0) /b
 """
+
+
+
+def main():
+    """ Calculate which nuclides leak """
+    # Baseline decay calculation setup
+    origen_triton = DecaySalt('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/SCALE_FILE.f71', 1200e3)
+    origen_triton.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
+    origen_triton.read_burned_material()
+    origen_triton.DECAY_days = 12
+    origen_triton.DECAY_steps = 120
+    if is_xe_136_testing:
+        origen_triton.atom_dens = {'xe-136': 1.0}
+    if is_xe_136_testing:
+        origen_triton.atom_dens = {'xe-136': 1.0}
+    volume: float = origen_triton.volume
+    print(volume)
 
 if __name__ == "__main__":
     # pass

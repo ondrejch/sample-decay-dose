@@ -296,7 +296,9 @@ class OrigenFromTriton(Origen):
         if t > t_max:
             print(f"Error: Time {t} seconds is longer than {t_max} s, the maximum time in records.")
         #    return None
-        self.BURNED_MATERIAL_F71_position = bisect_left(times, t)
+        pos_number: float = bisect_left(times, t)
+        print(f'--> Closet F71 position found at slot {pos_number}, {times[pos_number]} seconds')
+        self.BURNED_MATERIAL_F71_position = pos_number
 
     def read_burned_material(self):
         """ Reads atom density and rho from F71 file """
