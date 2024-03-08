@@ -292,12 +292,13 @@ class OrigenFromTriton(Origen):
         t_max = max(times)
         if t < t_min:
             print(f"Error: Time {t} seconds is less than {t_min} s, the minimum time in records.")
-        #    return None
-        if t > t_max:
+            pos_number: int = 0
+        elif t > t_max:
             print(f"Error: Time {t} seconds is longer than {t_max} s, the maximum time in records.")
-        #    return None
-        pos_number: float = bisect_left(times, t)
-        print(f'--> Closet F71 position found at slot {pos_number}, {times[pos_number]} seconds')
+            pos_number: int = len(times) - 1
+        else:
+            pos_number: int = bisect_left(times, t)
+        print(f'--> Closest F71 position found at slot {pos_number}, {times[pos_number]} seconds')
         self.BURNED_MATERIAL_F71_position = pos_number
 
     def read_burned_material(self):
