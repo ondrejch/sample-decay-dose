@@ -218,9 +218,9 @@ class DecayBox(Origen):
         if not os.path.exists(self.case_dir):
             os.mkdir(self.case_dir)
         os.chdir(self.case_dir)
-
-        with open(self.ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
-            f.write(atom_dens_for_origen(self.atom_dens))
+        if len(self.atom_dens) > 0:
+            with open(self.ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
+                f.write(atom_dens_for_origen(self.atom_dens))
 
         with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
             f.write(self.origen_deck())
@@ -239,6 +239,13 @@ class DecayBox(Origen):
 
     def origen_deck(self) -> str:
         """ Sample decay Origen deck """
+        if len(self.atom_dens) > 0:
+            iso: str = '''        iso [
+<{self.ATOM_DENS_file_name_Origen}
+        ]\n'''
+        else:
+            iso: str = 'iso=0\n'
+
         removal: str = ''
         if self.nuclide_removal_rates:
             removal += 'processing {\n'
@@ -250,7 +257,7 @@ class DecayBox(Origen):
         if self.nuclide_feed_rates:
             feed += 'feed=['
             for k, v in self.nuclide_feed_rates.items():
-                removal += f'{k}={v} '
+                feed += f'{k}={v} '
             feed += ']'
 
         time_interp_steps = self.DECAY_steps - 3
@@ -279,9 +286,7 @@ case {{
         file="end7dec"
     }}
     mat {{
-        iso [
-<{self.ATOM_DENS_file_name_Origen}
-        ]
+{iso}
         units=ATOMS-PER-BARN-CM
         volume={self.volume}
         {feed}
@@ -342,11 +347,11 @@ class LeakBoxA:
             self.leak_rates[i]: dict = {}
             self.leak_rates[i]['time'] = t
             adens_tot: dict = get_burned_material_atom_dens(f71_leak_file, i)  # All nuclides
-            adens_leak: dict = {k: adens_tot[k] for k in adens_tot.keys() if re.sub('-.*', '', k) in nuc_leak}
-            for k in adens_leak.keys():
-                adens_leak[k] *= self.nuclide_removal_rates[re.sub('-.*', '', k)]
+            step_leak_rate: dict = {k: adens_tot[k] for k in adens_tot.keys() if re.sub('-.*', '', k) in nuc_leak}
+            for k in step_leak_rate.keys():
+                step_leak_rate[k] *= self.nuclide_removal_rates[re.sub('-.*', '', k)]
                 # print(k, adens_leak[k], adens_tot[k])
-            self.leak_rates[i]['adens'] = adens_leak
+            self.leak_rates[i]['rate'] = step_leak_rate
 
 
 class DiffLeak:
@@ -480,29 +485,71 @@ def get_dataframe(leaky_box_adens: dict[dict]) -> pd.DataFrame:
     return pd.DataFrame(_list).set_index('time')
 
 
-is_xe_136_testing: bool = True  # Use 1 Xe-136 at / b-sm instead of read composition
+is_xe_136_testing: bool = False  # Use 1 Xe-136 at / b-sm instead of read composition
 is_xe_135_testing: bool = False  # Use 1 Xe-135 at / b-sm instead of read composition
 
 
 def main():
     """ Calculate which nuclides leak """
     # Baseline decay calculation setup
-    origen_triton = DecaySalt('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/SCALE_FILE.f71', 1200e3)
-    origen_triton.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
-    origen_triton.read_burned_material()
-    origen_triton.DECAY_days = 12
-    origen_triton.DECAY_steps = 4
+    origen_triton_box_A = DecaySalt('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/SCALE_FILE.f71', 1200e3)
+    origen_triton_box_A.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
+    origen_triton_box_A.read_burned_material()
+    origen_triton_box_A.DECAY_days = 12
+    origen_triton_box_A.DECAY_steps = 5
     if is_xe_136_testing:
-        origen_triton.atom_dens = {'xe-136': 1.0}
+        origen_triton_box_A.atom_dens = {'xe-136': 1.0}
     if is_xe_135_testing:
-        origen_triton.atom_dens = {'xe-135': 1.0}
-    volume: float = origen_triton.volume
+        origen_triton_box_A.atom_dens = {'xe-135': 1.0}
+    volume: float = origen_triton_box_A.volume
     print(volume)
 
     box_A = LeakBoxA()
-    box_A.setup_cases(origen_triton)
+    box_A.setup_cases(origen_triton_box_A)
     box_A.run_case()
     box_A.get_leak_rate()
+    with open('boxA_leak_rate.json5', 'w') as f:  # Save to json
+        json5.dump(box_A.leak_rates, f, indent=4)
+
+    origen_box_B: dict = {}  # ORIGEN runs that describe decay of box_B nuclides
+    box_C_adens: dict = {}  # Summary of box_C atomic density as a function of decay time
+    box_B_adens_current: dict = {}  # Content of box B
+    dl_C: dict = {}  # Leaking into box_C calculated from box_B_origen runs
+
+    for k, v in box_A.leak_rates.items():
+        print(k, v)
+        if k == 1:  # Skip the first time step, there is nothing in box_B
+            continue
+        origen_box_B[k] = DecayBox(box_B_adens_current, volume)
+        origen_box_B[k].nuclide_feed_rates = box_A.leak_rates[k]['rate']
+        origen_box_B[k].DECAY_steps = 5
+        origen_box_B[k].DECAY_seconds = v['time']
+        origen_box_B[k].case_dir = f'box_B_{k:03d}'
+
+        dl_C[k] = DiffLeak()
+        dl_C[k].removal_rate = 0.1 * PCTperDAY  # Removal rate to box_C
+        dl_C[k].setup_cases(origen_box_B[k])
+        dl_C[k].run_cases()
+        # dl_C[k].get_diff_rate()
+        dl_C[k].get_diff_parallel()
+        box_C_adens[k] = {}
+        box_C_adens[k]['time'] = v['time']
+        box_C_adens[k]['adens'] = dl_C[k].leaked[origen_box_B[k].DECAY_steps]['adens']
+        # TODO Add box box_B_adens_current
+        print(k, v, box_C_adens[k])
+
+    with open('boxB.json5', 'w') as f:  # Save to json
+        json5.dump(dl_C.leaked, f, indent=4)
+    with open('boxC.json5', 'w') as f:
+        json5.dump(box_C_adens, f, indent=4)
+
+    pd_B = get_dataframe(dl_C.leaked)
+    pd_C = get_dataframe(box_C_adens)
+    writer = pd.ExcelWriter('leaky_boxes.xlsx')
+
+    pd_B.to_excel(writer, 'box B')
+    pd_C.to_excel(writer, 'box C')
+    writer.close()
 
 
 def main_old():
