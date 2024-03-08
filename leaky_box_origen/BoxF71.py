@@ -240,11 +240,11 @@ class DecayBox(Origen):
     def origen_deck(self) -> str:
         """ Sample decay Origen deck """
         if len(self.atom_dens) > 0:
-            iso: str = '''        iso [
+            iso: str = f'''        iso [
 <{self.ATOM_DENS_file_name_Origen}
         ]\n'''
         else:
-            iso: str = 'iso=0\n'
+            iso: str = '        iso=0\n'
 
         removal: str = ''
         if self.nuclide_removal_rates:
@@ -314,6 +314,7 @@ class LeakBoxA:
         self.leak_rates: dict = {}  # Leak rate calculated as \epsilon_i^A N_i^A (t)
         self.removal_rate: float = PCTperDAY  # \epsilon_i^A
         self.nuclide_removal_rates: dict = {}
+        self.adens: dict = {}  #  box_A_adens
 
     def setup_cases(self, origen_case: DecaySalt):
         """ Setup cases based on a base_case """
@@ -349,9 +350,12 @@ class LeakBoxA:
             adens_tot: dict = get_burned_material_atom_dens(f71_leak_file, i)  # All nuclides
             step_leak_rate: dict = {k: adens_tot[k] for k in adens_tot.keys() if re.sub('-.*', '', k) in nuc_leak}
             for k in step_leak_rate.keys():
-                step_leak_rate[k] *= self.nuclide_removal_rates[re.sub('-.*', '', k)]
-                # print(k, adens_leak[k], adens_tot[k])
+                step_leak_rate[k] *= self.nuclide_removal_rates[re.sub('-.*', '', k)]  # * self.decay_leaks.volume
+                print("LEAK_RATE: ", k, step_leak_rate[k], adens_tot[k])
             self.leak_rates[i]['rate'] = step_leak_rate
+            self.adens[i]: dict = {}
+            self.adens[i]['time'] = t
+            self.adens[i]['adens'] = adens_tot
 
 
 class DiffLeak:
@@ -485,7 +489,7 @@ def get_dataframe(leaky_box_adens: dict[dict]) -> pd.DataFrame:
     return pd.DataFrame(_list).set_index('time')
 
 
-is_xe_136_testing: bool = False  # Use 1 Xe-136 at / b-sm instead of read composition
+is_xe_136_testing: bool = True  # Use 1 Xe-136 at / b-sm instead of read composition
 is_xe_135_testing: bool = False  # Use 1 Xe-135 at / b-sm instead of read composition
 
 
@@ -496,7 +500,7 @@ def main():
     origen_triton_box_A.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
     origen_triton_box_A.read_burned_material()
     origen_triton_box_A.DECAY_days = 12
-    origen_triton_box_A.DECAY_steps = 5
+    origen_triton_box_A.DECAY_steps = 12
     if is_xe_136_testing:
         origen_triton_box_A.atom_dens = {'xe-136': 1.0}
     if is_xe_135_testing:
@@ -508,13 +512,16 @@ def main():
     box_A.setup_cases(origen_triton_box_A)
     box_A.run_case()
     box_A.get_leak_rate()
+    with open('boxA.json5', 'w') as f:  # Save to json
+        json5.dump(box_A.adens, f, indent=4)
     with open('boxA_leak_rate.json5', 'w') as f:  # Save to json
         json5.dump(box_A.leak_rates, f, indent=4)
 
     origen_box_B: dict = {}  # ORIGEN runs that describe decay of box_B nuclides
-    box_C_adens: dict = {}  # Summary of box_C atomic density as a function of decay time
+    box_B_adens: dict = {}  # Summary of box_B atomic density as a function of decay time
     box_B_adens_current: dict = {}  # Content of box B
     dl_C: dict = {}  # Leaking into box_C calculated from box_B_origen runs
+    box_C_adens: dict = {}  # Summary of box_C atomic density as a function of decay time
 
     for k, v in box_A.leak_rates.items():
         print(k, v)
@@ -530,6 +537,10 @@ def main():
         dl_C[k].removal_rate = 0.1 * PCTperDAY  # Removal rate to box_C
         dl_C[k].setup_cases(origen_box_B[k])
         dl_C[k].run_cases()
+        box_B_adens_current = dl_C[k].decay_leaks.final_atom_dens
+        box_B_adens[k] = {}
+        box_B_adens[k]['time'] = v['time']
+        box_B_adens[k]['adens'] = box_B_adens_current
         # dl_C[k].get_diff_rate()
         dl_C[k].get_diff_parallel()
         box_C_adens[k] = {}
@@ -539,14 +550,16 @@ def main():
         print(k, v, box_C_adens[k])
 
     with open('boxB.json5', 'w') as f:  # Save to json
-        json5.dump(dl_C.leaked, f, indent=4)
+        json5.dump(box_B_adens, f, indent=4)
     with open('boxC.json5', 'w') as f:
         json5.dump(box_C_adens, f, indent=4)
 
-    pd_B = get_dataframe(dl_C.leaked)
+    pd_A = get_dataframe(box_A.adens)
+    pd_B = get_dataframe(box_B_adens)
     pd_C = get_dataframe(box_C_adens)
     writer = pd.ExcelWriter('leaky_boxes.xlsx')
 
+    pd_A.to_excel(writer, 'box A')
     pd_B.to_excel(writer, 'box B')
     pd_C.to_excel(writer, 'box C')
     writer.close()
