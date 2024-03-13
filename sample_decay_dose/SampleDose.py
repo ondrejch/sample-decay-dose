@@ -76,7 +76,10 @@ def get_rho_from_atom_density(adens: dict) -> float:
     my_rho = 0.0
     for k, v in adens.items():
         if v > 0.0:
-            my_rho += rel_iso_mass[k] * v * m_Da * 1e24
+            iso_name = k.lower()
+            iso_name = re.sub('m$', '', iso_name)  # strip "m"
+            iso_name = re.sub('([a-zA-Z]+)(\d+)', '\g<1>-\g<2>', iso_name)  # add dash
+            my_rho += rel_iso_mass[iso_name] * v * m_Da * 1e24
     return my_rho
 
 
@@ -197,6 +200,16 @@ def get_fill_height_4_1(fill_volume: float, cyl_volume: float) -> float:
     return fill_volume / (math.pi * r ** 2)
 
 
+def get_cyl_h(cyl_volume: float, cyl_r: float) -> float:
+    """ Radius of a square cylinder from its volume
+        V = pi r^2 h
+        h = V / (pi r^2)
+    """
+    if not cyl_r > 0:
+        raise ValueError(f"Cylinder radius has to be positive, {cyl_r}")
+    return cyl_volume / math.pi / cyl_r ** 2
+
+
 def run_scale(deck_file: str):
     """ Run a SCALE deck """
     scale_out = subprocess.run([f"{SCALE_bin_path}/scalerte", "-m", deck_file], capture_output=True)
@@ -239,7 +252,7 @@ class Origen:
         self.case_dir: str = ''
         self.SAMPLE_ATOM_DENS_file_name_Origen: str = 'my_sample_atom_dens_origen.inp'
         self.SAMPLE_F71_file_name: str = self.ORIGEN_input_file_name.replace('inp', 'f71')
-        self.SAMPLE_F71_position: int = 12
+        self.SAMPLE_F71_position: int = 12  # Sample decay steps
         self.SAMPLE_DECAY_days: float = 30.0  # Sample decay time [days]
         self.sample_weight: float = np.NaN  # Mass of the sample [g]
         self.sample_density: float = np.NaN  # Mass density of the sample [g/cm3]
@@ -298,7 +311,9 @@ class OrigenFromTriton(Origen):
             pos_number: int = len(times) - 1
         else:
             pos_number: int = bisect_left(times, t)
-        print(f'--> Closest F71 position found at slot {pos_number}, {times[pos_number]} seconds')
+        print(f'--> Closest F71 position found at slot {pos_number}, {times[pos_number]} seconds, '
+              f'{times[pos_number]/(60.0*60.0*24)} days.')
+
         self.BURNED_MATERIAL_F71_position = pos_number
 
     def read_burned_material(self):
@@ -463,7 +478,7 @@ class OrigenIrradiation(Origen):
             f.write(self.origen_deck())
 
         if self.debug > 0:
-            print(f'ORIGEN: burning sample for {self.irradiate_days} days at {self.irradiate_flux } n/cm2/s, '
+            print(f'ORIGEN: burning sample for {self.irradiate_days} days at {self.irradiate_flux} n/cm2/s, '
                   f'then decaying for {self.SAMPLE_DECAY_days} days')
             print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
         run_scale(self.ORIGEN_input_file_name)
@@ -531,6 +546,159 @@ case(decay) {{
     gamma=yes
     neutron=yes
     beta=yes
+    lib {{
+        file="end7dec"
+    }}    
+    time {{
+        units=DAYS
+        start=0
+        t=[{time_interp_steps}L 0.001 {self.SAMPLE_DECAY_days}]
+    }}
+    save {{
+        file="{self.SAMPLE_F71_file_name}"
+    }}
+}}
+end
+
+=opus
+data='{self.SAMPLE_F71_file_name}'
+title='Neutrons'
+typarams=nspectrum
+units=intensity
+'time=days
+'tmin={self.SAMPLE_DECAY_days}
+'tmax={self.SAMPLE_DECAY_days}
+npos={self.SAMPLE_F71_position} end
+end
+
+=opus
+data='{self.SAMPLE_F71_file_name}'
+title='Gamma'
+typarams=gspectrum
+units=intensity
+'time=days
+'tmin={self.SAMPLE_DECAY_days}
+'tmax={self.SAMPLE_DECAY_days}
+npos={self.SAMPLE_F71_position} end
+end
+
+=opus
+data='{self.SAMPLE_F71_file_name}'
+title='Beta'
+typarams=bspectrum
+units=intensity
+'time=days
+'tmin={self.SAMPLE_DECAY_days}
+'tmax={self.SAMPLE_DECAY_days}
+npos={self.SAMPLE_F71_position} end
+'''
+        return origen_output
+
+
+def read_cvs_atom_dens(csv_file: str, volume: float = 1.0) -> dict:
+    """ Reads CVS file with a nuclide and number of atoms per row:
+    <nuc1>, <# of atoms>
+    <nuc2>, <# of atoms>
+    ...
+        Returns atom density
+        volume is in cm^3
+    """
+    import csv
+    my_atom_density: dict = {}
+    volume_barn_cm: float = volume * 1e24  # Volume [cm^3] -> [barn-cm]
+    with open(csv_file, 'r') as f:
+        reader = csv.reader(f, delimiter=',')
+        for row in reader:
+            my_atoms: float = float(row[1])
+            if my_atoms > 0:
+                iso_name = row[0].lower()
+             #   iso_name = re.sub('([a-zA-Z]+)(\d+)', '\g<1>-\g<2>', iso_name)  # add dash
+                my_atom_density[iso_name] = my_atoms / volume_barn_cm
+    return my_atom_density
+
+
+class OrigenDecayBox(Origen):
+    """ Origen decay from a simple dict of atom density and volume [cm] """
+
+    def __init__(self, _adens: (None, dict) = None, _vol: float = 0):
+        Origen.__init__(self)
+        self.SAMPLE_ATOM_DENSITY: (None, dict) = _adens
+        self.sample_volume = _vol
+        self.case_dir: str = f'decaybox_{_vol:.5}_g'  # Directory to run the case
+
+    def set_decay_days(self, decay_days: float = 30.0):
+        """ Use this to change decay time, as it also updates the case directory """
+        self.SAMPLE_DECAY_days = decay_days
+
+    def write_atom_dens(self):
+        """ Writes atom density of the sample to decay """
+        if self.SAMPLE_ATOM_DENSITY is None or self.sample_volume == 0:
+            raise ValueError(f'Adens is None or Volume is zero: {self.SAMPLE_ATOM_DENSITY}, {self.sample_volume}')
+        if not os.path.exists(self.case_dir):
+            os.mkdir(self.case_dir)
+        os.chdir(self.case_dir)
+
+        self.sample_density = get_rho_from_atom_density(self.SAMPLE_ATOM_DENSITY)
+        with open(self.SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write at-dens input for Origen irradiation
+            f.write(atom_dens_for_origen(self.SAMPLE_ATOM_DENSITY))
+        os.chdir(self.cwd)
+
+    def run_decay_sample(self):
+        """  Writes Origen input file, runs Origen to decay it, and Opus to plot spectra.
+        Finally, it reads atom density of the decayed sample, used later as a mixture for Mavric.
+        """
+        if not os.path.exists(self.case_dir + '/' + self.SAMPLE_ATOM_DENS_file_name_Origen):
+            raise FileNotFoundError("Write atom density for Origen first")
+        os.chdir(self.case_dir)
+
+        with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
+            f.write(self.origen_deck())
+
+        if self.debug > 0:
+            print(f'ORIGEN: decaying for {self.SAMPLE_DECAY_days} days')
+            print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
+        run_scale(self.ORIGEN_input_file_name)
+
+        print(self.SAMPLE_F71_file_name,
+                                                               self.SAMPLE_F71_position)
+        self.decayed_atom_dens = get_burned_material_atom_dens(self.SAMPLE_F71_file_name,
+                                                               self.SAMPLE_F71_position)
+        os.chdir(self.cwd)
+        if self.debug > 2:
+            # print(list(self.decayed_atom_dens.items())[:25])
+            nicely_print_atom_dens(self.decayed_atom_dens)
+
+    def origen_deck(self) -> str:
+        """ Sample irradiation and decay Origen deck """
+        time_interp_steps = self.SAMPLE_F71_position - 3
+        if time_interp_steps < 1:
+            raise ValueError("Too few time steps")
+        origen_output = f'''
+=shell
+cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
+end
+
+=origen
+' {NOW} 
+options{{
+    digits=6
+}}
+bounds {{
+    neutron="scale.rev13.xn200g47v7.1"
+    gamma="scale.rev13.xn200g47v7.1"
+    beta=[100L 1.0e7 1.0e-3]
+}}
+case(decay) {{
+    gamma=yes
+    neutron=yes
+    beta=yes
+    mat{{
+        iso=[
+<{self.SAMPLE_ATOM_DENS_file_name_Origen}
+]
+        units=ATOMS-PER-BARN-CM
+        volume={self.sample_volume}
+    }}
     lib {{
         file="end7dec"
     }}    
@@ -955,7 +1123,7 @@ read definitions
         xLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         yLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         zLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
-        xPlanes {x_planes_str} -{self.box_a} {self.box_a} {self.det_x+self.planes_xy_around_det} {self.det_x-self.planes_xy_around_det} end
+        xPlanes {x_planes_str} -{self.box_a} {self.box_a} {self.det_x + self.planes_xy_around_det} {self.det_x - self.planes_xy_around_det} end
         yPlanes {x_planes_str} -{self.box_a} {self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
         zPlanes {x_planes_str} -{self.box_a} {self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
     end gridGeometry
@@ -1028,7 +1196,7 @@ class DoseEstimatorStorageTank(DoseEstimatorSquareTank):
         self.plenum_volume_fraction: float = 0.2  # gas plenum above fill is +20% of sample volume
         self.sample_offset_z: (None, float) = None  # tank cylinder z - sample cylinder z [cm]
         self.sample_h2: (None, float) = None  # half-height of the sample
-        self.det_z: (None, float) = None # z location of the detector
+        self.det_z: (None, float) = None  # z location of the detector
         super().__init__(_o)  # Init DoseEstimator
 
     def mavric_deck(self) -> str:
@@ -1139,7 +1307,183 @@ read definitions
         xLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         yLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         zLinear {self.N_planes_cyl}  {sample_z_min} {sample_z_max}
-        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.det_x-self.planes_xy_around_det} {self.det_x+self.planes_xy_around_det} end
+        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.det_x - self.planes_xy_around_det} {self.det_x + self.planes_xy_around_det} end
+        yPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
+        zPlanes {z_planes_str} {tank_h2 + self.box_a} {-tank_h2 - self.box_a} end
+    end gridGeometry
+end definitions
+
+read sources'''
+        if self.neutron_intensity > 0.0:
+            mavric_output += f'''
+    src 1
+        title="Sample neutrons"
+        neutron
+        useNormConst
+        cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
+        eDistributionID=1
+    end src'''
+
+        mavric_output += f'''
+    src 2
+        title="Sample photons"
+        photon
+        useNormConst
+        cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
+        eDistributionID=2
+    end src
+end sources
+
+read importanceMap
+   gridGeometryID=1
+'   adjointFluxes="{adjoint_flux_file}"
+   adjointSource 1
+        locationID=1
+        responseID=1
+   end adjointSource
+   adjointSource 2
+        locationID=1
+        responseID=2
+   end adjointSource
+end importanceMap
+
+read tallies
+    pointDetector 1
+        title="neutron detector"
+        neutron
+        locationID=1
+        responseID=1
+    end pointDetector
+    pointDetector 2
+        title="photon detector"
+        photon
+        locationID=1
+        responseID=2
+    end pointDetector
+end tallies
+
+end data
+end
+'''
+        return mavric_output
+
+
+class DoseEstimatorGenericTank(DoseEstimatorSquareTank):
+    """ MAVRIC calculation of rem/h doses from the decayed sample in a storage tank made of materials
+    The storage tank is a cylinder, filled with the sample.
+    """
+
+    def __init__(self, _o: Origen = None):
+        """ This reads decayed sample information from the Origen object """
+        self.sample_h2: (None, float) = None  # half-height of the sample
+        self.det_z: (None, float) = None  # z location of the detector
+        self.cyl_r: (None, float) = None  # inner radius of the tank cylinder; h is calculated from V & r
+        super().__init__(_o)  # Init DoseEstimator
+
+    def mavric_deck(self) -> str:
+        """ MAVRIC dose calculation input file """
+        adjoint_flux_file: str = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
+        self.sample_h2 = get_cyl_h(self.sample_volume, self.cyl_r) / 2.0
+        tank_r: float = self.cyl_r
+        tank_h2: float = self.sample_h2
+        sample_z_max: float = self.sample_h2 + self.box_a
+        sample_z_min: float = - self.sample_h2 - self.box_a
+
+        mavric_output = f'''
+=shell
+cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_F71_file_name} .
+cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
+'cp -r ${{INPDIR}}/{adjoint_flux_file} .
+end
+
+=mavric parm=(   )
+{NOW} DoseEstimatorGenericTank, {self.sample_weight} g, layers {self.layers_thicknesses}
+{MAVRIC_NG_XSLIB}
+
+read parameters
+    randomSeed=0000000100000001
+    ceLibrary="ce_v7.1_endf.xml"
+    neutrons  photons
+    fissionMult=1  secondaryMult=1
+    perBatch={self.histories_per_batch} batches={self.batches}
+end parameters
+
+read comp
+<{self.SAMPLE_ATOM_DENS_file_name_MAVRIC}
+helium 2 end
+end comp
+
+read geometry
+global unit 1
+    cylinder 1 {tank_r} 2p {tank_h2}
+    media 1 1 1
+'''
+        xy_planes: list[float] = []  # list of XY cylinder boundaries for gridgeometry
+        z_planes: list[float] = [sample_z_max, sample_z_min]  # list of Z cylinder boundaries for gridgeometry
+        k: int = 0
+        for k in range(len(self.layers_mats)):
+            tank_r += self.layers_thicknesses[k]
+            tank_h2 += self.layers_thicknesses[k]
+            mavric_output += f'    cylinder {k + 3} {tank_r} 2p {tank_h2}\n'
+            if k == 0:
+                mavric_output += f'media 10 1 -1 -2 3\n'
+            else:
+                mavric_output += f'media {k + 10}  1 -{k + 2} {k + 3}\n'
+            xy_planes.append(tank_r)
+            z_planes.append(tank_h2)
+            z_planes.append(-tank_h2)
+        self.det_x = tank_r + self.det_standoff_distance  # Detector is next to the tank
+        xy_planes_str: str = " ".join([f' {x:.5f} -{x:.5f}' for x in xy_planes])
+        self.det_z = (sample_z_max + sample_z_min) / 2.0
+        z_planes.append(self.det_z + self.planes_xy_around_det)
+        z_planes.append(self.det_z - self.planes_xy_around_det)
+        z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
+        mavric_output += f'''
+    cuboid 99999  4p {tank_r + self.box_a} 2p {tank_h2 + self.box_a}  
+    media 0 1 99999 -{k + 3}
+boundary 99999
+end geometry
+
+read definitions
+     location 1
+        position {self.det_x} 0 {self.det_z}
+    end location
+    response 1
+        title="ANSI standard (1991) flux-to-dose-rate factors [rem/h], neutrons"
+        doseData=9031
+    end response
+    response 2
+        title="ANSI standard (1991) flux-to-dose-rate factors [rem/h], photons"
+        doseData=9505
+    end response 
+'''
+
+        if self.neutron_intensity > 0.0:
+            mavric_output += f'''
+    distribution 1
+        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"
+        special="origensBinaryConcentrationFile"
+        parameters {self.DECAYED_SAMPLE_F71_position} 1 end
+        filename="{self.DECAYED_SAMPLE_F71_file_name}"
+    end distribution'''
+
+        mavric_output += f'''
+    distribution 2
+        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, photons"
+        special="origensBinaryConcentrationFile"
+        parameters {self.DECAYED_SAMPLE_F71_position} 5 end
+        filename="{self.DECAYED_SAMPLE_F71_file_name}"
+    end distribution
+
+    gridGeometry 1
+        title="Grid over the problem, location at +x"
+        xLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a}
+'        yLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a} 
+'        zLinear {self.N_planes_box} {tank_h2} {tank_h2 + self.box_a}
+        xLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
+        yLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
+        zLinear {self.N_planes_cyl}  {sample_z_min} {sample_z_max}
+        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.det_x - self.planes_xy_around_det} {self.det_x + self.planes_xy_around_det} end
         yPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
         zPlanes {z_planes_str} {tank_h2 + self.box_a} {-tank_h2 - self.box_a} end
     end gridGeometry
