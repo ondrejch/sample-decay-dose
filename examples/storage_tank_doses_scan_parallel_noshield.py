@@ -12,6 +12,8 @@ from joblib import Parallel, delayed, cpu_count
 
 n_jobs: int = cpu_count()  # How many MAVRIC cases to run in parallel
 sample_mass: float = 1200.0e3  # 1200 kg
+max_decay_time_years: float = 4.0
+decay_steps: int = 144
 
 
 def my_process(decay_d: float) -> dict:
@@ -51,9 +53,65 @@ def my_process(decay_d: float) -> dict:
     return _res
 
 
-# Parallel jobs
-results = Parallel(n_jobs=n_jobs)(delayed(my_process)(decay_day) for decay_day in np.linspace(1, 365*2, 15))
+def run_analysis():
+    # Parallel jobs
+    decay_timeline = np.linspace(1.0, max_decay_time_years * 365.24, decay_steps)
+    results = Parallel(n_jobs=n_jobs)(delayed(my_process)(decay_day) for decay_day in decay_timeline)
+    print(results)
+    with open('doses.json', 'w') as file_out:
+        json5.dump(results, file_out, indent=4)
 
-print(results)
-with open('doses.json', 'w') as file_out:
-    json5.dump(results, file_out, indent=4)
+
+def plot(datafile='doses.json'):
+    import matplotlib.pyplot as plt
+    with open(datafile) as f:
+        gamma_doses = json5.load(f)
+    _x: list = []
+    _y: list = []
+    _yerr: list = []
+    for dd in gamma_doses:
+        for t, v in dd.items():
+            _x.append(float(t))
+            _y.append(float(v['value']))
+            _yerr.append(float(v['stdev']))
+
+    x = np.array(_x)
+    y = np.array(_y)
+    yerr = np.array(_yerr)
+
+    # Integrate
+    dose2y: float = 0
+    for i in range(len(x) - 1):
+        trapezoid = (x[i + 1] - x[i]) * (y[i + 1] + y[i]) / 2.0  # Trapezoidal rule
+        dose2y += trapezoid * 24.0  # [rem/h] -> [rem], integrating over days
+    print(f'Gamma dose over {max_decay_time_years:.1f} years of decay: {dose2y/1e6:.1f} Mrem')
+    print(f'Gamma dose at {max_decay_time_years:.1f} years of decay: {y[-1]:.1f} ± {yerr[-1]:.1f} rem/h, '
+          f'or {y[-1]*24.0*365.24/1e6:.1f} Mrem/year')
+
+    # Plots!
+    plt.close('all')
+    plt.xscale('linear')
+    plt.yscale('linear')
+    plt.grid()
+    plt.title("Gamma dose from unshielded container, 2 EFPY at 1 MWt")
+    plt.xlabel(f'decay time [days]')
+    plt.ylabel('Dose at 1 cm [rem/h]')
+    plt.errorbar(x, y, yerr, ls='none', color='slategrey', capsize=1.2)
+    plt.scatter(x, y, color='slategrey', s=5, label='Gamma')
+
+    plt.legend()
+    plt.tight_layout()
+    label_file_name = 'fs_days'
+    plt.savefig(f'dose_{label_file_name}.png', dpi=1000)
+    # plt.show()
+
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.savefig(f'dose_{label_file_name}-loglog.png', dpi=1000)
+    # plt.show()
+
+
+if __name__ == "__main__":
+    run_analysis()
+    plot()
+    # plot('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/40-decaydays_1200kg/doses.json')
