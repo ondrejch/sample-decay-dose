@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Example use case of SampleDose -- calculate decay doses of F71 sample as a function of decay times
+Example use case of SampleDose -- calculate decay doses of sample as a function of decay times
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
@@ -63,6 +63,13 @@ def mavric_process(case: tuple[float, float]) -> dict:
 my_atom_density: dict = SampleDose.read_cvs_atom_dens(my_atoms_file, my_volume)
 print_atoms()
 origen_decay = SampleDose.OrigenDecayBox(my_atom_density, my_volume)    # This needs to be global scope
+
+
+def run_2y_decay_only():
+    origen_decay.set_decay_days(2.0*365.24)
+    origen_decay.SAMPLE_F71_position = 300  # sample decay steps
+    origen_decay.write_atom_dens()
+    origen_decay.run_decay_sample()
 
 
 def run_analysis():
@@ -159,5 +166,6 @@ def plot(datafile='doses.json'):
 
 
 if __name__ == "__main__":
+    run_2y_decay_only()
     # run_analysis()
-    plot()
+    # plot()

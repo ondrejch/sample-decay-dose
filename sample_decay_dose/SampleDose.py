@@ -1249,7 +1249,7 @@ global unit 1
             tank_r += self.layers_thicknesses[k]
             tank_h2 += self.layers_thicknesses[k]
             mavric_output += f'    cylinder {k + 3} {tank_r} 2p {tank_h2}\n'
-            if k == 0:
+            if k == 0:  # Special case for gas plenum
                 mavric_output += f'media 10 1 -1 -2 3\n'
             else:
                 mavric_output += f'media {k + 10}  1 -{k + 2} {k + 3}\n'
@@ -1410,7 +1410,7 @@ end parameters
 
 read comp
 <{self.SAMPLE_ATOM_DENS_file_name_MAVRIC}
-helium 2 end
+' helium 2 end
 end comp
 
 read geometry
@@ -1425,10 +1425,11 @@ global unit 1
             tank_r += self.layers_thicknesses[k]
             tank_h2 += self.layers_thicknesses[k]
             mavric_output += f'    cylinder {k + 3} {tank_r} 2p {tank_h2}\n'
-            if k == 0:
-                mavric_output += f'media 10 1 -1 -2 3\n'
-            else:
-                mavric_output += f'media {k + 10}  1 -{k + 2} {k + 3}\n'
+            # if k == 0:    # Special case for gas plenum
+            #     mavric_output += f'media 10 1 -1 -2 3\n'
+            # else:
+            #     mavric_output += f'media {k + 10}  1 -{k + 2} {k + 3}\n'
+            mavric_output += f'media {k + 10}  1 -{k + 2} {k + 3}\n'
             xy_planes.append(tank_r)
             z_planes.append(tank_h2)
             z_planes.append(-tank_h2)
