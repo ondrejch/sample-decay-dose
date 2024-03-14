@@ -1250,9 +1250,9 @@ global unit 1
             tank_h2 += self.layers_thicknesses[k]
             mavric_output += f'    cylinder {k + 3} {tank_r} 2p {tank_h2}\n'
             if k == 0:  # Special case for gas plenum
-                mavric_output += f'media 10 1 -1 -2 3\n'
+                mavric_output += f'    media 10 1 -1 -2 3\n'
             else:
-                mavric_output += f'media {k + 10}  1 -{k + 2} {k + 3}\n'
+                mavric_output += f'    media {k + 10}  1 -{k + 2} {k + 3}\n'
             xy_planes.append(tank_r)
             z_planes.append(tank_h2)
             z_planes.append(-tank_h2)
@@ -1424,12 +1424,9 @@ global unit 1
         for k in range(len(self.layers_mats)):
             tank_r += self.layers_thicknesses[k]
             tank_h2 += self.layers_thicknesses[k]
-            mavric_output += f'    cylinder {k + 3} {tank_r} 2p {tank_h2}\n'
-            # if k == 0:    # Special case for gas plenum
-            #     mavric_output += f'media 10 1 -1 -2 3\n'
-            # else:
-            #     mavric_output += f'media {k + 10}  1 -{k + 2} {k + 3}\n'
-            mavric_output += f'media {k + 10}  1 -{k + 2} {k + 3}\n'
+            mavric_output += f'''
+    cylinder {k + 2} {tank_r} 2p {tank_h2}   
+    media {k + 10}  1 -{k + 1} {k + 2}'''
             xy_planes.append(tank_r)
             z_planes.append(tank_h2)
             z_planes.append(-tank_h2)
@@ -1441,7 +1438,7 @@ global unit 1
         z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
         mavric_output += f'''
     cuboid 99999  4p {tank_r + self.box_a} 2p {tank_h2 + self.box_a}  
-    media 0 1 99999 -{k + 3}
+    media 0 1 99999 -{k + 2}
 boundary 99999
 end geometry
 
