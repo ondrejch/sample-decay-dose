@@ -45,31 +45,37 @@ def mavric_process(case: tuple[float, float]) -> dict:
     return _res
 
 
-# Load and decay the nuclide vector from F71 file
-# Set F71 file path and sample mass [g]
-origen_triton = SampleDose.OrigenFromTriton('../SCALE_FILE.f71', sample_mass)
-# Select F71 file position [seconds]
-origen_triton.set_f71_pos(2.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 2 years
-# Read burned nuclides
-origen_triton.read_burned_material()
-# Set hoe long they decay [days]
-origen_triton.set_decay_days(decay_days)
-# Execute ORIGEN
-origen_triton.run_decay_sample()
+def run_analysis():
+    # Load and decay the nuclide vector from F71 file
+    # Set F71 file path and sample mass [g]
+    origen_triton = SampleDose.OrigenFromTriton('../SCALE_FILE.f71', sample_mass)
+    # Select F71 file position [seconds]
+    origen_triton.set_f71_pos(2.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 2 years
+    # Read burned nuclides
+    origen_triton.read_burned_material()
+    # Set hoe long they decay [days]
+    origen_triton.set_decay_days(decay_days)
+    # Execute ORIGEN
+    origen_triton.run_decay_sample()
 
-# Inputs for joblib parallelism have to be iterable
-case_inputs: list[tuple[float, float]] = []
-d = {}  # This would be better handled with Pandas ..
-for steel_shield_thick_in in np.geomspace(2, 15, 5):
-    s_cm = 2.54 * steel_shield_thick_in
-    d[s_cm] = {}
-    for concrete_shield_in in np.geomspace(2, 15, 5):
-        c_cm = 2.54 * concrete_shield_in
-        case_inputs.append((s_cm, c_cm))
+    # Inputs for joblib parallelism have to be iterable
+    case_inputs: list[tuple[float, float]] = []
+    d = {}  # This would be better handled with Pandas ..
+    for steel_shield_thick_in in np.geomspace(2, 15, 5):
+        s_cm = 2.54 * steel_shield_thick_in
+        d[s_cm] = {}
+        for concrete_shield_in in np.geomspace(2, 15, 5):
+            c_cm = 2.54 * concrete_shield_in
+            case_inputs.append((s_cm, c_cm))
 
-# Parallel MAVRIC jobs
-results = Parallel(n_jobs=n_jobs)(delayed(mavric_process)(case) for case in case_inputs)
+    # Parallel MAVRIC jobs
+    results = Parallel(n_jobs=n_jobs)(delayed(mavric_process)(case) for case in case_inputs)
 
-print(results)
-with open('doses.json', 'w') as file_out:
-    json5.dump(results, file_out, indent=4)
+    print(results)
+    with open('doses.json', 'w') as file_out:
+        json5.dump(results, file_out, indent=4)
+
+
+if __name__ == "__main__":
+    pass
+    # run_analysis()

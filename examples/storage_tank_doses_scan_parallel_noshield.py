@@ -64,6 +64,7 @@ def run_analysis():
 
 def plot(datafile='doses.json'):
     import matplotlib.pyplot as plt
+    do_plots: bool = False
     with open(datafile) as f:
         gamma_doses = json5.load(f)
     _x: list = []
@@ -89,29 +90,30 @@ def plot(datafile='doses.json'):
           f'or {y[-1]*24.0*365.24/1e6:.1f} Mrem/year')
 
     # Plots!
-    plt.close('all')
-    plt.xscale('linear')
-    plt.yscale('linear')
-    plt.grid()
-    plt.title("Gamma dose from unshielded container, 2 EFPY at 1 MWt")
-    plt.xlabel(f'decay time [days]')
-    plt.ylabel('Dose at 1 cm [rem/h]')
-    plt.errorbar(x, y, yerr, ls='none', color='slategrey', capsize=1.2)
-    plt.scatter(x, y, color='slategrey', s=5, label='Gamma')
+    if do_plots:
+        plt.close('all')
+        plt.xscale('linear')
+        plt.yscale('linear')
+        plt.grid()
+        plt.title("Gamma dose from unshielded container, 2 EFPY at 1 MWt")
+        plt.xlabel(f'decay time [days]')
+        plt.ylabel('Dose at 1 cm [rem/h]')
+        plt.errorbar(x, y, yerr, ls='none', color='slategrey', capsize=1.2)
+        plt.scatter(x, y, color='slategrey', s=5, label='Gamma')
 
-    plt.legend()
-    plt.tight_layout()
-    label_file_name = 'fs_days'
-    plt.savefig(f'dose_{label_file_name}.png', dpi=1000)
-    # plt.show()
+        plt.legend()
+        plt.tight_layout()
+        label_file_name = 'fs_days'
+        plt.savefig(f'dose_{label_file_name}.png', dpi=1000)
+        # plt.show()
 
-    plt.xscale('log')
-    plt.yscale('log')
-    plt.savefig(f'dose_{label_file_name}-loglog.png', dpi=1000)
-    # plt.show()
+        plt.xscale('log')
+        plt.yscale('log')
+        plt.savefig(f'dose_{label_file_name}-loglog.png', dpi=1000)
+        # plt.show()
 
 
 if __name__ == "__main__":
-    run_analysis()
-    plot()
-    # plot('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/40-decaydays_1200kg/doses.json')
+    # run_analysis()
+    # plot()
+    plot('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/40-decaydays_1200kg/doses.json')
