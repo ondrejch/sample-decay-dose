@@ -45,10 +45,11 @@ def mavric_process(case: tuple[float, float]) -> dict:
     # Temperatures of additional layers [cm]
     mavric.layers_temperature_K = [873.0, 300.0, 300.0, 300.0]
     # Add more planes since the source is large
-    mavric.N_planes_cyl = 12
+    mavric.N_planes_cyl = 20
     # Monaco histories
-    mavric.histories_per_batch = 200000
-    mavric.batches = 40
+    mavric.histories_per_batch = 400000
+    mavric.batches = min(150, 5 + int(steel_cm * concrete_cm / 4))
+
     # Run simulation
     mavric.run_mavric()
     mavric.get_responses()
@@ -81,10 +82,10 @@ def run_analysis():
     # Inputs for joblib parallelism have to be iterable
     case_inputs: list[tuple[float, float]] = []
     d = {}  # This would be better handled with Pandas ..
-    for steel_shield_thick_in in np.geomspace(0.1, 10, 8):
+    for steel_shield_thick_in in np.geomspace(5, 18, 30):
         s_cm = 2.54 * steel_shield_thick_in
         d[s_cm] = {}
-        for concrete_shield_in in np.geomspace(0.1, 10, 8):
+        for concrete_shield_in in np.geomspace(5, 18, 30):
             c_cm = 2.54 * concrete_shield_in
             case_inputs.append((s_cm, c_cm))
 
