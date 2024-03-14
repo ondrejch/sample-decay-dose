@@ -624,7 +624,7 @@ class OrigenDecayBox(Origen):
         Origen.__init__(self)
         self.SAMPLE_ATOM_DENSITY: (None, dict) = _adens
         self.sample_volume = _vol
-        self.case_dir: str = f'decaybox_{_vol:.5}_g'  # Directory to run the case
+        self.case_dir: str = f'_decaybox_{_vol:.5}_g'  # Directory to run the case
 
     def set_decay_days(self, decay_days: float = 30.0):
         """ Use this to change decay time, as it also updates the case directory """
