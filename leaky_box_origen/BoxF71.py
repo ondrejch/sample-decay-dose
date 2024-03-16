@@ -502,7 +502,7 @@ def main():
     origen_triton_box_A.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
     origen_triton_box_A.read_burned_material()
     origen_triton_box_A.DECAY_days = 12
-    origen_triton_box_A.DECAY_steps = 12*2+2
+    origen_triton_box_A.DECAY_steps = 12*2 + 2
     if is_xe_136_testing:
         origen_triton_box_A.atom_dens = {'xe-136': 1.0}
     if is_xe_135_testing:
