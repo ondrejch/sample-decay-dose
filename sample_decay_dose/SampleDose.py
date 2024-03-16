@@ -754,20 +754,6 @@ class DoseEstimator:
     def __init__(self, _o: Origen = None):
         """ This reads decayed sample information from the Origen object """
         self.debug: int = 3  # Debugging flag
-        if _o:
-            self.sample_weight: float = _o.sample_weight  # Mass of the sample [g]
-            self.sample_density: float = _o.sample_density  # Mass density of the sample [g/cm3]
-            self.sample_volume: float = _o.sample_volume  # Sample volume [cm3]
-            self.sample_temperature_K: float = 873.0  # Sample temperature [K]
-            self.DECAYED_SAMPLE_F71_file_name: str = _o.SAMPLE_F71_file_name
-            self.DECAYED_SAMPLE_F71_position: int = _o.SAMPLE_F71_position
-            self.DECAYED_SAMPLE_days: float = _o.SAMPLE_DECAY_days  # Sample decay time [days]
-            self.decayed_atom_dens: dict = _o.decayed_atom_dens  # Atom density of the decayed sample
-            self.beta_over_gamma: float = _o.get_beta_to_gamma()  # Beta over gamma spectral ratio
-            self.neutron_intensity: float = _o.get_neutron_integral()  # Integral of neutron spectra
-            self.ORIGEN_dir: str = _o.case_dir  # Directory to run the case
-            self.case_dir: str = self.ORIGEN_dir + '_MAVRIC'
-            self.cwd: str = _o.cwd  # Current running directory
         self.MAVRIC_input_file_name: str = 'my_dose.inp'
         self.MAVRIC_out_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'out')
         self.SAMPLE_ATOM_DENS_file_name_MAVRIC: str = 'my_sample_atom_dens_mavric.inp'
@@ -779,6 +765,22 @@ class DoseEstimator:
         self.batches: int = 10  # Monaco number of batches in total
         self.box_a: float = np.NaN
         self.cyl_r: float = np.NaN
+        self.sample_temperature_K: float = 873.0  # Sample temperature [K]
+        self.decayed_atom_dens: dict = {}  # Atom density of the decayed sample
+        self.beta_over_gamma: float = 0  # Beta over gamma spectral ratio
+        if _o:
+            self.sample_weight: float = _o.sample_weight  # Mass of the sample [g]
+            self.sample_density: float = _o.sample_density  # Mass density of the sample [g/cm3]
+            self.sample_volume: float = _o.sample_volume  # Sample volume [cm3]
+            self.DECAYED_SAMPLE_F71_file_name: str = _o.SAMPLE_F71_file_name
+            self.DECAYED_SAMPLE_F71_position: int = _o.SAMPLE_F71_position
+            self.DECAYED_SAMPLE_days: float = _o.SAMPLE_DECAY_days  # Sample decay time [days]
+            self.decayed_atom_dens: dict = _o.decayed_atom_dens  # Atom density of the decayed sample
+            self.beta_over_gamma: float = _o.get_beta_to_gamma()  # Beta over gamma spectral ratio
+            self.neutron_intensity: float = _o.get_neutron_integral()  # Integral of neutron spectra
+            self.ORIGEN_dir: str = _o.case_dir  # Directory to run the case
+            self.case_dir: str = self.ORIGEN_dir + '_MAVRIC'
+            self.cwd: str = _o.cwd  # Current running directory
 
     def run_mavric(self):
         """ Writes Mavric inputs and runs the case """
