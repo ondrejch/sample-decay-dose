@@ -138,7 +138,8 @@ def make_plot(title: str, my_dir: str):
     # ticker.Locator.minor_thresholds = (0.5, 0.25)
     # https://matplotlib.org/stable/users/explain/colors/colormaps.html
     cs = ax.contourf(x, y, g_mrem_dose.T, levs, norm=colors.LogNorm(), locator=ticker.LogLocator(), cmap='jet')
-    # cs = ax.contour(x, y, g_dose.T, levs)
+    # cs = ax.contourf(x, y, g_mrem_dose.T,  norm=colors.LogNorm(),  cmap='jet')
+    # cs = ax.contour(x, y, g_mrem_dose.T, levs)
     ax.clabel(cs, inline=True, fontsize=10, manual=False, colors=['black'], fmt="%.0e")
     # cbar = fig.colorbar(cs, format = "%.1e")
     cbar = fig.colorbar(cs, format="%.05g")
@@ -167,6 +168,6 @@ def plot(datafile='doses.json'):
 
 
 if __name__ == "__main__":
-    run_2y_decay_only()
+    # run_2y_decay_only()
     # run_analysis()
-    # plot()
+    plot()

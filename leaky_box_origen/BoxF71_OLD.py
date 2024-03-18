@@ -543,7 +543,7 @@ def main():
             continue
         origen_box_B[k] = DecayBoxB(box_B_adens_current, volume)
         origen_box_B[k].nuclide_feed_rates = box_A.leak_rates[k]['rate']
-        origen_box_B[k].DECAY_steps = 8
+        origen_box_B[k].DECAY_steps = 4
         origen_box_B[k].DECAY_start_seconds = prev_time_seconds
         origen_box_B[k].DECAY_end_seconds = v['time']
         origen_box_B[k].case_dir = f'_box_B_{k:04d}'
@@ -565,7 +565,7 @@ def main():
         for iso_C in origen_box_C[k].nuclide_feed_rates.keys():  # convert to feed rate
             origen_box_C[k].nuclide_feed_rates[iso_C] *= volume
 
-        origen_box_C[k].DECAY_steps = 8
+        origen_box_C[k].DECAY_steps = 4
         origen_box_C[k].DECAY_start_seconds = prev_time_seconds
         origen_box_C[k].DECAY_end_seconds = v['time']
         origen_box_C[k].case_dir = f'_box_C_{k:04d}'
