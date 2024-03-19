@@ -6,6 +6,7 @@ Ondrej Chvala <ochvala@utexas.edu>
 
 import os
 import numpy as np
+import pandas as pd
 import json5
 import matplotlib.pyplot as plt
 from matplotlib import colors, cm, ticker
@@ -15,12 +16,12 @@ my_data = {
     '1 day': '34-1_decay_days',
     '2 days': '33-2_decay_days',
     '7 days': '35-7_decay_days',
-    '30 days' : '36-30_decay_days'
+    '30 days': '36-30_decay_days'
 }
 
 
-def make_plot(title: str, dir: str):
-    with open(f'{dir}/doses.json') as fin:
+def make_plot(title: str, my_dir: str):
+    with open(f'{my_dir}/doses.json') as fin:
         r = json5.load(fin)
 
     _steel_cm_list = []
@@ -68,8 +69,26 @@ def make_plot(title: str, dir: str):
     file_name_fig = f'dose_g_storage_tank-{title.replace(" ", "_")}_decay.png'
     plt.savefig(file_name_fig, dpi=1000, bbox_inches='tight', pad_inches=0.1)
     plt.tight_layout()
-    plt.show()
+    # plt.show()
+
+    steel_cm = [f'{float(x):.3f}' for x in _steel_cm_list]
+    concrete_cm = [f'{float(x):.3f}' for x in _concrete_cm_list]
+    pd_mrem_dose = pd.DataFrame(g_mrem_dose, columns=steel_cm, index=concrete_cm)
+    pd_mrem_stdev = pd.DataFrame(g_mrem_stdev, columns=steel_cm, index=concrete_cm)
+    return pd_mrem_dose, pd_mrem_stdev
 
 
 for t, d in my_data.items():
+    print(f'Processing {t}, {d}')
     make_plot(t, d)
+
+    writer = pd.ExcelWriter('storage_dose.xlsx')
+    for t, d in my_data.items():
+        pd_dose, pd_stdev = make_plot(t, d)
+        # header = f'Rows = Steel [cm], Columns = Concrete [cm]'
+        # pd_dose.columns = pd.MultiIndex.from_product([[header],  pd_dose.columns])
+        pd_dose.style.map(lambda v: 'color:#8B0000' if v > 20 else None).\
+            map(lambda v: 'font-weight:bold;color:#008000' if 20 > v > 2 else None).\
+            to_excel(writer, sheet_name=f'dose (mrem per h), {t}')
+        pd_stdev.to_excel(writer, sheet_name=f'dose ± stdev, {t}')
+    writer.close()

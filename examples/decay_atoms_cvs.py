@@ -6,6 +6,7 @@ Ondrej Chvala <ochvala@utexas.edu>
 
 from sample_decay_dose import SampleDose
 import numpy as np
+import pandas as pd
 import json5
 from joblib import Parallel, delayed, cpu_count
 
@@ -63,11 +64,11 @@ def mavric_process(case: tuple[float, float]) -> dict:
 
 my_atom_density: dict = SampleDose.read_cvs_atom_dens(my_atoms_file, my_volume)
 print_atoms()
-origen_decay = SampleDose.OrigenDecayBox(my_atom_density, my_volume)    # This needs to be global scope
+origen_decay = SampleDose.OrigenDecayBox(my_atom_density, my_volume)  # This needs to be global scope
 
 
 def run_2y_decay_only():
-    origen_decay.set_decay_days(2.0*365.24)
+    origen_decay.set_decay_days(2.0 * 365.24)
     origen_decay.SAMPLE_F71_position = 300  # sample decay steps
     origen_decay.write_atom_dens()
     origen_decay.run_decay_sample()
@@ -147,10 +148,16 @@ def make_plot(title: str, my_dir: str):
     plt.title(f'Gamma dose from offgas tank after {title} of decay')
     plt.xlabel('Steel shield thickness [cm]')
     plt.ylabel('Concrete shield thickness [cm]')
-    file_name_fig = f'dose_g_storage_tank-{title.replace(" ", "_")}_decay.png'
+    file_name_fig = f'dose_g_offgas_tank-{title.replace(" ", "_")}_decay.png'
     plt.savefig(file_name_fig, dpi=1000, bbox_inches='tight', pad_inches=0.1)
     plt.tight_layout()
-    plt.show()
+    # plt.show()
+
+    steel_cm = [f'{float(x):.3f}' for x in _steel_cm_list]
+    concrete_cm = [f'{float(x):.3f}' for x in _concrete_cm_list]
+    pd_mrem_dose = pd.DataFrame(g_mrem_dose, columns=steel_cm, index=concrete_cm)
+    pd_mrem_stdev = pd.DataFrame(g_mrem_stdev, columns=steel_cm, index=concrete_cm)
+    return pd_mrem_dose, pd_mrem_stdev
 
 
 def plot(datafile='doses.json'):
@@ -163,8 +170,16 @@ def plot(datafile='doses.json'):
         '14 days': '04-14days_decay',
         '30 days': '05-30days_decay'
     }
+    writer = pd.ExcelWriter('offgas_dose.xlsx')
     for t, d in my_data.items():
-        make_plot(t, d)
+        pd_dose, pd_stdev = make_plot(t, d)
+        # header = f'Rows = Steel [cm], Columns = Concrete [cm]'
+        # pd_dose.columns = pd.MultiIndex.from_product([[header],  pd_dose.columns])
+        pd_dose.style.map(lambda v: 'color:#8B0000' if v > 20 else None).\
+            map(lambda v: 'font-weight:bold;color:#008000' if 20 > v > 2 else None).\
+            to_excel(writer, sheet_name=f'dose (mrem per h), {t}')
+        pd_stdev.to_excel(writer, sheet_name=f'dose ± stdev, {t}')
+    writer.close()
 
 
 if __name__ == "__main__":
