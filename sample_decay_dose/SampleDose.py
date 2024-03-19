@@ -1389,8 +1389,8 @@ class DoseEstimatorGenericTank(DoseEstimatorSquareTank):
         self.sample_h2 = get_cyl_h(self.sample_volume, self.cyl_r) / 2.0
         tank_r: float = self.cyl_r
         tank_h2: float = self.sample_h2
-        sample_z_max: float = self.sample_h2 + self.box_a
-        sample_z_min: float = - self.sample_h2 - self.box_a
+        sample_z_max: float = self.sample_h2
+        sample_z_min: float = - self.sample_h2
 
         mavric_output = f'''
 =shell

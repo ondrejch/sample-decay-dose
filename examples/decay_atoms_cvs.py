@@ -153,8 +153,8 @@ def make_plot(title: str, my_dir: str):
     plt.tight_layout()
     # plt.show()
 
-    steel_cm = [f'{float(x):.3f}' for x in _steel_cm_list]
-    concrete_cm = [f'{float(x):.3f}' for x in _concrete_cm_list]
+    steel_cm = [f'{float(x):.2f}' for x in _steel_cm_list]
+    concrete_cm = [f'{float(x):.2f}' for x in _concrete_cm_list]
     pd_mrem_dose = pd.DataFrame(g_mrem_dose, columns=steel_cm, index=concrete_cm)
     pd_mrem_stdev = pd.DataFrame(g_mrem_stdev, columns=steel_cm, index=concrete_cm)
     return pd_mrem_dose, pd_mrem_stdev
@@ -175,10 +175,10 @@ def plot(datafile='doses.json'):
         pd_dose, pd_stdev = make_plot(t, d)
         # header = f'Rows = Steel [cm], Columns = Concrete [cm]'
         # pd_dose.columns = pd.MultiIndex.from_product([[header],  pd_dose.columns])
-        pd_dose.style.map(lambda v: 'color:#8B0000' if v > 20 else None).\
-            map(lambda v: 'font-weight:bold;color:#008000' if 20 > v > 2 else None).\
-            to_excel(writer, sheet_name=f'dose (mrem per h), {t}')
-        pd_stdev.to_excel(writer, sheet_name=f'dose ± stdev, {t}')
+        pd_dose.style.map(lambda v: 'color:#8B0000' if v > 20 else None). \
+            map(lambda v: 'font-weight:bold;color:#008000' if 20 > v > 2 else None). \
+            to_excel(writer, sheet_name=f'dose (mrem per h), {t}', float_format="%0.1f")
+        pd_stdev.to_excel(writer, sheet_name=f'dose ± stdev, {t}', float_format="%0.2f")
     writer.close()
 
 
