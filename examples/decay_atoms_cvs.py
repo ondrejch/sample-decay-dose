@@ -15,6 +15,7 @@ decay_days: float = 2.0  # 2 days
 
 cm2_to_barn: float = 1e24  # 1 cm^2 = 1e24 barn
 my_inner_r: float = 37.7825  # IR of 30" schedule 40 pipe
+my_thick: float = 0.635  # Thickness of 30" schedule 40 pipe
 my_volume: float = 600e3  # 600 liters
 my_atoms_file: str = '/tmp/atoms.csv'
 
@@ -42,7 +43,7 @@ def mavric_process(case: tuple[float, float]) -> dict:
     mavric.layers_mats = [SampleDose.ADENS_SS316H_HOT, SampleDose.ADENS_KAOWOOL_COLD, SampleDose.ADENS_SS316H_COLD,
                           SampleDose.ADENS_CONCRETE_COLD]
     # Thicknesses of additional layers [cm]
-    mavric.layers_thicknesses = [2.54, 2.0 * 2.54, steel_cm, concrete_cm]
+    mavric.layers_thicknesses = [0.635, 2.0 * 2.54, steel_cm, concrete_cm]
     # Temperatures of additional layers [cm]
     mavric.layers_temperature_K = [873.0, 300.0, 300.0, 300.0]
     # Add more planes since the source is large
