@@ -70,7 +70,7 @@ origen_decay = SampleDose.OrigenDecayBox(my_atom_density, my_volume)  # This nee
 
 def run_2y_decay_only():
     origen_decay.set_decay_days(2.0 * 365.24)
-    origen_decay.SAMPLE_F71_position = 300  # sample decay steps
+    origen_decay.SAMPLE_F71_position = 900  # sample decay steps
     origen_decay.write_atom_dens()
     origen_decay.run_decay_sample()
 
@@ -184,6 +184,6 @@ def plot(datafile='doses.json'):
 
 
 if __name__ == "__main__":
-    # run_2y_decay_only()
+    run_2y_decay_only()
     # run_analysis()
-    plot()
+    # plot()
