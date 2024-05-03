@@ -63,9 +63,27 @@ def get_dose_parallel(decay_days: float) -> dict:
 my_atom_density: dict = SampleDose.read_cvs_atom_dens(my_atoms_file, my_volume)
 print_atoms()
 decay_days_list = [1.0, 2.0, 7.0, 14.0, 30.0]
-# Parallel MAVRIC jobs
-results = Parallel(n_jobs=n_jobs)(delayed(get_dose_parallel)(d) for d in decay_days_list)
-print(results)
 
-with open('doses.json', 'w') as file_out:
-    json5.dump(results, file_out, indent=4)
+
+def run_analysis():
+    # Parallel MAVRIC jobs
+    results = Parallel(n_jobs=n_jobs)(delayed(get_dose_parallel)(d) for d in decay_days_list)
+    print(results)
+
+    with open('doses.json', 'w') as file_out:
+        json5.dump(results, file_out, indent=4)
+
+
+def print_results(datafile='doses.json'):
+    responses = []
+    with open(datafile) as file_in:
+        respons = json5.load(file_in)
+
+    for i, d in enumerate(decay_days_list):
+        rd = respons[i]
+        print(f'Decay days {d:4.1f}: neutron dose {rd["1"]["value"]:8.1f} +- {rd["1"]["stdev"]:4.1f}  rem/h')
+        print(f'Decay days {d:4.1f}: gamma dose {rd["2"]["value"]:8.1f} +- {rd["2"]["stdev"]:4.1f}  rem/h')
+
+
+if __name__ == "__main__":
+    print_results()
