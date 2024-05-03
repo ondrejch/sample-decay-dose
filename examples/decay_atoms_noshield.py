@@ -30,6 +30,8 @@ def print_atoms():
 
 
 def get_dose_parallel(decay_days: float) -> dict:
+    origen_decay = SampleDose.OrigenDecayBox(my_atom_density, my_volume)  # This needs to be global scope
+    origen_decay.case_dir += f'_{decay_days:04.1f}'
     origen_decay.set_decay_days(decay_days)
     origen_decay.SAMPLE_F71_position = 900  # sample decay steps
     origen_decay.write_atom_dens()
@@ -60,7 +62,6 @@ def get_dose_parallel(decay_days: float) -> dict:
 
 my_atom_density: dict = SampleDose.read_cvs_atom_dens(my_atoms_file, my_volume)
 print_atoms()
-origen_decay = SampleDose.OrigenDecayBox(my_atom_density, my_volume)  # This needs to be global scope
 decay_days_list = [1.0, 2.0, 7.0, 14.0, 30.0]
 # Parallel MAVRIC jobs
 results = Parallel(n_jobs=n_jobs)(delayed(get_dose_parallel)(d) for d in decay_days_list)
