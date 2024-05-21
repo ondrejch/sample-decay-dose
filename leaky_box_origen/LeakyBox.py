@@ -319,7 +319,7 @@ end
 
 
 class LeakyBox:
-    """ Handles two ORIGEN calculations, one with leakage one without.
+    """ Handles the ORIGEN calculations with leakage.
     Calculates nuclide leak rate from box N, which is a corresponding feed rate into box N+!
     """
 
