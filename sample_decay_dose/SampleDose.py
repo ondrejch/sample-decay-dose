@@ -40,6 +40,7 @@ ADENS_SS316H_COLD: dict = {'c': 0.000311167, 'si-28': 0.00153402, 'si-29': 7.792
                            'mo-92': 0.000179806, 'mo-94': 0.000112364, 'mo-95': 0.000193563, 'mo-96': 0.000203058,
                            'mo-97': 0.000116381, 'mo-98': 0.000294483, 'mo-100': 0.00011772}
 ADENS_HDPE_COLD: dict = {'c-12': 3.992647e-02, 'c-13': 4.318339e-04, 'h-poly': 8.071660e-02}
+ADENS_HELIUM_COLD: dict = {'he-3': 2.680585e-11 , 'he-4': 2.693156e-05}
 ADENS_HELIUM_HOT: dict = {'he-3': 8.27507e-12, 'he-4': 8.27506e-06}
 ADENS_CONCRETE_COLD: dict = {'h-1': 0.01373939, 'o-16': 0.04606872, 'na-23': 0.001747024, 'al-27': 0.001745235,
                              'si-28': 0.01532717, 'si-29': 0.0007786319, 'si-30': 0.0005138805, 'ca-40': 0.001474023,
@@ -768,7 +769,7 @@ class DoseEstimator:
         self.sample_temperature_K: float = 873.0  # Sample temperature [K]
         self.decayed_atom_dens: dict = {}  # Atom density of the decayed sample
         self.beta_over_gamma: float = 0  # Beta over gamma spectral ratio
-        if _o:
+        if _o is not None:
             self.sample_weight: float = _o.sample_weight  # Mass of the sample [g]
             self.sample_density: float = _o.sample_density  # Mass density of the sample [g/cm3]
             self.sample_volume: float = _o.sample_volume  # Sample volume [cm3]
