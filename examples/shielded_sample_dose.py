@@ -14,8 +14,8 @@ n_jobs: int = cpu_count()  # How many MAVRIC cases to run in parallel
 sample_mass: float = 0.7  # [g]
 decay_days: float = 15.0 / (24.0 * 60.0)  # 15 minutes
 
-ss_thick_max: float = 12  # [cm]
-ss_thick_steps: int = 32
+ss_thick_max: float = 30  # [cm]
+ss_thick_steps: int = 64
 
 # def my_process_test(ss_thickness: float) -> dict:
 #     return dict(ss_thickness=ss_thickness)
@@ -24,8 +24,8 @@ ss_thick_steps: int = 32
 def my_process(ss_thickness: float) -> dict:
     # Calculate dose next to the tank
     mavric = SampleDose.DoseEstimatorSquareTank(origen_triton)
-    print(mavric.__repr__())
-    print(mavric.__dict__)
+    # print(mavric.__repr__())
+    # print(mavric.__dict__)
     mavric.case_dir += f'{ss_thickness:.3f}'
     # Material composition of additional layers, in dictionaries of atom densities
     mavric.layers_mats = [SampleDose.ADENS_HELIUM_COLD, SampleDose.ADENS_SS316H_COLD]
@@ -36,8 +36,8 @@ def my_process(ss_thickness: float) -> dict:
     # Add more planes since the source is large
     # mavric.N_planes_cyl = 12
     # Monaco histories
-    mavric.histories_per_batch = 20000
-    mavric.batches = 10
+    mavric.histories_per_batch = 50000
+    mavric.batches = 20
     # Run simulation
     mavric.run_mavric()
     mavric.get_responses()
