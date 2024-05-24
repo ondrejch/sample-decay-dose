@@ -1,8 +1,7 @@
 #!/bin/env python3
 """
-Example use case of SampleDose.DoseEstimatorTank - simple decay doses of F71 sample,
+Example use case of SampleDose.DoseEstimatorSquareTank
 using parallel execution of the MAVRIC cases.
-Note that the beta dose is zero if the sample has additional shielding.
 Ondrej Chvala <ochvala@utexas.edu>
 """
 import numpy as np
@@ -17,15 +16,10 @@ decay_days: float = 15.0 / (24.0 * 60.0)  # 15 minutes
 ss_thick_max: float = 30  # [cm]
 ss_thick_steps: int = 64
 
-# def my_process_test(ss_thickness: float) -> dict:
-#     return dict(ss_thickness=ss_thickness)
-
 
 def my_process(ss_thickness: float) -> dict:
     # Calculate dose next to the tank
     mavric = SampleDose.DoseEstimatorSquareTank(origen_triton)
-    # print(mavric.__repr__())
-    # print(mavric.__dict__)
     mavric.case_dir += f'{ss_thickness:.3f}'
     # Material composition of additional layers, in dictionaries of atom densities
     mavric.layers_mats = [SampleDose.ADENS_HELIUM_COLD, SampleDose.ADENS_SS316H_COLD]
@@ -89,15 +83,6 @@ def plot(datafile='doses.json'):
     x = np.array(_x)
     y = np.array(_y)
     yerr = np.array(_yerr)
-    #
-    # # Integrate
-    # dose2y: float = 0
-    # for i in range(len(x) - 1):
-    #     trapezoid = (x[i + 1] - x[i]) * (y[i + 1] + y[i]) / 2.0  # Trapezoidal rule
-    #     dose2y += trapezoid * 24.0  # [rem/h] -> [rem], integrating over days
-    # print(f'Gamma dose over {max_decay_time_years:.1f} years of decay: {dose2y/1e6:.1f} Mrem')
-    # print(f'Gamma dose at {max_decay_time_years:.1f} years of decay: {y[-1]:.1f} ± {yerr[-1]:.1f} rem/h, '
-    #       f'or {y[-1]*24.0*365.24/1e6:.1f} Mrem/year')
 
     # Plots!
     if do_plots:
