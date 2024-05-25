@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Plots for shielded talk
+Plots for shielded sample doses.
 Ondrej Chvala <ochvala@utexas.edu>
 """
 import numpy as np
@@ -9,25 +9,43 @@ import matplotlib.pyplot as plt
 
 low: float = 0.3
 high: float = 0.7
-data: dict = {
-    '15 minutes': {0.7: '01-fs_5y_0.7g_15min_decay',
-                   0.3: '02-fs_5y_0.3g_15min_decay'},
-    '30 minutes': {0.7: '11-fs_5y_0.7g_30min_decay',
-                   0.3: '12-fs_5y_0.3g_30min_decay'},
-    '2 hours': {0.7: '21-fs_5y_0.7g_2h_decay',
-                0.3: '22-fs_5y_0.3g_2h_decay'},
-    '12 hours': {0.7: '23-fs_5y_0.7g_12h_decay',
-                 0.3: '24-fs_5y_0.3g_12h_decay'},
-    '24 hours': {0.7: '25-fs_5y_0.7g_24h_decay',
-                 0.3: '26-fs_5y_0.3g_24h_decay'},
-}
+shield: str = 'steel'
+if shield == 'steel':
+    data: dict = {
+        '15 minutes': {0.7: '01-fs_5y_0.7g_15min_decay',
+                       0.3: '02-fs_5y_0.3g_15min_decay'},
+        '30 minutes': {0.7: '11-fs_5y_0.7g_30min_decay',
+                       0.3: '12-fs_5y_0.3g_30min_decay'},
+        '2 hours': {0.7: '21-fs_5y_0.7g_2h_decay',
+                    0.3: '22-fs_5y_0.3g_2h_decay'},
+        '12 hours': {0.7: '23-fs_5y_0.7g_12h_decay',
+                     0.3: '24-fs_5y_0.3g_12h_decay'},
+        '24 hours': {0.7: '25-fs_5y_0.7g_24h_decay',
+                     0.3: '26-fs_5y_0.3g_24h_decay'},
+    }
+elif shield == 'lead':
+    data: dict = {
+        '15 minutes': {0.7: '51-lead-fs_5y_0.7g_15min_decay',
+                       0.3: '52-lead-fs_5y_0.3g_15min_decay'},
+        '30 minutes': {0.7: '53-lead-fs_5y_0.7g_30min_decay',
+                       0.3: '54-lead-fs_5y_0.3g_30min_decay'},
+        '2 hours': {0.7: '55-lead-fs_5y_0.7g_2h_decay',
+                    0.3: '56-lead-fs_5y_0.3g_2h_decay'},
+        '12 hours': {0.7: '57-lead-fs_5y_0.7g_12h_decay',
+                     0.3: '58-lead-fs_5y_0.3g_12h_decay'},
+        '24 hours': {0.7: '59-lead-fs_5y_0.7g_24h_decay',
+                     0.3: '60-lead-fs_5y_0.3g_24h_decay'},
+    }
 burn_years: str = '5'
 # data: dict = {
 #     '30 minutes': {0.7: '31-fs_1y_0.7g_30min_decay',
 #                    0.3: '32-fs_1y_0.3g_30min_decay'},
 # }
 # burn_years: str = '1'
-my_colors: dict = {'hi': '#1995AD', 'lo': '#A1D6E2', 'fill': '#B1B1B2'}
+if shield == 'steel':
+    my_colors: dict = {'hi': '#1995AD', 'lo': '#A1D6E2', 'fill': '#B1B1B2'}
+elif shield == 'lead':
+    my_colors: dict = {'hi': '#962E2A', 'lo': '#E3867D', 'fill': '#CEE6F2'}
 
 
 def makefig(decay_time_str: str, d: dict) -> None:
@@ -70,7 +88,10 @@ def makefig(decay_time_str: str, d: dict) -> None:
     plt.yscale('log')
     plt.grid()
     plt.title(f"Gamma dose from the salt container after {decay_time_str}\n{burn_years} EFPY at 1 MWt")
-    plt.xlabel(f'SS-316 thickness [cm]')
+    if shield == 'steel':
+        plt.xlabel(f'SS-316 thickness [cm]')
+    elif shield == 'lead':
+        plt.xlabel(f'Lead thickness [cm]')
     plt.ylabel('Dose at 1 cm [rem/h]')
     plt.errorbar(xh, yh, yherr, ls='none', color=my_colors['hi'], capsize=1.2)
     plt.scatter(xh, yh, color=my_colors['hi'], s=5, label='0.7 g sample')
@@ -80,8 +101,8 @@ def makefig(decay_time_str: str, d: dict) -> None:
 
     plt.legend()
     plt.tight_layout()
-    time_label: str = time_str.replace(' ', '_')
-    label_file_name = f'fs-{burn_years}y-dec_{decay_time_str}'
+    time_label: str = decay_time_str.replace(' ', '_')
+    label_file_name = f'{shield}_fs-{burn_years}y-dec_{time_label}'
     plt.savefig(f'dose_{label_file_name}.png', dpi=1000)
     # plt.show()
     #
