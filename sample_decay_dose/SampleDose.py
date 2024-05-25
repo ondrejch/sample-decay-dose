@@ -54,7 +54,7 @@ ADENS_KAOWOOL_COLD: dict = {'b-10': 4.39982e-07, 'b-11': 1.77098e-06, 'o-16': 0.
                             'ca-44': 3.58497e-08, 'ca-46': 6.87435e-11, 'ca-48': 3.21376e-09, 'ti-46': 1.69203e-06,
                             'ti-47': 1.5259e-06, 'ti-48': 1.51195e-05, 'ti-49': 1.10956e-06, 'ti-50': 1.06239e-06,
                             'fe-54': 7.05374e-07, 'fe-56': 1.10729e-05, 'fe-57': 2.55721e-07, 'fe-58': 3.40317e-08}
-
+ADENS_LEAD_COLD: dict = {'pb-204': 4.615515e-04, 'pb-206': 7.945277e-03, 'pb-207': 7.285918e-03, 'pb-208': 1.727521e-02}
 
 def nicely_print_atom_dens(adens: dict, n_top_nuc: int = 20, n_per_row: int = 5):
     """ Prints atom density of top nuclides """
