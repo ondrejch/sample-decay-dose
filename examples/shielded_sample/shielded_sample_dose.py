@@ -46,6 +46,8 @@ def my_process(pb_thickness: float) -> dict:
     # Calculate dose next to the tank
     mavric = SampleDose.DoseEstimatorSquareTank(origen_triton)
     mavric.case_dir += f'{pb_thickness:02.3f}'
+    mavric.det_standoff_distance = 30.0  # 30 cm handling dose
+    mavric.box_a = 31.0  # 30 cm handling dose
     # Material composition of additional layers, in dictionaries of atom densities
     mavric.layers_mats = [SampleDose.ADENS_HELIUM_COLD, SampleDose.ADENS_SS316H_COLD,
                           SampleDose.ADENS_HELIUM_COLD, SampleDose.ADENS_LEAD_COLD]
