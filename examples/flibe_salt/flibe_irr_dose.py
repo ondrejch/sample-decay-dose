@@ -8,7 +8,8 @@ from sample_decay_dose import SampleDose
 import numpy as np
 import json5
 
-'''atomflibeLi7 1 1.95 3
+'''  Atom density from SCALE's mixing table
+atomflibeLi7 1 1.95 3
          3000 2
          4000 1
          9000 4

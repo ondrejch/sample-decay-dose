@@ -10,12 +10,12 @@ from sample_decay_dose import SampleDose
 from joblib import Parallel, delayed, cpu_count
 
 n_jobs: int = cpu_count()  # How many MAVRIC cases to run in parallel
-sample_mass: float = 0.7  # [g]
-decay_days: float = 15.0 / (24.0 * 60.0)  # 15 minutes
+sample_mass: float = 1.0  # [g]
+decay_days: float = 3.0 / 24.0  # 3 hours
 
-ss_thick_max: float = 30  # [cm]
-ss_thick_steps: int = 64
-
+shield_thick_max: float = 30  # [cm]
+shield_thick_steps: int = 64
+detector_distance: float = 30.0  # cm
 
 def my_process_1layer(ss_thickness: float) -> dict:
     # Calculate dose next to the tank
@@ -46,13 +46,13 @@ def my_process(pb_thickness: float) -> dict:
     # Calculate dose next to the tank
     mavric = SampleDose.DoseEstimatorSquareTank(origen_triton)
     mavric.case_dir += f'{pb_thickness:02.3f}'
-    mavric.det_standoff_distance = 30.0  # 30 cm handling dose
-    mavric.box_a = 31.0  # 30 cm handling dose
+    mavric.det_standoff_distance = detector_distance
+    mavric.box_a = detector_distance + 1.0
     # Material composition of additional layers, in dictionaries of atom densities
     mavric.layers_mats = [SampleDose.ADENS_HELIUM_COLD, SampleDose.ADENS_SS316H_COLD,
                           SampleDose.ADENS_HELIUM_COLD, SampleDose.ADENS_LEAD_COLD]
     # Thicknesses of additional layers [cm]
-    mavric.layers_thicknesses = [0.1, 0.5, 0.1, pb_thickness]
+    mavric.layers_thicknesses = [0.1, 2.54, 0.1, pb_thickness]
     # Temperatures of additional layers [cm]
     mavric.layers_temperature_K = [300.0, 300.0, 300.0, 300.0]
     # Add more planes since the source is large
@@ -86,7 +86,7 @@ def run_analysis():
     origen_triton.run_decay_sample()
 
     # Parallel jobs
-    shielding_thicknesses = np.linspace(0.1, ss_thick_max, ss_thick_steps)
+    shielding_thicknesses = np.linspace(0.1, shield_thick_max, shield_thick_steps)
     print(shielding_thicknesses)
     results = Parallel(n_jobs=n_jobs)(delayed(my_process)(shield_thick) for shield_thick in shielding_thicknesses)
     print(results)
@@ -119,10 +119,10 @@ def plot(datafile='doses.json'):
         plt.yscale('linear')
         plt.grid()
         plt.title(f"Gamma dose from the salt container, {sample_mass:.2f} g, 5 EFPY at 1 MWt")
-        plt.xlabel(f'SS-316 thickness [cm]')
-        plt.ylabel('Dose at 1 cm [rem/h]')
-        plt.errorbar(x, y, yerr, ls='none', color='slategrey', capsize=1.2)
-        plt.scatter(x, y, color='slategrey', s=5, label='Gamma')
+        plt.xlabel(f'Lead shielding thickness [cm]')
+        plt.ylabel(f'Dose at {detector_distance} cm [rem/h]')
+        plt.errorbar(x, y, yerr, ls='none', color='darkorange', capsize=1.2)
+        plt.scatter(x, y, color='darkorange', s=5, label='Gamma')
 
         plt.legend()
         plt.tight_layout()
