@@ -96,7 +96,7 @@ def run_analysis():
 
 def plot(datafile='doses.json'):
     import matplotlib.pyplot as plt
-    do_plots: bool = False
+    do_plots: bool = True
     with open(datafile) as f:
         gamma_doses = json5.load(f)
     _x: list = []
@@ -124,16 +124,17 @@ def plot(datafile='doses.json'):
         plt.errorbar(x, y, yerr, ls='none', color='darkorange', capsize=1.2)
         plt.scatter(x, y, color='darkorange', s=5, label='Gamma')
 
+        plt.yscale('log')
         plt.legend()
         plt.tight_layout()
         label_file_name = f'fs_{sample_mass:.2f}g_5y'
         plt.savefig(f'dose_{label_file_name}.png', dpi=1000)
         # plt.show()
 
-        plt.xscale('log')
-        plt.yscale('log')
-        plt.savefig(f'dose_{label_file_name}-loglog.png', dpi=1000)
-        # plt.show()
+        # plt.xscale('log')
+        # plt.yscale('log')
+        # plt.savefig(f'dose_{label_file_name}-loglog.png', dpi=1000)
+        # # plt.show()
 
 
 if __name__ == "__main__":
