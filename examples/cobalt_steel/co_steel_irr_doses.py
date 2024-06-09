@@ -18,7 +18,7 @@ w_co = args.wtpctCo * 1e-2  # convert to percent
 
 def cobalt_steel(wf_co: float = 0.1e-2) -> dict:
     """ Calculate atom density of SS-316 with cobalt """
-    from MSRRpy.mat import StainlessSteel
+    from MSRRpy.mat.material_types import Solid
     ss_composition = [
         ['c', 0.000800],
         ['mn', 0.020000],
@@ -30,11 +30,10 @@ def cobalt_steel(wf_co: float = 0.1e-2) -> dict:
         ['mo', 0.025000],
         ['fe', 0.653450]
     ]
-    my_steel = StainlessSteel(name='StainlessSteel', temperature=873.0, composition=ss_composition,
+    my_steel = Solid(name='StainlessSteel', temperature=873.0, composition=ss_composition,
                               composition_mode='weight', alpha=17.2e-6, ref_temperature=20.0 + 273.0, ref_density=8.0)
     my_steel.add_impurity(composition=[['co', 1.0]], composition_mode='weight',
                           fraction=wf_co, fraction_mode='weight')
-    my_steel.update_mixing_table()
     return dict(my_steel.mixing_table)
 
 
