@@ -757,7 +757,6 @@ class DoseEstimator:
         """ This reads decayed sample information from the Origen object """
         self.debug: int = 3  # Debugging flag
         self.MAVRIC_input_file_name: str = 'my_dose.inp'
-        self.MAVRIC_out_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'out')
         self.SAMPLE_ATOM_DENS_file_name_MAVRIC: str = 'my_sample_atom_dens_mavric.inp'
         self.responses: dict = {}  # Dose responses 1: neutron, 2: gamma, 3: beta
         self.det_x: float = 30.0  # Detector distance [cm]
@@ -783,6 +782,10 @@ class DoseEstimator:
             self.ORIGEN_dir: str = _o.case_dir  # Directory to run the case
             self.case_dir: str = self.ORIGEN_dir + '_MAVRIC'
             self.cwd: str = _o.cwd  # Current running directory
+
+    @property
+    def MAVRIC_out_file_name(self) -> str:
+        return self.MAVRIC_input_file_name.replace('inp', 'out')
 
     def run_mavric(self):
         """ Writes Mavric inputs and runs the case """

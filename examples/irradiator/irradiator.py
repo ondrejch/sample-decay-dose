@@ -30,16 +30,16 @@ SS316_Co1ppm_ADENS_COLD: dict = {'c': 0.000320573, 'si-28': 0.00158039, 'si-29':
 # How much cobalt is in steel
 w_co = 0.1 * 1e-2  # convert to percent
 
-
-def cobalt_steel(wf_co: float = 0.1e-2) -> dict:
-    """ Calculate atom density of SS-316 with cobalt """
-    from MSRRpy.mat.material_types import Solid
-    ss_composition = [['c', 0.000800], ['mn', 0.020000], ['p', 0.000450], ['s', 0.000300], ['si', 0.010000],
-        ['cr', 0.170000], ['ni', 0.120000], ['mo', 0.025000], ['fe', 0.653450]]
-    my_steel = Solid(name='StainlessSteel', temperature=20.0 + 273.0, composition=ss_composition,
-                     composition_mode='weight', alpha=17.2e-6, ref_temperature=20.0 + 273.0, ref_density=8.0)
-    my_steel.add_impurity(composition=[['co', 1.0]], composition_mode='weight', fraction=wf_co, fraction_mode='weight')
-    return dict(my_steel.mixing_table)
+#
+# def cobalt_steel(wf_co: float = 0.1e-2) -> dict:
+#     """ Calculate atom density of SS-316 with cobalt """
+#     from MSRRpy.mat.material_types import Solid
+#     ss_composition = [['c', 0.000800], ['mn', 0.020000], ['p', 0.000450], ['s', 0.000300], ['si', 0.010000],
+#         ['cr', 0.170000], ['ni', 0.120000], ['mo', 0.025000], ['fe', 0.653450]]
+#     my_steel = Solid(name='StainlessSteel', temperature=20.0 + 273.0, composition=ss_composition,
+#                      composition_mode='weight', alpha=17.2e-6, ref_temperature=20.0 + 273.0, ref_density=8.0)
+#     my_steel.add_impurity(composition=[['co', 1.0]], composition_mode='weight', fraction=wf_co, fraction_mode='weight')
+#     return dict(my_steel.mixing_table)
 
 
 def square_plate_volume(a: float = 100.0, h: float = 2.54) -> float:
@@ -48,10 +48,10 @@ def square_plate_volume(a: float = 100.0, h: float = 2.54) -> float:
 
 class IrradiatorDose(SampleDose.Origen):
     """ Irradiator Dose using MAVRIC """
+
     def __init__(self, _o: SampleDose.Origen = None):
         self.debug: int = 3  # Debugging flag
         self.MAVRIC_input_file_name: str = 'my_dose.inp'
-        self.MAVRIC_out_file_name: str = self.MAVRIC_input_file_name.replace('inp', 'out')
         self.IRRPLATE_ATOM_DENS_file_name_MAVRIC: str = 'my_sample_atom_dens_mavric.inp'
         self.histories_per_batch: int = 100000  # Monaco hist per batch
         self.batches: int = 10  # Monaco number of batches in total
@@ -77,6 +77,10 @@ class IrradiatorDose(SampleDose.Origen):
             self.ORIGEN_dir: str = _o.case_dir  # Directory to run the case
             self.case_dir: str = self.ORIGEN_dir + '_MAVRIC'
             self.cwd: str = _o.cwd  # Current running directory
+
+    @property
+    def MAVRIC_out_file_name(self) -> str:
+        return self.MAVRIC_input_file_name.replace('inp', 'out')
 
     def run_mavric(self):
         """ Writes Mavric inputs and runs the case """
@@ -105,9 +109,9 @@ class IrradiatorDose(SampleDose.Origen):
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
         adjoint_flux_file = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
-        plate_a_half:float = self.plate_a/2.0
-        plate_h_half:float = self.plate_h/2.0
-        box_z_half:float = plate_h_half + self.water_h  # half-height of the box in Z
+        plate_a_half: float = self.plate_a / 2.0
+        plate_h_half: float = self.plate_h / 2.0
+        box_z_half: float = plate_h_half + self.water_h  # half-height of the box in Z
         mavric_output = f'''
 =shell
 cp -r ${{INPDIR}}/{self.irr_plate_F71_file_name} .
@@ -240,30 +244,38 @@ end
         return mavric_output
 
 
-# Irradiator plate
-plate_density: float = SampleDose.get_rho_from_atom_density(SS316_Co1ppm_ADENS_COLD)  # [g/cm3]
-plate_size: float = 100.0  # [cm]
-plate_height: float = 2.54  # [cm]
-plate_mass: float = square_plate_volume(plate_size, plate_height) * plate_density  # [g]
+def run_analysis():
+    # Irradiator plate
+    plate_density: float = SampleDose.get_rho_from_atom_density(SS316_Co1ppm_ADENS_COLD)  # [g/cm3]
+    plate_size: float = 100.0  # [cm]
+    plate_height: float = 2.54  # [cm]
+    plate_mass: float = square_plate_volume(plate_size, plate_height) * plate_density  # [g]
 
-irr = SampleDose.OrigenIrradiation('EIRENE.mix0002.f33', plate_mass)
-irr.irradiate_days = 7.0 * 365.24  # 7 years
-irr.irradiate_flux = 7.37e12  # n/s/cm2
-irr.set_decay_days(0.5 * 365.24)  # 6 months
-irr.set_decay_days(1. * 365.24)
-irr.SAMPLE_F71_position = 50  # How many decay steps
-irr.case_dir = 'run_irradiator'
-irr.write_atom_dens(SS316_Co1ppm_ADENS_COLD)
-irr.run_irradiate_decay_sample()
+    irr = SampleDose.OrigenIrradiation('EIRENE.mix0002.f33', plate_mass)
+    irr.irradiate_days = 7.0 * 365.24  # 7 years
+    irr.irradiate_flux = 7.37e12  # n/s/cm2
+    irr.set_decay_days(0.5 * 365.24)  # 6 months
+    irr.set_decay_days(1. * 365.24)
+    irr.SAMPLE_F71_position = 50  # How many decay steps
+    irr.case_dir = 'run_irradiator_1m'
+    irr.write_atom_dens(SS316_Co1ppm_ADENS_COLD)
+    irr.run_irradiate_decay_sample()
 
-dose_irr = IrradiatorDose(irr)
-dose_irr.batches = 100
-dose_irr.histories_per_batch = 500000
-dose_irr.plate_h = plate_height  # Geometry
-dose_irr.plate_a = plate_size
-dose_irr.water_h = 200.0
-dose_irr.tally_planes_z = 40   # Meshing
-dose_irr.tally_planes_xy = 20
-dose_irr.denovo_planes_xy = 20
-dose_irr.denovo_planes_z = 4
-dose_irr.run_mavric()
+    dose_irr = IrradiatorDose(irr)
+    dose_irr.MAVRIC_input_file_name = 'irradiator.inp'
+    dose_irr.batches = 40
+    dose_irr.histories_per_batch = 500000
+    # dose_irr.batches = 10
+    # dose_irr.histories_per_batch = 50000
+    dose_irr.plate_h = plate_height  # Geometry
+    dose_irr.plate_a = plate_size
+    dose_irr.water_h = 200.0
+    dose_irr.tally_planes_z = 40  # Meshing
+    dose_irr.tally_planes_xy = 20
+    dose_irr.denovo_planes_xy = 20
+    dose_irr.denovo_planes_z = 4
+    dose_irr.run_mavric()
+
+
+if __name__ == "__main__":
+    run_analysis()
