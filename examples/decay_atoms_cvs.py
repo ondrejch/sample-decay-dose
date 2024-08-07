@@ -165,11 +165,11 @@ def plot(datafile='doses.json'):
     import os
     os.chdir('/home/o/MSRR-local/92-offgas_dose')
     my_data = {
-        '1 day': '31-1day_decay',
-        '2 days': '32-2days_decay',
-        '7 days': '33-7days_decay',
-        '14 days': '34-14days_decay',
-        '30 days': '35-30days_decay'
+        '1 day': '41-1day_decay',
+        '2 days': '42-2days_decay',
+        '7 days': '43-7days_decay',
+        '14 days': '44-14days_decay',
+        '30 days': '45-30days_decay'
     }
     writer = pd.ExcelWriter('offgas_dose.xlsx')
     for t, d in my_data.items():
