@@ -255,7 +255,7 @@ def main():
     irow: int = 3  # starting row #
     ws[f'C{irow}'] = 'Activity [Bq / MWth] in year 1'
     ws[f'C{irow}'].alignment = Alignment(horizontal='center')
-    last_col = alphabet[len(rad_nuclides) + 2f]
+    last_col = alphabet[len(rad_nuclides) + 2]
     ws.merge_cells(f'C{irow}:{last_col}{irow}')
     irow += 1
     ws[f'A{irow}'] = 'Fuel type'
