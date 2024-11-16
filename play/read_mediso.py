@@ -8,7 +8,6 @@ import re
 import subprocess
 import numpy as np
 from datetime import datetime
-import pandas as pd
 
 NOW: str = datetime.now().replace(microsecond=0).isoformat()
 
@@ -224,6 +223,7 @@ def main():
     from openpyxl.styles import Alignment, Font
     import os
     import argparse
+    from sample_decay_dose.isotopes import rel_iso_mass, N_A
 
     cwd = os.getcwd()
     parser = argparse.ArgumentParser(description='Power in MSRR mixtures.')
@@ -251,24 +251,36 @@ def main():
     ws['A1'] = f'Medical isotope production from Th-EIRENE model'
     ws['A1'].font = bold_font
     ws['A2'] = NOW
-    # Header
+    # Header Bq
     irow: int = 3  # starting row #
     ws[f'C{irow}'] = 'Activity [Bq / MWth] in year 1'
     ws[f'C{irow}'].alignment = Alignment(horizontal='center')
     last_col = alphabet[len(rad_nuclides) + 2]
     ws.merge_cells(f'C{irow}:{last_col}{irow}')
+    # Header U233
+    col1: str = alphabet[len(rad_nuclides) + 4]
+    col2: str = alphabet[len(rad_nuclides) + 5]
+    col3: str = alphabet[len(rad_nuclides) + 6]
+    ws[f'{col1}{irow}'] = 'Total U-233 after 1 year'
+    ws[f'{col1}{irow}'].alignment = Alignment(horizontal='center')
+    ws.merge_cells(f'{col1}{irow}:{col3}{irow}')
+    ws[f'{col1}{irow + 1}'] = '[atoms]'
+    ws[f'{col2}{irow + 1}'] = '[grams]'
+    ws[f'{col3}{irow + 1}'] = '[g / MW]'
+    # Header Bq
     irow += 1
     ws[f'A{irow}'] = 'Fuel type'
     ws[f'B{irow}'] = 'Power [MWth]'
     for i, nuc in enumerate(rad_nuclides):
         col = alphabet[i+3]
         ws[f'{col}{irow}'] = nuc
-    for cc in ws[f'C{irow}:{last_col}{irow}']:
+    for cc in ws[f'C{irow}:{col3}{irow}']:
         for c in cc:
             c.alignment = Alignment(horizontal='center')
 
     # Read F71 files
     f71_file_name: str = 'ThEIRENE.f71'
+    fuel_volume: float = 1.06806e+07  # [cm^3]
     MTiHM: dict = {' 5.00': 10.4159200656709, '19.75': 10.2647529843048}
     fuel_type: dict = {' 5.00': 'LEU+Th', '19.75': 'HALEU+Th'}
     runs: dict = {
@@ -304,6 +316,19 @@ def main():
             col = alphabet[i + 3]
             ws[f'{col}{irow}'] = activities_pery_perMW[nuc.lower()]
             ws[f'{col}{irow}'].number_format = '0.00e+00'
+
+        at_dens: dict = get_burned_material_atom_dens(my_f71_file_name, ipos)
+        u233_atoms: float = at_dens['u-233'] * fuel_volume * 1e24
+        u233_grams: float = u233_atoms * rel_iso_mass['u-233'] / N_A
+        col = alphabet[len(rad_nuclides) + 4]
+        ws[f'{col}{irow}'] = u233_atoms
+        ws[f'{col}{irow}'].number_format = '0.00e+00'
+        col = alphabet[len(rad_nuclides) + 5]
+        ws[f'{col}{irow}'] = u233_grams
+        ws[f'{col}{irow}'].number_format = '0.000e+0'
+        col = alphabet[len(rad_nuclides) + 6]
+        ws[f'{col}{irow}'] = u233_grams / thermal_power
+        ws[f'{col}{irow}'].number_format = '0.0'
 
     irow += 2
     ws[f'A{irow}'] = 'LEU+Th'
