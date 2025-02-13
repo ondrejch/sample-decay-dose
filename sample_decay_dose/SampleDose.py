@@ -243,6 +243,19 @@ def atom_dens_for_mavric(adens: dict, mix_number: int = 1, tempK: float = 873.0)
     return output
 
 
+def extract_flux_values(scale_output_file):
+    """ Extract total flux values for mixtures """
+    flux_data = {}
+    with open(scale_output_file, 'r') as file:
+        for line in file:
+            match = re.match(r'\s*(\d+)\s+[\d.]+\s+[\d.]+\s+N/A\s+N/A\s+[\d.e+-]+\s+([\d.e+-]+)', line)
+            if match:
+                mixture = int(match.group(1))
+                total_flux = float(match.group(2))
+                flux_data[mixture] = total_flux
+    return flux_data
+
+
 class Origen:
     """ ORIGEN handling parent class """
 
@@ -256,9 +269,9 @@ class Origen:
         self.SAMPLE_F71_file_name: str = self.ORIGEN_input_file_name.replace('inp', 'f71')
         self.SAMPLE_F71_position: int = 12  # Sample decay steps
         self.SAMPLE_DECAY_days: float = 30.0  # Sample decay time [days]
-        self.sample_weight: float = np.NaN  # Mass of the sample [g]
-        self.sample_density: float = np.NaN  # Mass density of the sample [g/cm3]
-        self.sample_volume: float = np.NaN  # Sample volume [cm3]
+        self.sample_weight: float = np.nan  # Mass of the sample [g]
+        self.sample_density: float = np.nan  # Mass density of the sample [g/cm3]
+        self.sample_volume: float = np.nan  # Sample volume [cm3]
 
     def set_decay_days(self, decay_days: float = 30.0):
         """ Use this to change decay time, as it also updates the case directory """
@@ -764,8 +777,8 @@ class DoseEstimator:
         self.N_planes_cyl: int = 8  # Planes per cylinder
         self.histories_per_batch: int = 100000  # Monaco hist per batch
         self.batches: int = 10  # Monaco number of batches in total
-        self.box_a: float = np.NaN
-        self.cyl_r: float = np.NaN
+        self.box_a: float = np.nan
+        self.cyl_r: float = np.nan
         self.sample_temperature_K: float = 873.0  # Sample temperature [K]
         self.decayed_atom_dens: dict = {}  # Atom density of the decayed sample
         self.beta_over_gamma: float = 0  # Beta over gamma spectral ratio

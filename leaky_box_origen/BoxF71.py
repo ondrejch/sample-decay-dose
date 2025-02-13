@@ -37,9 +37,9 @@ class Origen:
         self.F71_file_name: str = self.ORIGEN_input_file_name.replace('inp', 'f71')
         self.DECAY_days: float = 30.0  # Sample decay time [days]
         self.DECAY_steps: int = 30  # Number of steps for ORIGEN decay
-        self.weight: float = np.NaN  # Mass of the sample [g]
-        self.density: float = np.NaN  # Mass density of the sample [g/cm3]
-        self.volume: float = np.NaN  # Sample volume [cm3]
+        self.weight: float = np.nan  # Mass of the sample [g]
+        self.density: float = np.nan  # Mass density of the sample [g/cm3]
+        self.volume: float = np.nan  # Sample volume [cm3]
         self.final_atom_dens: dict = {}
         self.skip_calculation: bool = False  # Skips actual SCALE calculation, used for re-runs.
 
