@@ -16,17 +16,17 @@ flux_data = extract_flux_values(scale_out)
 stellite_flux: float = flux_data[9000]
 
 cwd: str = os.getcwd()
-stellite_mass: float = float(re.findall(r'_([\d.]+)g', cwd)[0])
+steel_mass: float = float(re.findall(r'_([\d.]+)g', cwd)[0])
 irradiation_years: float = float(re.findall(r'dose-([\d.]+)year_', cwd)[0])
-print(f'stellite flux: {stellite_flux} n/cm2/s, mass: {stellite_mass} g, irradiated for {irradiation_years} years')
+print(f'steel flux: {stellite_flux} n/cm2/s, mass: {steel_mass} g, irradiated for {irradiation_years} years')
 
 # For sample mass dependency, set LABEL='m'.
 LABEL = 'irr1'
-labels = {'irr1': ['decay time', 'days', f'Stellite {irradiation_years} years irradiation at {stellite_flux:.1e} n/cm2/s, {stellite_mass:.1f} g'], }
+labels = {'irr1': ['decay time', 'days', f'SS316 {irradiation_years} years irradiation at {stellite_flux:.1e} n/cm2/s, {steel_mass:.1f} g'], }
 
 # particles = {'1': 'Neutron', '2': 'Gamma', '3': 'Beta'}
 particles = {'2': 'Gamma'}
-data = {'.': 'sandybrown',}
+data = {'.': 'slategrey',}
 #    'co_0.05pct': 'slategrey', 'co_0.10pct': 'cornflowerblue', 'co_0.20pct': 'crimson', 'co_0.40pct': 'orange'}
 
 dose = {}  # doses [rem/h]
@@ -52,15 +52,15 @@ plt.xlabel(f'Sample {labels[LABEL][0]} [{labels[LABEL][1]}]')
 plt.ylabel('Dose at 30 cm [rem/h]')
 
 for d in data.keys():
-    ytitle = f'Stellite cylinder, {stellite_mass:.1f} g'
+    ytitle = f'SS-316 cylinder, {steel_mass:.1f} g'
     plt.errorbar(x, dose[d], errd[d], ls='none', color=f'{data[d]}', capsize=0.8)
     plt.scatter(x, dose[d], color=f'{data[d]}', s=5, label=ytitle)
 
 plt.legend()
 plt.tight_layout()
 label_file_name = labels[LABEL][0].replace(' ', '_')
-plt.savefig(f'dose_stellite_{label_file_name}.png', dpi=1000)
+plt.savefig(f'dose_SS316_{label_file_name}.png', dpi=1000)
 
 plt.xscale('log')
 plt.yscale('log')
-plt.savefig(f'dose_stellite_{label_file_name}-loglog.png', dpi=1000)
+plt.savefig(f'dose_SS316_{label_file_name}-loglog.png', dpi=1000)
