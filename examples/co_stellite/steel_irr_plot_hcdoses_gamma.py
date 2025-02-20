@@ -22,7 +22,7 @@ print(f'steel flux: {irradiation_flux} n/cm2/s, mass: {steel_mass} g, irradiated
 
 # For sample mass dependency, set LABEL='m'.
 LABEL = 'irr1'
-labels = {'irr1': ['decay time', 'days', f'SS316 {irradiation_years} years irradiation at {irradiation_flux:.1e} n/cm2/s, {steel_mass:.1f} g'], }
+labels = {'irr1': ['decay time', 'days', f'SS316 in Shed 80 pipe, {irradiation_years} y irradiation, {irradiation_flux:.1e} n/cm2/s, {steel_mass:.1f} g'], }
 
 # particles = {'1': 'Neutron', '2': 'Gamma', '3': 'Beta'}
 particles = {'2': 'Gamma, contact dose', '6': 'Gamma, 30cm handling dose'}

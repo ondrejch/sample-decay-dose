@@ -57,7 +57,7 @@ pipe1_thick: float = pipe1_or - pipe1_ir
 
 r = {}
 d = {}
-for decay_days in np.geomspace(1. / 24., 360, 60):
+for decay_days in np.geomspace(1. / 24., 30, 5):
     irr = SampleDose.OrigenIrradiation('../steel.f33', steel_mass)
     irr.set_decay_days(decay_days)
     irr.irradiate_days = irradiation_years * 365.24  #  years
@@ -65,20 +65,22 @@ for decay_days in np.geomspace(1. / 24., 360, 60):
     irr.write_atom_dens(my_SS316_w_cobalt)
     irr.run_irradiate_decay_sample()
 
-    mavric = SampleDose.HandlingContactDoseEstimatorGenericTank(irr)
-    mavric.cyl_r = pipe1_ir
-    mavric.sample_h2 = SampleDose.get_cyl_h(mavric.sample_volume, mavric.cyl_r)
-    mavric.layers_mats = [SampleDose.ADENS_SS316H_COLD]
-    mavric.layers_thicknesses = [pipe1_thick]
-    mavric.layers_temperature_K = [300.0]
-    mavric.run_mavric()
-    mavric.get_responses()
+    r[decay_days] = {}
+    d[decay_days] = {}
+    for pb_shield in np.linspace(1,21,11):
+        mavric = SampleDose.HandlingContactDoseEstimatorGenericTank(irr)
+        mavric.cyl_r = pipe1_ir
+        mavric.sample_h2 = SampleDose.get_cyl_h(mavric.sample_volume, mavric.cyl_r)
+        mavric.layers_mats = [SampleDose.ADENS_SS316H_COLD, SampleDose.ADENS_LEAD_COLD]
+        mavric.layers_thicknesses = [pipe1_thick, pb_shield]
+        mavric.layers_temperature_K = [300.0, 300.0]
+        mavric.run_mavric()
+        mavric.get_responses()
 
-    print(mavric.responses)
-    # print(mavric.total_dose)
+        print(mavric.responses)
 
-    r[decay_days] = mavric.responses
-    d[decay_days] = mavric.total_dose
+        r[decay_days][pb_shield] = mavric.responses
+        d[decay_days][pb_shield] = mavric.total_dose
 
 print(r)
 print(d)
