@@ -25,22 +25,25 @@ LABEL = 'irr1'
 labels = {'irr1': ['decay time', 'days', f'SS316 {irradiation_years} years irradiation at {irradiation_flux:.1e} n/cm2/s, {steel_mass:.1f} g'], }
 
 # particles = {'1': 'Neutron', '2': 'Gamma', '3': 'Beta'}
-particles = {'2': 'Gamma'}
-data = {'.': 'slategrey',}
+particles = {'2': 'Gamma, contact dose', '6': 'Gamma, 30cm handling dose'}
+data = {'2': 'slategrey', '6': 'crimson'}
 #    'co_0.05pct': 'slategrey', 'co_0.10pct': 'cornflowerblue', 'co_0.20pct': 'crimson', 'co_0.40pct': 'orange'}
 
 dose = {}  # doses [rem/h]
 errd = {}  # stdev of doses
 r = {}
 
-p = '2'  # Gamma only
+# p = ['2', '6']  # Gamma contact/handling
 for d in data.keys():
-    with open(os.path.join(d, 'responses.json')) as fin:
+    with open(os.path.join(cwd, 'responses.json')) as fin:
         r[d] = json5.load(fin)
-        dose[d] = np.array([v[p]['value'] for k, v in r[d].items()], float)
-        errd[d] = np.array([v[p]['stdev'] for k, v in r[d].items()], float)
+        dose[d] = np.array([v[d]['value'] for k, v in r[d].items()], float)
+        errd[d] = np.array([v[d]['stdev'] for k, v in r[d].items()], float)
 
-x = np.array(list(r[list(data.keys())[0]].keys()), float)  # x coordinate - sample masses
+xlist = list(r[list(data.keys())[0]].keys())
+x = np.array(xlist, float)  # x coordinate - sample masses
+closest_to_1month: str = min(xlist, key=lambda x:abs(float(x)-30.0))
+idx_1month: int = list(xlist).index(closest_to_1month)
 
 # Plots!
 plt.close('all')
@@ -52,9 +55,10 @@ plt.xlabel(f'Sample {labels[LABEL][0]} [{labels[LABEL][1]}]')
 plt.ylabel('Dose at 30 cm [rem/h]')
 
 for d in data.keys():
-    ytitle = f'SS-316 cylinder, {steel_mass:.1f} g'
+    my_title = f'{particles[d]}, at {float(closest_to_1month):.1f} days = {dose[d][idx_1month]:.3f} rem/h'
+    print(my_title)
     plt.errorbar(x, dose[d], errd[d], ls='none', color=f'{data[d]}', capsize=0.8)
-    plt.scatter(x, dose[d], color=f'{data[d]}', s=5, label=ytitle)
+    plt.scatter(x, dose[d], color=f'{data[d]}', s=5, label=my_title)
 
 plt.legend()
 plt.tight_layout()

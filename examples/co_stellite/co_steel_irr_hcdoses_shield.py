@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Irradiation of SS-316 with a specified wt% of cobalt in a steel pipe
+Irradiation of SS-316 with a specified wt% of cobalt in a steel pipe, handling and contact doses
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
@@ -65,8 +65,7 @@ for decay_days in np.geomspace(1. / 24., 360, 60):
     irr.write_atom_dens(my_SS316_w_cobalt)
     irr.run_irradiate_decay_sample()
 
-    # mavric = SampleDose.DoseEstimator(irr)
-    mavric = SampleDose.DoseEstimatorGenericTank(irr)
+    mavric = SampleDose.HandlingContactDoseEstimatorGenericTank(irr)
     mavric.cyl_r = pipe1_ir
     mavric.sample_h2 = SampleDose.get_cyl_h(mavric.sample_volume, mavric.cyl_r)
     mavric.layers_mats = [SampleDose.ADENS_SS316H_COLD]
