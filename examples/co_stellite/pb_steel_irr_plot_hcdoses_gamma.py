@@ -23,8 +23,8 @@ print(f'steel flux: {irradiation_flux} n/cm2/s, mass: {steel_mass} g, irradiated
 LABEL = 'irr2'
 labels = {'irr1': ['decay time', 'days',
     f'SS316 in Shed 80 pipe, {irradiation_years} y irradiation, {irradiation_flux:.1e} n/cm2/s, {steel_mass:.1f} g'],
-    'irr2': ['lead shielding', 'cm',
-        f'SS316 in Shed 80 pipe, {irradiation_years} y irradiation, {irradiation_flux:.1e} n/cm2/s, {steel_mass:.1f} g'], }
+    'irr2': ['lead shielding', 'cm', f'SS316 in Shed 80 pipe, {irradiation_years} y irradiation, '
+                                     f'{irradiation_flux:.1e} n/cm2/s, {steel_mass:.1f} g'], }
 particles = {'2': 'Gamma, contact dose', '6': 'Gamma, 30cm handling dose'}
 data = {'2': 'slategrey', '6': 'crimson'}
 
@@ -51,7 +51,7 @@ plt.yscale('linear')
 plt.grid()
 plt.title(labels[LABEL][2])
 plt.xlabel(f'Sample {labels[LABEL][0]} [{labels[LABEL][1]}]')
-plt.ylabel('Lead shield [cm]')
+plt.ylabel('Dose [rem/h]')
 
 
 def exp_f(t: float, a: float, b: float, c: float) -> float:

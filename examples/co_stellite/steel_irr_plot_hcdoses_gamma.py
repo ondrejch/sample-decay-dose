@@ -22,7 +22,8 @@ print(f'steel flux: {irradiation_flux} n/cm2/s, mass: {steel_mass} g, irradiated
 
 # For sample mass dependency, set LABEL='m'.
 LABEL = 'irr1'
-labels = {'irr1': ['decay time', 'days', f'SS316 in Shed 80 pipe, {irradiation_years} y irradiation, {irradiation_flux:.1e} n/cm2/s, {steel_mass:.1f} g'], }
+labels = {'irr1': ['decay time', 'days', f'SS316 in Shed 80 pipe, {irradiation_years} y irradiation, '
+                                         f'{irradiation_flux:.1e} n/cm2/s, {steel_mass:.1f} g'], }
 
 # particles = {'1': 'Neutron', '2': 'Gamma', '3': 'Beta'}
 particles = {'2': 'Gamma, contact dose', '6': 'Gamma, 30cm handling dose'}
@@ -37,12 +38,12 @@ r = {}
 for d in data.keys():
     with open(os.path.join(cwd, 'responses.json')) as fin:
         r[d] = json5.load(fin)
-        dose[d] = np.array([v[d]['value'] for k, v in r[d].items()], float)
-        errd[d] = np.array([v[d]['stdev'] for k, v in r[d].items()], float)
+        dose[d] = np.array([v[d]['value'] for _, v in r[d].items()], float)
+        errd[d] = np.array([v[d]['stdev'] for _, v in r[d].items()], float)
 
 xlist = list(r[list(data.keys())[0]].keys())
 x = np.array(xlist, float)  # x coordinate - sample masses
-closest_to_1month: str = min(xlist, key=lambda x:abs(float(x)-30.0))
+closest_to_1month: str = min(xlist, key=lambda t: abs(float(t) - 30.0))
 idx_1month: int = list(xlist).index(closest_to_1month)
 
 # Plots!
@@ -52,7 +53,7 @@ plt.yscale('linear')
 plt.grid()
 plt.title(labels[LABEL][2])
 plt.xlabel(f'Sample {labels[LABEL][0]} [{labels[LABEL][1]}]')
-plt.ylabel('Dose at 30 cm [rem/h]')
+plt.ylabel('Dose [rem/h]')
 
 for d in data.keys():
     my_title = f'{particles[d]}, at {float(closest_to_1month):.1f} days = {dose[d][idx_1month]:.3f} rem/h'
