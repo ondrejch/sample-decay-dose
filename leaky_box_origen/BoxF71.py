@@ -19,7 +19,7 @@ import pandas as pd
 from bisect import bisect_left
 import json5
 from sample_decay_dose.SampleDose import NOW, nicely_print_atom_dens, atom_dens_for_origen, \
-    get_f71_positions_index, get_burned_material_total_mass_dens, get_burned_material_atom_dens, run_scale
+    get_f71_positions_index, get_burned_material_total_mass_dens, get_burned_nuclide_atom_dens, run_scale
 
 PCTperDAY: float = 0.000000115740740741
 
@@ -82,8 +82,8 @@ class DecayBoxA(Origen):
         self.density = get_burned_material_total_mass_dens(self.BURNED_MATERIAL_F71_file_name,
                                                            self.BURNED_MATERIAL_F71_position)
         self.volume = self.weight / self.density
-        self.atom_dens = get_burned_material_atom_dens(self.BURNED_MATERIAL_F71_file_name,
-                                                       self.BURNED_MATERIAL_F71_position)
+        self.atom_dens = get_burned_nuclide_atom_dens(self.BURNED_MATERIAL_F71_file_name,
+                                                      self.BURNED_MATERIAL_F71_position)
         if self.debug > 2:
             # print(list(self.salt_atom_dens.items())[:25])
             print(f'Salt density {self.density} g/cm3, volume {self.volume} cm3')
@@ -113,8 +113,8 @@ class DecayBoxA(Origen):
                 error_text: str = f'Skip SCALE flag set, output file {self.case_dir}/{self.F71_file_name} is not found!'
                 raise ValueError(error_text)
 
-        self.final_atom_dens = get_burned_material_atom_dens(self.F71_file_name,
-                                                             self.DECAY_steps)
+        self.final_atom_dens = get_burned_nuclide_atom_dens(self.F71_file_name,
+                                                            self.DECAY_steps)
         os.chdir(self.cwd)
         if self.debug > 2:
             # print(list(self.decayed_atom_dens.items())[:25])
@@ -245,8 +245,8 @@ class DecayBoxB(Origen):
                 error_text: str = f'Skip SCALE flag set, output file {self.case_dir}/{self.F71_file_name} is not found!'
                 raise ValueError(error_text)
 
-        self.final_atom_dens = get_burned_material_atom_dens(self.F71_file_name,
-                                                             self.DECAY_steps)
+        self.final_atom_dens = get_burned_nuclide_atom_dens(self.F71_file_name,
+                                                            self.DECAY_steps)
         os.chdir(self.cwd)
         if self.debug > 2:
             # print(list(self.decayed_atom_dens.items())[:25])
@@ -360,7 +360,7 @@ class LeakyBox:
     def _parallel_leak_calc(self, i, vals) -> [int, float, dict, dict]:
         t = float(vals['time'])
         f71_leak_file: str = self.decay_leaks.case_dir + '/' + self.decay_leaks.F71_file_name
-        adens_tot: dict = get_burned_material_atom_dens(f71_leak_file, i)  # All nuclides
+        adens_tot: dict = get_burned_nuclide_atom_dens(f71_leak_file, i)  # All nuclides
         step_leak_rate: dict = {k: adens_tot[k] for k in adens_tot.keys() if re.sub('-.*', '', k) in self.nuc_leak}
         for k in step_leak_rate.keys():
             step_leak_rate[k] *= self.nuclide_removal_rates[re.sub('-.*', '', k)]  # * self.decay_leaks.volume
@@ -391,7 +391,7 @@ class LeakyBox:
             t = float(vals['time'])
             self.leak_rates[i]: dict = {}
             self.leak_rates[i]['time'] = t
-            adens_tot: dict = get_burned_material_atom_dens(f71_leak_file, i)  # All nuclides
+            adens_tot: dict = get_burned_nuclide_atom_dens(f71_leak_file, i)  # All nuclides
             step_leak_rate: dict = {k: adens_tot[k] for k in adens_tot.keys() if re.sub('-.*', '', k) in self.nuc_leak}
             for k in step_leak_rate.keys():
                 step_leak_rate[k] *= self.nuclide_removal_rates[re.sub('-.*', '', k)]  # * self.decay_leaks.volume
@@ -441,8 +441,8 @@ class DiffLeak:
         f71_leak_file: str = self.decay_leaks.case_dir + '/' + self.decay_leaks.F71_file_name
         t = float(vals['time'])
         print(f"Parallel leak: reading {i}, {t} s")
-        adens_base: dict = get_burned_material_atom_dens(f71_base_file, i)
-        adens_leak: dict = get_burned_material_atom_dens(f71_leak_file, i)
+        adens_base: dict = get_burned_nuclide_atom_dens(f71_base_file, i)
+        adens_leak: dict = get_burned_nuclide_atom_dens(f71_leak_file, i)
         adens_diff: dict = {key: adens_base[key] - adens_leak.get(key, 0) for key in adens_base
                             if (adens_base[key] - adens_leak.get(key, 0)) > 0}
         return adens_diff
@@ -469,8 +469,8 @@ class DiffLeak:
             t = float(vals['time'])
             self.leaked[i]: dict = {}
             self.leaked[i]['time'] = t
-            adens_base: dict = get_burned_material_atom_dens(f71_base_file, i)
-            adens_leak: dict = get_burned_material_atom_dens(f71_leak_file, i)
+            adens_base: dict = get_burned_nuclide_atom_dens(f71_base_file, i)
+            adens_leak: dict = get_burned_nuclide_atom_dens(f71_leak_file, i)
             adens_diff: dict = {key: adens_base[key] - adens_leak.get(key, 0) for key in adens_base
                                 if (adens_base[key] - adens_leak.get(key, 0)) > 0}
             # adens_diff: dict = {key: adens_base[key] - adens_leak.get(key, 0) for key in adens_base}
@@ -487,8 +487,8 @@ class DiffLeak:
             t = float(vals['time'])
             self.leaked[i]: dict = {}
             self.leaked[i]['time'] = t
-            adens_base: dict = get_burned_material_atom_dens(f71_base_file, i)
-            adens_leak: dict = get_burned_material_atom_dens(f71_leak_file, i)
+            adens_base: dict = get_burned_nuclide_atom_dens(f71_base_file, i)
+            adens_leak: dict = get_burned_nuclide_atom_dens(f71_leak_file, i)
             adens_diff: dict = {key: adens_base[key] - adens_leak.get(key, 0) for key in adens_base
                                 if (adens_base[key] - adens_leak.get(key, 0)) > 0}
             # adens_diff: dict = {key: adens_base[key] - adens_leak.get(key, 0) for key in adens_base}
