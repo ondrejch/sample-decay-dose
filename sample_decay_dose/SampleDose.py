@@ -117,6 +117,12 @@ def get_f71_positions_index(f71file: str) -> dict:
     return f71_idx
 
 
+def get_last_position_for_case(f71file: str, case: int = 1) -> int:
+    iii = get_f71_positions_index(f71file)
+    maxi = max([i for i, rec in iii.items() if rec['case'] == str(case)])
+    return maxi
+
+
 def get_f71_nuclide_case(f71file: str, f71units: str = 'atom', my_cases=None) -> pd.DataFrame:
     """ Read atom nuclide data from SCALE's F71 file
     f71units:   abso|fiss|capt|airm|apel|atom|becq|curi|gamw|gamm|gato|gper|gram|h2om|
@@ -210,6 +216,36 @@ def get_burned_nuclide_data(f71file: str, position: int, f71units: str = 'atom',
     sorted_f71unit_data = {k: v for k, v in sorted(f71unit_data.items(), key=lambda item: -item[1])}
     return sorted_f71unit_data
 
+
+def get_single_nuclide_case(f71file: str, position: int, my_nuclide: str) -> float:
+    my_nuclide = my_nuclide.lower()
+    output = subprocess.run(
+        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=becq", "-idform='{:Ee}{:AAA}{:m}'",
+            f71file], capture_output=True)
+    output = output.stdout.decode().split("\n")
+    # bqs = {}  # densities[nuclide] = (density at position of f71 file)
+    skip = ["case", "step", "time", "power", "flux", "volume"]
+    regexp = re.compile(r"(?P<elem>[a-zA-Z]+)(?P<num>\d+)(?P<meta>m)?")
+    for line in output:
+        data = line.split(',')
+        if data[0].strip() in skip:
+            continue
+        elif len(data) > 1:
+            dummy = re.search(regexp, data[0].strip())
+            elem = dummy.group("elem").lower()  # convert to all lower cases
+            num = int(dummy.group("num"))  # to cut off leading zeros
+            if dummy.group("meta"):
+                nuclide = elem + "-" + str(num) + "m"  # for metastable isotopes
+            else:
+                nuclide = elem + "-" + str(num)
+            if float(data[position]) > ATOM_DENS_MINIMUM:
+                # The [x] here is what causes the code to return only the densities at position x of the f71 file
+                # bqs[nuclide] = float(data[position])
+                if nuclide == my_nuclide:
+                    # print(f"{my_nuclide}: {data[position]}")
+                    return float(data[position])
+    # sorted_densities = {k: v for k, v in sorted(bqs.items(), key=lambda item: -item[1])}
+    return -1.0
 
 def get_burned_material_total_mass_dens(f71file: str, position: int) -> float:
     """ Read mass density of nuclides from SCALE's F71 file, calculate total \rho [g/cm^3] """
