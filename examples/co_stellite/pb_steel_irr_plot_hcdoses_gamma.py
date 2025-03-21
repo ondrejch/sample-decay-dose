@@ -18,24 +18,24 @@ irradiation_flux: float = flux_data[8140]
 cwd: str = os.getcwd()
 steel_mass: float = float(re.findall(r'_([\d.]+)g', cwd)[0])
 irradiation_years: float = float(re.findall(r'dose-([\d.]+)year_', cwd)[0])
-print(f'steel flux: {irradiation_flux} n/cm2/s, mass: {steel_mass} g, irradiated for {irradiation_years} years')
+r = {}
+with open(os.path.join(cwd, 'responses.json')) as fin:  # p = ['2', '6']  # Gamma contact/handling
+    r = json5.load(fin)
+decay_days_last: str = list(r.keys())[-1]
+print('Decay days last: ', decay_days_last)
+print(f'steel flux: {irradiation_flux} n/cm2/s, mass: {steel_mass} g, '
+      f'irradiated for {irradiation_years} years, decayed for {decay_days_last} days')
 
 LABEL = 'irr2'
 labels = {'irr1': ['decay time', 'days',
     f'SS316 in Shed 80 pipe, {irradiation_years} y irradiation, {irradiation_flux:.1e} n/cm2/s, {steel_mass:.1f} g'],
-    'irr2': ['lead shielding', 'cm', f'SS316 in Shed 80 pipe, {irradiation_years} y irradiation, '
+    'irr2': ['lead shielding', 'cm', f'SS316 in Shed80 pipe, {irradiation_years:.1f} y irr. {decay_days_last} d decay, '
                                      f'{irradiation_flux:.1e} n/cm2/s, {steel_mass:.1f} g'], }
 particles = {'2': 'Gamma, contact dose', '6': 'Gamma, 30cm handling dose'}
 data = {'2': 'slategrey', '6': 'crimson'}
 
 dose = {}  # doses [rem/h]
 errd = {}  # stdev of doses
-r = {}
-
-# p = ['2', '6']  # Gamma contact/handling
-with open(os.path.join(cwd, 'responses.json')) as fin:
-    r = json5.load(fin)
-decay_days_last: str = list(r.keys())[-1]
 
 pb_thick_list: list = list(r[decay_days_last].keys())
 for d in data.keys():
@@ -67,7 +67,7 @@ def root_exp_f(t: float, a: float, b: float, c: float, y0: float) -> float:
 max_rem_per_h: float = 80e-3  # maximum rem/h dose
 for d in data.keys():
     popt, pcov = curve_fit(exp_f, x, dose[d], p0=[1, 0.5, 1e-5], sigma=errd[d])
-    x0: float = fsolve(root_exp_f, x0=5.0, args=(*popt, max_rem_per_h))[0]
+    x0: float = fsolve(root_exp_f, x0=0.0, args=(*popt, max_rem_per_h))[0]
     my_title = f'{particles[d]}, Pb thick {max_rem_per_h:.3f} rem/h: {x0:.1f} cm'
     print(my_title)
     plt.errorbar(x, dose[d], errd[d], ls='none', color=f'{data[d]}', capsize=0.8)
@@ -75,7 +75,7 @@ for d in data.keys():
     plt.plot(x, exp_f(x, *popt), ls='dotted', color=f'{data[d]}')
 
 plt.legend()
-plt.tight_layout()
+# plt.tight_layout()
 label_file_name = labels[LABEL][0].replace(' ', '_')
 plt.yscale('log')
 plt.savefig(f'dose_SS316_Pb_{label_file_name}.png', dpi=1000)

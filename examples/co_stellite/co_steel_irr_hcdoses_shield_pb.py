@@ -14,10 +14,11 @@ import json5
 import argparse
 
 parser = argparse.ArgumentParser(description='Irradiation of SS-316 with a specified wt% of cobalt.')
-parser.add_argument('--wtpctCo', required=False, default=1.0, dest='wtpctCo', type=float,
+parser.add_argument('--wtpctCo', required=False, default=0.1, dest='wtpctCo', type=float,
                     help='weight percent of cobalt in SS-316, typically 0.02 to 2.0')
 args = parser.parse_args()
 w_co = args.wtpctCo * 1e-2  # convert to percent
+print(f'Using cobalt impurity of {w_co:.4f} weight fraction')
 
 cwd: str = os.getcwd()
 steel_mass: float = float(re.findall(r'_([\d.]+)g', cwd)[0])
@@ -67,7 +68,7 @@ for decay_days in np.geomspace(1. / 24., 30, 5):
 
     r[decay_days] = {}
     d[decay_days] = {}
-    for pb_shield in np.linspace(1,21,11):
+    for pb_shield in np.linspace(0.1,10,11):
         mavric = SampleDose.HandlingContactDoseEstimatorGenericTank(irr)
         mavric.cyl_r = pipe1_ir
         mavric.sample_h2 = SampleDose.get_cyl_h(mavric.sample_volume, mavric.cyl_r)
