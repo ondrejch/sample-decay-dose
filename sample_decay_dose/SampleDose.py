@@ -2004,6 +2004,7 @@ class MHATank(HandlingContactDoseEstimatorGenericTank):
         self.det_standoff_distance = 0.1  # [cm] contact dose
         self.handling_det_standoff_distance = 30.0  # [cm] handing dose
         self.box_a: float = self.handling_det_standoff_distance + 10.0
+        self.source_multiplier: (None, float) = None  # Multiplier of ORIGEN source
 
     def scale_decayed_pipe_material(self, desired_weight: float = 1.0):
         """ Reads atom density and rho from F71 file """
@@ -2023,8 +2024,9 @@ class MHATank(HandlingContactDoseEstimatorGenericTank):
         adens_scaling: float = desired_weight / (self.sample_volume * self.sample_density)
         self.decayed_atom_dens = scale_adens(self.decayed_atom_dens, adens_scaling)
         self.sample_density = get_rho_from_atom_density(self.decayed_atom_dens)
+        self.source_multiplier = desired_weight / self.sample_weight
         if self.debug > 2:
-            # print(list(self.burned_atom_dens.items())[:25])
+            print(f'Atomic density scaling factor {adens_scaling}, source scaling factor {self.source_multiplier}')
             print(f'Sample density {self.sample_density} g/cm3, volume {self.sample_volume} cm3')
             nicely_print_atom_dens(self.decayed_atom_dens)
 
