@@ -7,14 +7,12 @@ import os
 import shutil
 import re
 import subprocess
-import math
 from datetime import datetime
 import numpy as np
 import io
 import pandas as pd
 from bisect import bisect_left
 from sample_decay_dose.read_opus import integrate_opus
-
 
 NOW: str = datetime.now().replace(microsecond=0).isoformat()
 SCALE_bin_path: str = os.getenv('SCALE_BIN', '/opt/scale6.3.1/bin/')
@@ -24,38 +22,33 @@ MAVRIC_NG_XSLIB: str = 'v7.1-28n19g'
 # Predefined lists of atom densities for convenience. Check and make yours :)
 # https://www.sandmeyersteel.com/316H.html
 ADENS_SS316H_HOT: dict = {'c': 0.0002384, 'n-14': 0.000254609, 'n-15': 9.30164e-07, 'al-27': 5.30544e-05,
-                          'si-28': 1.56475e-05, 'si-29': 7.94907e-07, 'si-30': 5.24622e-07, 'p-31': 6.93324e-05,
-                          's-32': 4.23788e-05, 's-33': 3.34604e-07, 's-34': 1.89609e-06, 's-36': 4.46139e-09,
-                          'ti-46': 3.28985e-06, 'ti-47': 2.96684e-06, 'ti-48': 2.93973e-05, 'ti-49': 2.15734e-06,
-                          'ti-50': 2.06562e-06, 'cr-50': 0.000677912, 'cr-52': 0.0130729, 'cr-53': 0.00148236,
-                          'cr-54': 0.00036899, 'mn-55': 1.73977e-05, 'fe-54': 0.00390032, 'fe-56': 0.0612267,
-                          'fe-57': 0.00141399, 'fe-58': 0.000188176, 'ni-58': 6.64309e-05, 'ni-60': 2.55891e-05,
-                          'ni-61': 1.11234e-06, 'ni-62': 3.54662e-06, 'ni-64': 9.03221e-07, 'mo-92': 0.00018364,
-                          'mo-94': 0.00011476, 'mo-95': 0.00019769, 'mo-96': 0.000207388, 'mo-97': 0.000118863,
-                          'mo-98': 0.000300762, 'mo-100': 0.00012023}
+    'si-28': 1.56475e-05, 'si-29': 7.94907e-07, 'si-30': 5.24622e-07, 'p-31': 6.93324e-05, 's-32': 4.23788e-05,
+    's-33': 3.34604e-07, 's-34': 1.89609e-06, 's-36': 4.46139e-09, 'ti-46': 3.28985e-06, 'ti-47': 2.96684e-06,
+    'ti-48': 2.93973e-05, 'ti-49': 2.15734e-06, 'ti-50': 2.06562e-06, 'cr-50': 0.000677912, 'cr-52': 0.0130729,
+    'cr-53': 0.00148236, 'cr-54': 0.00036899, 'mn-55': 1.73977e-05, 'fe-54': 0.00390032, 'fe-56': 0.0612267,
+    'fe-57': 0.00141399, 'fe-58': 0.000188176, 'ni-58': 6.64309e-05, 'ni-60': 2.55891e-05, 'ni-61': 1.11234e-06,
+    'ni-62': 3.54662e-06, 'ni-64': 9.03221e-07, 'mo-92': 0.00018364, 'mo-94': 0.00011476, 'mo-95': 0.00019769,
+    'mo-96': 0.000207388, 'mo-97': 0.000118863, 'mo-98': 0.000300762, 'mo-100': 0.00012023}
 ADENS_SS316H_COLD: dict = {'c': 0.000311167, 'si-28': 0.00153402, 'si-29': 7.79293e-05, 'si-30': 5.14317e-05,
-                           'p-31': 6.78722e-05, 's-32': 4.15187e-05, 's-33': 3.27814e-07, 's-34': 1.85761e-06,
-                           's-36': 4.37085e-09, 'cr-50': 0.000663653, 'cr-52': 0.0127979, 'cr-53': 0.00145118,
-                           'cr-54': 0.000361229, 'mn-55': 0.00170071, 'fe-54': 0.0031951, 'fe-56': 0.0501563,
-                           'fe-57': 0.00115833, 'fe-58': 0.000154152, 'co-59': 7.93501e-05, 'ni-58': 0.00650228,
-                           'ni-60': 0.00250467, 'ni-61': 0.000108876, 'ni-62': 0.000347145, 'ni-64': 8.84075e-05,
-                           'mo-92': 0.000179806, 'mo-94': 0.000112364, 'mo-95': 0.000193563, 'mo-96': 0.000203058,
-                           'mo-97': 0.000116381, 'mo-98': 0.000294483, 'mo-100': 0.00011772}
+    'p-31': 6.78722e-05, 's-32': 4.15187e-05, 's-33': 3.27814e-07, 's-34': 1.85761e-06, 's-36': 4.37085e-09,
+    'cr-50': 0.000663653, 'cr-52': 0.0127979, 'cr-53': 0.00145118, 'cr-54': 0.000361229, 'mn-55': 0.00170071,
+    'fe-54': 0.0031951, 'fe-56': 0.0501563, 'fe-57': 0.00115833, 'fe-58': 0.000154152, 'co-59': 7.93501e-05,
+    'ni-58': 0.00650228, 'ni-60': 0.00250467, 'ni-61': 0.000108876, 'ni-62': 0.000347145, 'ni-64': 8.84075e-05,
+    'mo-92': 0.000179806, 'mo-94': 0.000112364, 'mo-95': 0.000193563, 'mo-96': 0.000203058, 'mo-97': 0.000116381,
+    'mo-98': 0.000294483, 'mo-100': 0.00011772}
 ADENS_HDPE_COLD: dict = {'c-12': 3.992647e-02, 'c-13': 4.318339e-04, 'h-poly': 8.071660e-02}
-ADENS_HELIUM_COLD: dict = {'he-3': 2.680585e-11 , 'he-4': 2.693156e-05}
+ADENS_HELIUM_COLD: dict = {'he-3': 2.680585e-11, 'he-4': 2.693156e-05}
 ADENS_HELIUM_HOT: dict = {'he-3': 8.27507e-12, 'he-4': 8.27506e-06}
 ADENS_CONCRETE_COLD: dict = {'h-1': 0.01373939, 'o-16': 0.04606872, 'na-23': 0.001747024, 'al-27': 0.001745235,
-                             'si-28': 0.01532717, 'si-29': 0.0007786319, 'si-30': 0.0005138805, 'ca-40': 0.001474023,
-                             'ca-42': 9.837866e-06, 'ca-43': 2.052723e-06, 'ca-44': 3.171838e-05, 'ca-46': 6.082143e-08,
-                             'ca-48': 2.843401e-06, 'fe-54': 2.029158e-05, 'fe-56': 0.0003185345, 'fe-57': 7.356349e-06,
-                             'fe-58': 9.789951e-07, 'co-59': 2.350275e-07, 'eu-151': 4.357685e-08,
-                             'eu-153': 4.756903e-08}
+    'si-28': 0.01532717, 'si-29': 0.0007786319, 'si-30': 0.0005138805, 'ca-40': 0.001474023, 'ca-42': 9.837866e-06,
+    'ca-43': 2.052723e-06, 'ca-44': 3.171838e-05, 'ca-46': 6.082143e-08, 'ca-48': 2.843401e-06, 'fe-54': 2.029158e-05,
+    'fe-56': 0.0003185345, 'fe-57': 7.356349e-06, 'fe-58': 9.789951e-07, 'co-59': 2.350275e-07, 'eu-151': 4.357685e-08,
+    'eu-153': 4.756903e-08}
 ADENS_KAOWOOL_COLD: dict = {'b-10': 4.39982e-07, 'b-11': 1.77098e-06, 'o-16': 0.00300423, 'o-17': 1.14439e-06,
-                            'o-18': 6.17368e-06, 'al-27': 0.000850507, 'si-28': 0.000770832, 'si-29': 3.91588e-05,
-                            'si-30': 2.5844e-05, 'ca-40': 1.66602e-06, 'ca-42': 1.11193e-08, 'ca-43': 2.32009e-09,
-                            'ca-44': 3.58497e-08, 'ca-46': 6.87435e-11, 'ca-48': 3.21376e-09, 'ti-46': 1.69203e-06,
-                            'ti-47': 1.5259e-06, 'ti-48': 1.51195e-05, 'ti-49': 1.10956e-06, 'ti-50': 1.06239e-06,
-                            'fe-54': 7.05374e-07, 'fe-56': 1.10729e-05, 'fe-57': 2.55721e-07, 'fe-58': 3.40317e-08}
+    'o-18': 6.17368e-06, 'al-27': 0.000850507, 'si-28': 0.000770832, 'si-29': 3.91588e-05, 'si-30': 2.5844e-05,
+    'ca-40': 1.66602e-06, 'ca-42': 1.11193e-08, 'ca-43': 2.32009e-09, 'ca-44': 3.58497e-08, 'ca-46': 6.87435e-11,
+    'ca-48': 3.21376e-09, 'ti-46': 1.69203e-06, 'ti-47': 1.5259e-06, 'ti-48': 1.51195e-05, 'ti-49': 1.10956e-06,
+    'ti-50': 1.06239e-06, 'fe-54': 7.05374e-07, 'fe-56': 1.10729e-05, 'fe-57': 2.55721e-07, 'fe-58': 3.40317e-08}
 ADENS_LEAD_COLD: dict = {'pb-204': 4.615515e-04, 'pb-206': 7.945277e-03, 'pb-207': 7.285918e-03, 'pb-208': 1.727521e-02}
 
 
@@ -81,16 +74,24 @@ def get_rho_from_atom_density(adens: dict) -> float:
     for k, v in adens.items():
         if v > 0.0:
             iso_name = k.lower()
-            iso_name = re.sub('m$', '', iso_name)  # strip "m"
-            iso_name = re.sub('([a-zA-Z]+)(\d+)', '\g<1>-\g<2>', iso_name)  # add dash
+            iso_name = re.sub(r'm$', '', iso_name)  # strip "m"
+            iso_name = re.sub(r'([a-zA-Z]+)(\d+)', '\g<1>-\g<2>', iso_name)  # add dash
             my_rho += rel_iso_mass[iso_name] * v * m_Da * 1e24
     return my_rho
 
 
+def scale_adens(adens: dict, scalef: float = 1.0) -> dict:
+    """" Scale atom densities by a factor scalef """
+    assert not np.isnan(scalef)
+    new_adens: dict = {}
+    for k, v in adens.items():
+        new_adens[k] = v * scalef
+    return new_adens
+
+
 def get_f71_positions_index(f71file: str) -> dict:
     """ Read info of SCALE's F71 file """
-    output = subprocess.run(
-        [f"{SCALE_bin_path}/obiwan", "view", "-format=info", f71file], capture_output=True)
+    output = subprocess.run([f"{SCALE_bin_path}/obiwan", "view", "-format=info", f71file], capture_output=True)
     output = output.stdout.decode().split("\n")
     f71_idx = {}
     skip_data = ['pos', '(-)']  # sip records starting with this
@@ -102,18 +103,9 @@ def get_f71_positions_index(f71file: str) -> dict:
         if line.count(end_data) > 0:
             break
         # print(data)
-        f71_idx[int(data[0])] = {
-            'time': data[1],
-            'power': data[2],
-            'flux': data[3],
-            'fluence': data[4],
-            'energy': data[5],
-            'initialhm': data[6],
-            'libpos': data[7],
-            'case': data[8],
-            'step': data[9],
-            'DCGNAB': data[10]
-        }
+        f71_idx[int(data[0])] = {'time': data[1], 'power': data[2], 'flux': data[3], 'fluence': data[4],
+            'energy': data[5], 'initialhm': data[6], 'libpos': data[7], 'case': data[8], 'step': data[9],
+            'DCGNAB': data[10]}
     return f71_idx
 
 
@@ -130,9 +122,8 @@ def get_f71_nuclide_case(f71file: str, f71units: str = 'atom', my_cases=None) ->
     if my_cases is None:
         my_cases = [1]
     cases_str: str = f'-cases={my_cases}'
-    output = subprocess.run(
-        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=20", f"-units={f71units}",
-         "-idform='{:Ee}{:AAA}{:m}'", cases_str, f71file], capture_output=True)
+    output = subprocess.run([f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=20", f"-units={f71units}",
+        "-idform='{:Ee}{:AAA}{:m}'", cases_str, f71file], capture_output=True)
     return pd.read_csv(io.StringIO(output.stdout.decode()), skipinitialspace=True, index_col=0)
 
 
@@ -144,19 +135,19 @@ def get_f71_elements_case(f71file: str, f71units: str = 'atom', my_cases=None) -
         my_cases = [1]
     cases_str: str = f'-cases={my_cases}'
     output = subprocess.run(
-        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=20", f"-units={f71units}",
-         "-idform='{:Ee}'", cases_str, f71file], capture_output=True)
+        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=20", f"-units={f71units}", "-idform='{:Ee}'",
+            cases_str, f71file], capture_output=True)
     return pd.read_csv(io.StringIO(output.stdout.decode()), skipinitialspace=True, index_col=0)
 
 
 def get_burned_nuclide_atom_dens(f71file: str, position: int, my_cases: (None, list[int]) = None) -> dict:
     """ Read atom density of nuclides from SCALE's F71 file """
     runlist: list = [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=atom",
-         "-idform='{:Ee}{:AAA}{:m}'", f71file]
+        "-idform='{:Ee}{:AAA}{:m}'", f71file]
     if my_cases:
         cases_str: str = f'-cases={my_cases}'
         runlist = [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=atom",
-         "-idform='{:Ee}{:AAA}{:m}'", cases_str, f71file]
+            "-idform='{:Ee}{:AAA}{:m}'", cases_str, f71file]
 
     output = subprocess.run(runlist, capture_output=True)
     output = output.stdout.decode().split("\n")
@@ -188,11 +179,11 @@ def get_burned_nuclide_data(f71file: str, position: int, f71units: str = 'atom',
     f71units:   abso|fiss|capt|airm|apel|atom|becq|curi|gamw|gamm|gato|gper|gram|h2om|
                 kilo|wpel|watt|mevs|part|inte|ener """
     runlist: list = [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", f"-units={f71units}",
-         "-idform='{:Ee}{:AAA}{:m}'", f71file]
+        "-idform='{:Ee}{:AAA}{:m}'", f71file]
     if my_cases:
         cases_str: str = f'-cases={my_cases}'
         runlist = [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", f"-units={f71units}",
-         "-idform='{:Ee}{:AAA}{:m}'", cases_str, f71file]
+            "-idform='{:Ee}{:AAA}{:m}'", cases_str, f71file]
     output = subprocess.run(runlist, capture_output=True)
     output = output.stdout.decode().split("\n")
     f71unit_data = {}
@@ -247,11 +238,12 @@ def get_single_nuclide_case(f71file: str, position: int, my_nuclide: str) -> flo
     # sorted_densities = {k: v for k, v in sorted(bqs.items(), key=lambda item: -item[1])}
     return -1.0
 
+
 def get_burned_material_total_mass_dens(f71file: str, position: int) -> float:
     """ Read mass density of nuclides from SCALE's F71 file, calculate total \rho [g/cm^3] """
     output = subprocess.run(
         [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=gper", "-idform='{:Ee}{:AAA}{:m}'",
-         f71file], capture_output=True)
+            f71file], capture_output=True)
     output = output.stdout.decode().split("\n")
     my_rho: float = 0
     skip = ["case", "step", "time", "power", "flux", "volume"]
@@ -266,8 +258,7 @@ def get_burned_material_total_mass_dens(f71file: str, position: int) -> float:
 
 def get_F33_num_sets(f33file: str) -> int:
     """ Returns the number of numSets in SCALE F33 file """
-    output = subprocess.run(
-        [f"{SCALE_bin_path}/obiwan", "info", f33file], capture_output=True)
+    output = subprocess.run([f"{SCALE_bin_path}/obiwan", "info", f33file], capture_output=True)
     output = output.stdout.decode().split("\n")
     for line in output:
         data = line.split()
@@ -293,7 +284,7 @@ def read_cvs_atom_dens(csv_file: str, volume: float = 1.0) -> dict:
             my_atoms: float = float(row[1])
             if my_atoms > 0:
                 iso_name = row[0].lower()
-             #   iso_name = re.sub('([a-zA-Z]+)(\d+)', '\g<1>-\g<2>', iso_name)  # add dash
+                #   iso_name = re.sub('([a-zA-Z]+)(\d+)', '\g<1>-\g<2>', iso_name)  # add dash
                 my_atom_density[iso_name] = my_atoms / volume_barn_cm
     return my_atom_density
 
@@ -303,7 +294,7 @@ def get_cyl_r(cyl_volume: float) -> float:
         V = pi r^2 h = pi r^2 2 r = 2 pi r^3
         r = (V / 2 pi) ^ 1/3
     """
-    return (cyl_volume / (2.0 * math.pi)) ** (1.0 / 3.0)
+    return (cyl_volume / (2.0 * np.pi)) ** (1.0 / 3.0)
 
 
 def get_cyl_r_4_1(cyl_volume: float) -> float:
@@ -312,7 +303,7 @@ def get_cyl_r_4_1(cyl_volume: float) -> float:
         r = (V / 4 pi) ^ 1/3
         h_cyl = 4 * r
     """
-    return (cyl_volume / (4.0 * math.pi)) ** (1.0 / 3.0)
+    return (cyl_volume / (4.0 * np.pi)) ** (1.0 / 3.0)
 
 
 def get_fill_height_4_1(fill_volume: float, cyl_volume: float) -> float:
@@ -324,8 +315,8 @@ def get_fill_height_4_1(fill_volume: float, cyl_volume: float) -> float:
     """
     if not fill_volume < cyl_volume:
         raise ValueError("Fill volume is larger than the cylinder")
-    r: float = (cyl_volume / (4.0 * math.pi)) ** (1.0 / 3.0)
-    return fill_volume / (math.pi * r ** 2)
+    r: float = (cyl_volume / (4.0 * np.pi)) ** (1.0 / 3.0)
+    return fill_volume / (np.pi * r ** 2)
 
 
 def get_cyl_h(cyl_volume: float, cyl_r: float) -> float:
@@ -335,7 +326,7 @@ def get_cyl_h(cyl_volume: float, cyl_r: float) -> float:
     """
     if not cyl_r > 0:
         raise ValueError(f"Cylinder radius has to be positive, {cyl_r}")
-    return cyl_volume / math.pi / cyl_r ** 2
+    return cyl_volume / np.pi / cyl_r ** 2
 
 
 def run_scale(deck_file: str):
@@ -384,6 +375,7 @@ def extract_flux_values(scale_output_file):
 
 class Origen:
     """ ORIGEN handling parent class """
+
     def __init__(self):
         self.debug: int = 3  # Debugging flag
         self.cwd: str = os.getcwd()  # Current running fir
@@ -427,6 +419,7 @@ class Origen:
 
 class OrigenFromTriton(Origen):
     """ Decays material generated by SCALE/TRITON sequence """
+
     def __init__(self, _f71: str = './SCALE_FILE.f71', _mass: float = 0.1):
         Origen.__init__(self)
         self.BURNED_MATERIAL_F71_file_name: str = _f71  # Burned core F71 file from TRITON
@@ -451,7 +444,7 @@ class OrigenFromTriton(Origen):
         else:
             pos_number: int = bisect_left(times, t)
         print(f'--> Closest F71 position found at slot {pos_number}, {times[pos_number]} seconds, '
-              f'{times[pos_number]/(60.0*60.0*24)} days.')
+              f'{times[pos_number] / (60.0 * 60.0 * 24)} days.')
 
         self.BURNED_MATERIAL_F71_position = pos_number
 
@@ -489,8 +482,7 @@ class OrigenFromTriton(Origen):
             print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
         run_scale(self.ORIGEN_input_file_name)
 
-        self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name,
-                                                              self.SAMPLE_F71_position)
+        self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
         os.chdir(self.cwd)
         if self.debug > 2:
             # print(list(self.decayed_atom_dens.items())[:25])
@@ -577,7 +569,8 @@ end
 
 class OrigenFromTritonMHA(OrigenFromTriton):
     """ Decays material generated by SCALE/TRITON sequence """
-    def __init__(self, _f71: str = '../msrr.f71', _MTiHM: float = 0.40647261972527676, _f71_case: int =20):
+
+    def __init__(self, _f71: str = '../msrr.f71', _MTiHM: float = 0.40647261972527676, _f71_case: int = 20):
         super().__init__(_f71, 0.1)
         self.BURNED_MATERIAL_F71_file_name: str = _f71  # Burned core F71 file from TRITON
         self.BURNED_MATERIAL_F71_index: dict = get_f71_positions_index(self.BURNED_MATERIAL_F71_file_name)
@@ -590,7 +583,8 @@ class OrigenFromTritonMHA(OrigenFromTriton):
     def origen_deck(self) -> str:
         """ Sample decay Origen deck """
         if self.debug > 0:
-            print(f'[OrigenFromTritonMHA] Reading {self.BURNED_MATERIAL_F71_file_name} position {self.BURNED_MATERIAL_F71_position}, scaling {self.MTiHM}')
+            print(
+                f'[OrigenFromTritonMHA] Reading {self.BURNED_MATERIAL_F71_file_name} position {self.BURNED_MATERIAL_F71_position}, scaling {self.MTiHM}')
         time_interp_steps = self.SAMPLE_F71_position - 3
         if time_interp_steps < 1:
             raise ValueError("Too few time steps")
@@ -598,7 +592,7 @@ class OrigenFromTritonMHA(OrigenFromTriton):
         basename_burned_f71: str = os.path.basename(self.BURNED_MATERIAL_F71_file_name)
         origen_output: str = f'''
 =shell
-cp -r ${{INPDIR}}/{self.BURNED_MATERIAL_F71_file_name} .
+cp -r ${{INPDIR}}/../{self.BURNED_MATERIAL_F71_file_name} .
 end
 
 =origen
@@ -675,6 +669,7 @@ class OrigenIrradiation(Origen):
     F33 does not provide time index, by default the last one is taken.
     If the index needs to be set, use a corresponding F71 file.
     """
+
     def __init__(self, _f33: str = './SCALE_FILE.mix0007.f33', _mass: float = 0.1):
         Origen.__init__(self)
         self.F33_file_name: str = _f33  # Burned core F71 file from TRITON
@@ -716,8 +711,7 @@ class OrigenIrradiation(Origen):
             print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
         run_scale(self.ORIGEN_input_file_name)
 
-        self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name,
-                                                              self.SAMPLE_F71_position)
+        self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
         os.chdir(self.cwd)
         if self.debug > 2:
             # print(list(self.decayed_atom_dens.items())[:25])
@@ -830,6 +824,7 @@ npos={self.SAMPLE_F71_position} end
 
 class OrigenDecayBox(Origen):
     """ Origen decay from a simple dict of atom density and volume [cm] """
+
     def __init__(self, _adens: (None, dict) = None, _vol: float = 0):
         Origen.__init__(self)
         self.SAMPLE_ATOM_DENSITY: (None, dict) = _adens
@@ -870,8 +865,7 @@ class OrigenDecayBox(Origen):
         run_scale(self.ORIGEN_input_file_name)
 
         print(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
-        self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name,
-                                                              self.SAMPLE_F71_position)
+        self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
         os.chdir(self.cwd)
         if self.debug > 2:
             # print(list(self.decayed_atom_dens.items())[:25])
@@ -959,6 +953,7 @@ npos={self.SAMPLE_F71_position} end
 
 class DoseEstimator:
     """ MAVRIC calculation of rem/h doses from the decayed sample """
+
     def __init__(self, _o: Origen = None):
         """ This reads decayed sample information from the Origen object """
         self.debug: int = 3  # Debugging flag
@@ -996,8 +991,8 @@ class DoseEstimator:
     def run_mavric(self):
         """ Writes Mavric inputs and runs the case """
         if not os.path.isfile(self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
-            raise FileNotFoundError("Expected decayed sample F71 file: \n" +
-                                    self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
+            raise FileNotFoundError(
+                "Expected decayed sample F71 file: \n" + self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
         if not os.path.exists(self.case_dir):
             os.mkdir(self.case_dir)
         os.chdir(self.case_dir)
@@ -1020,8 +1015,8 @@ class DoseEstimator:
     def get_responses(self):
         """ Reads over the MAVRIC output and returns responses for rem/h doses """
         if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name):
-            raise FileNotFoundError("Expected decayed sample MAVRIC output file: \n" +
-                                    self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name)
+            raise FileNotFoundError(
+                "Expected decayed sample MAVRIC output file: \n" + self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name)
         os.chdir(self.cwd + '/' + self.case_dir)
 
         tally_sep: str = 'Final Tally Results Summary'
@@ -1067,7 +1062,7 @@ class DoseEstimator:
             d['value'] += v['value']
             if v['value'] > 0:
                 relsig += (v['stdev'] / v['value']) ** 2
-        d['stdev'] = d['value'] * math.sqrt(relsig)
+        d['stdev'] = d['value'] * np.sqrt(relsig)
         return d
 
     def mavric_deck(self) -> str:
@@ -1224,8 +1219,8 @@ class DoseEstimatorSquareTank(DoseEstimator):
         """ Writes Mavric inputs and runs the case """
         self.case_dir += "".join([f'_{s:.3f}' for s in self.layers_thicknesses])  # unique IDs for parallel run
         if not os.path.isfile(self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
-            raise FileNotFoundError("Expected decayed sample F71 file: \n" +
-                                    self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
+            raise FileNotFoundError(
+                "Expected decayed sample F71 file: \n" + self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
         if not os.path.exists(self.case_dir):
             os.mkdir(self.case_dir)
         os.chdir(self.case_dir)
@@ -1963,8 +1958,8 @@ end
         """ Reads over the MAVRIC output and returns responses for rem/h doses
             Note, this version uses different format of self.responses """
         if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name):
-            raise FileNotFoundError("Expected decayed sample MAVRIC output file: \n" +
-                                    self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name)
+            raise FileNotFoundError(
+                "Expected decayed sample MAVRIC output file: \n" + self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name)
         os.chdir(self.cwd + '/' + self.case_dir)
 
         with open(self.MAVRIC_out_file_name, 'r') as f:
@@ -1972,8 +1967,9 @@ end
         rs: list = re.findall(r'Point Detector (\d).  (\w+) detector\n.*\n.*\n.*\n.*\n.*\s+response (\d)\s+'
                               r'([+-]?\d+\.\d+[Ee]?[+-]?\d+)\s+([+-]?\d+\.\d+[Ee]?[+-]?\d+)?'
                               r'\s+([+-]?\d+\.\d+[Ee]?[+-]?\d+)?', d)
-        self.responses = {t[0]: {'particle': t[1], 'pid': t[2], 'value': float(t[3]),
-            'stdev': 0.0 if t[4] == '' else float(t[4])} for t in rs}
+        self.responses = {
+            t[0]: {'particle': t[1], 'pid': t[2], 'value': float(t[3]), 'stdev': 0.0 if t[4] == '' else float(t[4])} for
+            t in rs}
 
         os.chdir(self.cwd)
         if self.debug > 3:
@@ -1986,8 +1982,8 @@ end
             r2: dict = self.responses['2']  # Photon dose, contact
             r5: dict = self.responses['5']  # Neutron dose, handling (30cm)
             r6: dict = self.responses['6']  # Photon dose, handling (30cm)
-            print(self.sample_weight, r1['value'], r1['stdev'], r2['value'], r2['stdev'],
-                  r5['value'], r5['stdev'], r6['value'], r6['stdev'])
+            print(self.sample_weight, r1['value'], r1['stdev'], r2['value'], r2['stdev'], r5['value'], r5['stdev'],
+                  r6['value'], r6['stdev'])
 
 
 class MHATank(HandlingContactDoseEstimatorGenericTank):
@@ -1997,8 +1993,9 @@ class MHATank(HandlingContactDoseEstimatorGenericTank):
     IR = 0.04 * 2.54 / 2.0 = 0.05080 cm
     length = 10 ft = 304.8 cm
     """
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+
+    def __init__(self, _o: Origen = None):
+        super().__init__(_o)
         """ This reads decayed sample information from the Origen object """
         self.sample_h2: float = 304.8 / 2.0  # half-height of the sample
         self.cyl_r: float = 0.05080  # inner radius of the tank cylinder; h is calculated from V & r
@@ -2007,6 +2004,29 @@ class MHATank(HandlingContactDoseEstimatorGenericTank):
         self.det_standoff_distance = 0.1  # [cm] contact dose
         self.handling_det_standoff_distance = 30.0  # [cm] handing dose
         self.box_a: float = self.handling_det_standoff_distance + 10.0
+
+    def scale_decayed_pipe_material(self, desired_weight: float = 1.0):
+        """ Reads atom density and rho from F71 file """
+        self.sample_density = get_rho_from_atom_density(self.decayed_atom_dens)
+        if self.debug > 2:
+            print(f'Initial sample density {self.sample_density} g/cm3')
+        os.chdir(self.ORIGEN_dir)
+        sample_gram_dict: dict = get_burned_nuclide_data(self.DECAYED_SAMPLE_F71_file_name,
+                                                         self.DECAYED_SAMPLE_F71_position, 'gram')
+        os.chdir(self.cwd)
+        self.sample_weight = 0.0
+        for k,v in sample_gram_dict.items():
+            self.sample_weight += v
+
+        # input_volume: float = self.sample_weight / self.sample_density
+        self.sample_volume = np.pi * self.cyl_r ** 2 * (2.0 * self.sample_h2)  # V = pi r^2 h
+        adens_scaling: float = desired_weight / (self.sample_volume * self.sample_density)
+        self.decayed_atom_dens = scale_adens(self.decayed_atom_dens, adens_scaling)
+        self.sample_density = get_rho_from_atom_density(self.decayed_atom_dens)
+        if self.debug > 2:
+            # print(list(self.burned_atom_dens.items())[:25])
+            print(f'Sample density {self.sample_density} g/cm3, volume {self.sample_volume} cm3')
+            nicely_print_atom_dens(self.decayed_atom_dens)
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
@@ -2036,6 +2056,7 @@ read parameters
 end parameters
 
 read comp
+' THIS IS BASICALLY MEANINGLESS, SINCE THIS IS A GAS AND WE ARE USING A SOURCE FROM F71 FILE 
 <{self.SAMPLE_ATOM_DENS_file_name_MAVRIC}
 ' helium 2 end
 end comp
@@ -2196,5 +2217,4 @@ end
 
 
 if __name__ == "__main__":
-    pass
-    # main()
+    pass  # main()
