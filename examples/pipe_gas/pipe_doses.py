@@ -18,7 +18,7 @@ my_mass: float = 2.24222E-06 * 2.64101E-06 * 453.5924
 
 r = {}
 d = {}
-for decay_days in np.geomspace(1. / 24., 360, 2):
+for decay_days in np.geomspace(1. / 24., 360, 60):
     irr = SampleDose.OrigenFromTritonMHA('../msrr.f71')
     irr.case_dir = 'run_pipe'
     irr.set_decay_days(decay_days)
