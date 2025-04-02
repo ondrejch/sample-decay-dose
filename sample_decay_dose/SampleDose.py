@@ -2151,6 +2151,7 @@ read sources'''
         useNormConst
         cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
         eDistributionID=1
+        multiplier={self.source_multiplier}
     end src'''
 
         mavric_output += f'''
@@ -2160,6 +2161,7 @@ read sources'''
         useNormConst
         cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
         eDistributionID=2
+        multiplier={self.source_multiplier}        
     end src
 end sources
 
