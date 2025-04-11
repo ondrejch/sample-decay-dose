@@ -24,7 +24,7 @@ cwd: str = os.getcwd()
 steel_mass: float = float(re.findall(r'_([\d.]+)g', cwd)[0])
 irradiation_years: float = float(re.findall(r'dose-([\d.]+)year_', cwd)[0])
 
-scale_out: str = os.path.expanduser('~/0.02/80-upper-encl-stellite/01-triton/msrr.out')
+scale_out: str = os.path.expanduser('~/0.02/80-upper-encl-stellite/03-triton-longer/msrr.out')
 flux_data = extract_flux_values(scale_out)
 irradiation_flux: float = flux_data[8140]
 print(f'Steel flux = {irradiation_flux} n/cm2/s, mass: {steel_mass} g, irradiate for {irradiation_years} years')

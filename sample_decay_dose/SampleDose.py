@@ -586,8 +586,12 @@ class OrigenFromTritonMHA(OrigenFromTriton):
             print(
                 f'[OrigenFromTritonMHA] Reading {self.BURNED_MATERIAL_F71_file_name} position {self.BURNED_MATERIAL_F71_position}, scaling {self.MTiHM}')
         time_interp_steps = self.SAMPLE_F71_position - 3
-        if time_interp_steps < 1:
-            raise ValueError("Too few time steps")
+        my_line_time: str = f'        t=[{time_interp_steps}L 0.0001 {self.SAMPLE_DECAY_days}]'
+        if self.SAMPLE_DECAY_days == 0.0:
+            my_line_time =  f'        t=[0.0]'
+        else:
+            if time_interp_steps < 1:
+                raise ValueError("Too few time steps")
 
         basename_burned_f71: str = os.path.basename(self.BURNED_MATERIAL_F71_file_name)
         origen_output: str = f'''
@@ -622,7 +626,7 @@ case {{
     }}
     time {{
         units=DAYS
-        t=[{time_interp_steps}L 0.0001 {self.SAMPLE_DECAY_days}]
+        {my_line_time}
         start=0
     }}
     save {{

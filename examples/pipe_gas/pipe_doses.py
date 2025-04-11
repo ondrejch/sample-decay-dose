@@ -12,13 +12,13 @@ import json5
 cwd: str = os.getcwd()
 
 pipe_or: float = (1.0 / 16.0) * 2.54 / 2.0
-pipe_ir: float = 0.04 * 2.54 / 2.0
+pipe_ir: float = 0.0225 * 2.54 / 2.0
 pipe_thick: float = pipe_or - pipe_ir
 my_mass: float = 2.24222E-06 * 2.64101E-06 * 453.5924
 
 r = {}
 d = {}
-for decay_days in np.geomspace(1. / 24., 360, 60):
+for decay_days in np.linspace(0, 1, 25):
     irr = SampleDose.OrigenFromTritonMHA('../msrr.f71')
     irr.case_dir = 'run_pipe'
     irr.set_decay_days(decay_days)
