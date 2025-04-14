@@ -12,7 +12,7 @@ my_mass: float = 2.24222E-06 * 2.64101E-06 * 453.5924
 
 cwd: str = os.getcwd()
 LABEL = 'pipe'
-labels = {'pipe': ['decay time', 'days', f'Offgas, MHA nuclides, {my_mass} g'] }
+labels = {'pipe': ['decay time', 'days', f'Offgas pipe, MHA nuclides, {my_mass:.4e} g'] }
 
 # particles = {'1': 'Neutron', '2': 'Gamma', '3': 'Beta'}
 particles = {'2': 'Gamma, contact dose', '6': 'Gamma, 30cm handling dose'}
@@ -47,6 +47,7 @@ plt.ylabel('Dose [rem/h]')
 for d in data.keys():
     my_title = f'{particles[d]}'  # , at {float(closest_to_1month):.1f} days = {dose[d][idx_1month]:.3f} rem/h'
     print(my_title)
+    print(dose[d])
     plt.errorbar(x, dose[d], errd[d], ls='none', color=f'{data[d]}', capsize=0.8)
     plt.scatter(x, dose[d], color=f'{data[d]}', s=5, label=my_title)
 
@@ -58,3 +59,16 @@ plt.savefig(f'dose_pipe_{label_file_name}.png', dpi=1000)
 plt.xscale('log')
 plt.yscale('log')
 plt.savefig(f'dose_pipe_{label_file_name}-loglog.png', dpi=1000)
+
+
+# def merge_doses():
+#     import os
+#     import json5
+#     r: dict = {}
+#     my_dirs: list = ['10-run_1d', '11-run_30d', '12-run_1h']
+#     for my_dir in my_dirs:
+#         with open(os.path.join(my_dir, 'responses.json')) as fin:
+#             r.update(json5.load(fin))
+#
+#     with open('responses.json', 'w') as fout:
+#         json5.dump(r, fout, indent=4)

@@ -406,7 +406,10 @@ class Origen:
             raise FileNotFoundError("Expected OPUS file file:" + beta_spectrum_file)
         gamma_spectrum_integral = integrate_opus(gamma_spectrum_file)
         beta_spectrum_integral = integrate_opus(beta_spectrum_file)
-        return beta_spectrum_integral / gamma_spectrum_integral
+        if gamma_spectrum_integral > 0:
+            return beta_spectrum_integral / gamma_spectrum_integral
+        else:
+            return 0.0
 
     def get_neutron_integral(self) -> float:
         """ Calculates spectral integral of neutrons to see if neutrons shoudl be transported by MAVRIC """
@@ -589,6 +592,7 @@ class OrigenFromTritonMHA(OrigenFromTriton):
         my_line_time: str = f'        t=[{time_interp_steps}L 0.0001 {self.SAMPLE_DECAY_days}]'
         if self.SAMPLE_DECAY_days == 0.0:
             my_line_time =  f'        t=[0.0]'
+            self.SAMPLE_F71_position = 2
         else:
             if time_interp_steps < 1:
                 raise ValueError("Too few time steps")
