@@ -14,7 +14,7 @@ cwd: str = os.getcwd()
 pipe_or: float = (1.0 / 16.0) * 2.54 / 2.0
 pipe_ir: float = 0.0225 * 2.54 / 2.0
 pipe_thick: float = pipe_or - pipe_ir
-my_mass: float = 2.24222E-06 * 2.64101E-06 * 453.5924
+my_mass: float = 2.24222E-06 * 453.5924
 
 r = {}
 d = {}
