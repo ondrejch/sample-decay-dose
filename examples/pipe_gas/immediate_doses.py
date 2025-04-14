@@ -8,7 +8,7 @@ import os
 import numpy as np
 import json5
 import matplotlib.pyplot as plt
-my_mass: float = 2.24222E-06 * 2.64101E-06 * 453.5924
+my_mass: float = 2.24222E-06 * 453.5924
 
 cwd: str = os.getcwd()
 particles = {'1': 'Gamma, contact dose', '5': 'Gamma, 30cm handling dose',
@@ -27,13 +27,14 @@ for time in r.keys():
     print(f'=== time: {minutes:.1f} minutes ===')
     d0 = r[time]
     sep: str = '&'
-    print(f'time [minutes]  {sep} \\multicolumn{{2}}{{c}}{{contact dose}} {sep} \\multicolumn{{2}}{{c}}{{handling dose}} \\\\')
+    print(f'time [minutes]  {sep} \\multicolumn{{2}}{{c|}}{{contact dose}} {sep} \\multicolumn{{2}}{{c}}{{handling dose}} \\\\')
     print(f'{minutes:.1f}    {sep} value {sep} error {sep} value {sep} error \\\\ \\hline')
     print(f'neutron: ', end='')
     for particle in ['1', '5']:
-        print(f' {sep} {d0[particle]['value'] * 1e3:.5f} {sep} {d0[particle]['stdev'] * 1e3:.5f} ', end='')
+        print(f' {sep} {d0[particle]['value']:.3f} {sep} {d0[particle]['stdev']:.3f} ', end='')
+        # print(f' {sep} {d0[particle]['value'] * 1e3:.5f} {sep} {d0[particle]['stdev'] * 1e3:.5f} ', end='')
     print('\\\\')
     print(f'gamma:   ', end='')
     for particle in ['2', '6']:
-        print(f' {sep} {d0[particle]['value'] * 1e3:.5f} {sep} {d0[particle]['stdev'] * 1e3:.5f} ', end='')
-    print('\\\\ \\hline')
+        print(f' {sep} {d0[particle]['value']:.3f} {sep} {d0[particle]['stdev']:.3f} ', end='')
+    print('\\\\ \\hline \\hline')

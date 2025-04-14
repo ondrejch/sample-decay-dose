@@ -8,7 +8,7 @@ import os
 import numpy as np
 import json5
 import matplotlib.pyplot as plt
-my_mass: float = 2.24222E-06 * 2.64101E-06 * 453.5924
+my_mass: float = 2.24222E-06 * 453.5924
 
 cwd: str = os.getcwd()
 LABEL = 'pipe'
