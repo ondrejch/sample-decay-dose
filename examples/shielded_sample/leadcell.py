@@ -18,14 +18,17 @@ hotcell_lead_shield: float = 7.5
 
 r = {}
 d = {}
-for decay_days in np.linspace(1, 91, 45):
+decay_days = np.linspace(1, 91, 45)
+
+
+def single_run(decay_day: float) -> dict:
     burned_salt = OrigenFromTriton('./msrr.f71')
     # Get the case number for last burn step with flux > 0
     n_last_fuel_burn: int = [k for k, v in burned_salt.BURNED_MATERIAL_F71_index.items()
                              if v['case'] == '20' and float(v['flux']) > 0][-1]
     burned_salt.BURNED_MATERIAL_F71_position = n_last_fuel_burn
     burned_salt.read_burned_material()
-    burned_salt.set_decay_days(decay_days)
+    burned_salt.set_decay_days(decay_day)
     burned_salt.run_decay_sample()
 
     mavric = HotCellDoses(burned_salt)
@@ -41,14 +44,30 @@ for decay_days in np.linspace(1, 91, 45):
     print(mavric.responses)
     # print(mavric.total_dose)
 
-    r[decay_days] = mavric.responses
-    d[decay_days] = mavric.total_dose
+    r[decay_day] = mavric.responses
+    d[decay_day] = mavric.total_dose
+    return mavric.responses
 
-print(r)
-print(d)
 
-with open('responses.json', 'w') as fout:
-    json5.dump(r, fout, indent=4)
+def dose_serial(decay_days):
+    for decay_day in decay_days:
+        single_run(decay_day)
 
-with open('doses.json', 'w') as fout:
-    json5.dump(d, fout, indent=4)
+
+def dose_parallel(decay_days):
+    pass
+
+
+def main():
+    dose_serial(decay_days)
+    print(r)
+    with open('responses.json', 'w') as fout:
+        json5.dump(r, fout, indent=4)
+
+    print(d)
+    with open('doses.json', 'w') as fout:
+        json5.dump(d, fout, indent=4)
+
+
+if __name__ == '__main__':
+    main()
