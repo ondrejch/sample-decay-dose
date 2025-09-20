@@ -55,7 +55,8 @@ def dose_serial(decay_days):
 
 
 def dose_parallel(decay_days):
-    pass
+    results = Parallel(n_jobs=n_jobs)(delayed(single_run)(decay_day) for decay_day in decay_days)
+    print(results)
 
 
 def main():
