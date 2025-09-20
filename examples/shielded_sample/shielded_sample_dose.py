@@ -17,6 +17,7 @@ shield_thick_max: float = 30  # [cm]
 shield_thick_steps: int = 64
 detector_distance: float = 30.0  # cm
 
+
 def my_process_1layer(ss_thickness: float) -> dict:
     # Calculate dose next to the tank
     mavric = SampleDose.DoseEstimatorSquareTank(origen_triton)

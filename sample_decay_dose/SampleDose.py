@@ -15,7 +15,7 @@ from bisect import bisect_left
 from sample_decay_dose.read_opus import integrate_opus
 
 NOW: str = datetime.now().replace(microsecond=0).isoformat()
-SCALE_bin_path: str = os.getenv('SCALE_BIN', '/opt/scale6.3.1/bin/')
+SCALE_bin_path: str = os.getenv('SCALE_BIN', '/opt/scale6.3.2-mpi/bin/')
 ATOM_DENS_MINIMUM: float = 1e-60
 MAVRIC_NG_XSLIB: str = 'v7.1-28n19g'
 
@@ -50,6 +50,8 @@ ADENS_KAOWOOL_COLD: dict = {'b-10': 4.39982e-07, 'b-11': 1.77098e-06, 'o-16': 0.
     'ca-48': 3.21376e-09, 'ti-46': 1.69203e-06, 'ti-47': 1.5259e-06, 'ti-48': 1.51195e-05, 'ti-49': 1.10956e-06,
     'ti-50': 1.06239e-06, 'fe-54': 7.05374e-07, 'fe-56': 1.10729e-05, 'fe-57': 2.55721e-07, 'fe-58': 3.40317e-08}
 ADENS_LEAD_COLD: dict = {'pb-204': 4.615515e-04, 'pb-206': 7.945277e-03, 'pb-207': 7.285918e-03, 'pb-208': 1.727521e-02}
+ADENS_DRYAIR_COLD: dict = {'c-12': 7.499998e-09, 'c-13': 8.111795e-11, 'n-14': 3.932965e-05, 'n-15': 1.436829e-07,
+    'o-16': 1.057930e-05, 'o-17': 4.029883e-09, 'o-18': 2.174041e-08}
 
 
 def nicely_print_atom_dens(adens: dict, n_top_nuc: int = 20, n_per_row: int = 5):
@@ -329,9 +331,9 @@ def get_cyl_h(cyl_volume: float, cyl_r: float) -> float:
     return cyl_volume / np.pi / cyl_r ** 2
 
 
-def run_scale(deck_file: str):
+def run_scale(deck_file: str, nmpi: int = 1):
     """ Run a SCALE deck """
-    scale_out = subprocess.run([f"{SCALE_bin_path}/scalerte", "-m", deck_file], capture_output=True)
+    scale_out = subprocess.run([f"{SCALE_bin_path}/scalerte", "-N", str(nmpi), "-m", deck_file], capture_output=True)
     scale_out = scale_out.stdout.decode().split("\n")
     if scale_out.count('Error') > 0:
         print('Failed run: ', deck_file)
@@ -1223,7 +1225,7 @@ class DoseEstimatorSquareTank(DoseEstimator):
         if len(self.layers_thicknesses) != len(self.layers_mats):
             raise ValueError("There needs to be the same amount of layers in both lists.")
 
-    def run_mavric(self):
+    def run_mavric(self, nmpi: int = 1):
         """ Writes Mavric inputs and runs the case """
         self.case_dir += "".join([f'_{s:.3f}' for s in self.layers_thicknesses])  # unique IDs for parallel run
         if not os.path.isfile(self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
@@ -1247,7 +1249,7 @@ class DoseEstimatorSquareTank(DoseEstimator):
 
         if self.debug > 0:
             print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
-        run_scale(self.MAVRIC_input_file_name)
+        run_scale(self.MAVRIC_input_file_name, nmpi)
         os.chdir(self.cwd)
 
     def mavric_deck(self) -> str:
