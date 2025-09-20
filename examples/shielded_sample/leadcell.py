@@ -19,7 +19,7 @@ sample_mass: float = 0.1                # 0.1 g sample
 
 r = {}
 d = {}
-decay_days = np.linspace(1, 91, 45)
+decay_days = np.linspace(1, 128, 1)
 
 
 def single_run(decay_day: float) -> dict:
@@ -38,7 +38,7 @@ def single_run(decay_day: float) -> dict:
     mavric.layers_temperature_K = [300.0, 300.0]
     mavric.N_planes_box = 15
     mavric.N_planes_cyl = 2
-    # mavric.histories_per_batch = 1000
+    mavric.histories_per_batch = int(100000 * np.sqrt(decay_day))
     mavric.reuse_adjoint_flux = True
     mavric.run_mavric()
     mavric.get_responses()

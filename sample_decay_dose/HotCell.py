@@ -34,7 +34,6 @@ class HotCellDoses(HandlingContactDoseEstimatorGenericTank):
 =shell
 cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_F71_file_name} .
 cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
-'cp -r ${{INPDIR}}/{adjoint_flux_file} .
 end
 
 =mavric parm=(   )
@@ -179,6 +178,7 @@ read importanceMap
         locationID=2
         responseID=2
    end adjointSource
+   beckerMethod=2
    respWeighting'''
         mavric_output += f'''
 '   xblocks=4
