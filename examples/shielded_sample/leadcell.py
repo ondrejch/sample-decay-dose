@@ -19,7 +19,7 @@ sample_mass: float = 0.1                # 0.1 g sample
 
 r = {}
 d = {}
-decay_days = np.linspace(1, 128, 1)
+decay_days = np.linspace(1, 128, 128)
 
 
 def single_run(decay_day: float) -> dict:

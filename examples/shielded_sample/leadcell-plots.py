@@ -5,10 +5,15 @@ import json5
 import matplotlib.pyplot as plt
 # from leadcell import sample_mass
 sample_mass: float = 0.1                # 0.1 g sample
+do_n_doses: bool = False # True
 
 cwd: str = os.getcwd()
 particles = {'2': 'Gamma, contact dose', '6': 'Gamma, 30cm handling dose'}
+if do_n_doses:
+    particles |= {'1':  'Neutron, contact dose', '5': 'Neutron, 30cm handling dose'}
 data = {'2': 'slategrey', '6': 'crimson'}
+if do_n_doses:
+    data |= {'1': 'blue', '5': 'red'}
 
 LABEL = 'fs'
 labels = {'fs': ['decay time', 'days', f'Burned fuel salt sample {sample_mass:.1f} g'], }
