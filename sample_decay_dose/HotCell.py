@@ -24,7 +24,7 @@ class HotCellDoses(HandlingContactDoseEstimatorGenericTank):
         adjoint_flux_file: str = os.path.join(self.cwd,
                                               self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff'))
         self.cyl_r = get_cyl_r(self.sample_volume)
-        self.sample_h2 = self.cyl_r / 2.0       # sample is a square cylinder
+        self.sample_h2 = self.cyl_r             # sample is a square cylinder
         sample_r: float = self.cyl_r            # sample outer layer [cm]
         sample_h2: float = self.sample_h2
         box_xy2: float = 0.0                    # XY box around
