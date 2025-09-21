@@ -4,8 +4,9 @@ import numpy as np
 import json5
 import matplotlib.pyplot as plt
 # from leadcell import sample_mass
-sample_mass: float = 0.1                # 0.1 g sample
-do_n_doses: bool = False # True
+sample_mass: float = 0.7                # 0.1 g sample
+do_n_doses: bool = False
+do_n_doses: bool = True
 
 cwd: str = os.getcwd()
 particles = {'2': 'Gamma, contact dose', '6': 'Gamma, 30cm handling dose'}
@@ -43,7 +44,10 @@ plt.xlabel(f'Sample {labels[LABEL][0]} [{labels[LABEL][1]}]')
 plt.ylabel('Dose [mrem/h]')
 
 for d in data.keys():
-    my_title = f'{particles[d]}, at {float(closest_to_1month):.1f} days = {dose[d][idx_1month]:.3f} mrem/h'
+    if dose[d][idx_1month] > 1e-3:
+        my_title = f'{particles[d]}, at {float(closest_to_1month):.1f} days = {dose[d][idx_1month]:.3f} mrem/h'
+    else:
+        my_title = f'{particles[d]}, at {float(closest_to_1month):.1f} days = {dose[d][idx_1month] * 1e3:.3f} µrem/h'
     print(my_title)
     plt.errorbar(x, dose[d], errd[d], ls='none', color=f'{data[d]}', capsize=0.8)
     plt.scatter(x, dose[d], color=f'{data[d]}', s=5, label=my_title)
