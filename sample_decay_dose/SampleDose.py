@@ -741,6 +741,8 @@ class OrigenIrradiation(Origen):
         # The self.F33_file_name potentially includes path to that file.
         # It gets copied to temp directory, where it is just F33_file
         F33_path, F33_file = os.path.split(self.F33_file_name)
+        irr_days_min: float = min(0.0001, self.irradiate_days/1e3)
+        decay_days_min: float = min(0.0001, self.SAMPLE_DECAY_days/1e3)
         origen_output: str = f'''
 =shell
 cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
@@ -772,7 +774,7 @@ case(irrad) {{
     time {{
         units=DAYS
         start=0
-        t=[{self.irradiate_steps - 2}L 0.001 {self.irradiate_days}]
+        t=[{self.irradiate_steps - 2}L {irr_days_min} {self.irradiate_days}]
     }}
     flux=[{self.irradiate_steps}R {self.irradiate_flux}]
     save {{
@@ -789,7 +791,7 @@ case(decay) {{
     time {{
         units=DAYS
         start=0
-        t=[{time_interp_steps}L 0.001 {self.SAMPLE_DECAY_days}]
+        t=[{time_interp_steps}L {decay_days_min} {self.SAMPLE_DECAY_days}]
     }}
     save {{
         file="{self.SAMPLE_F71_file_name}"
@@ -1834,6 +1836,8 @@ global unit 1
         z_planes.append(self.det_z + self.planes_xy_around_det)
         z_planes.append(self.det_z - self.planes_xy_around_det)
         z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
+        if not self.layers_mats:  # Fix for bare sample
+            k = -1
         mavric_output += f'''
     cuboid 99999  4p {tank_r + self.box_a} 2p {tank_h2 + self.box_a}  
     media 0 1 99999 -{k + 2}
