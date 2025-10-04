@@ -176,8 +176,8 @@ class FluorideSalt:
         salt_mass_density = bulk_density * salt_weight_fraction
 
         mixture_molar_mass = sum((p / 100.0) * self.molar_masses[s] for s, p in self.components.items())
-        total_salt_number_density = (
-                                                salt_mass_density / mixture_molar_mass) * self.AVOGADRO_NUMBER if mixture_molar_mass > 0 else 0
+        total_salt_number_density = (salt_mass_density / mixture_molar_mass) * self.AVOGADRO_NUMBER \
+            if mixture_molar_mass > 0 else 0
 
         isotope_densities = defaultdict(float)
 
