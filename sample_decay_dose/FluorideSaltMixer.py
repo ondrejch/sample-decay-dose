@@ -9,23 +9,18 @@ class FluorideSalt:
     - Molar masses are calculated from isotopic data.
     - Supports custom isotope enrichments and impurities by weight fraction.
     - Allows 'XXX%' to specify a component's fraction as the remainder to 100%.
+    - Can adjust fluorine content based on a specified UF3/UF4 ratio.
     """
 
-    SALT_COEFFICIENTS = {
-        "LiF":   {"A": 2.37, "B": 5e-4},
-        "BeF2":  {"A": 1.97, "B": 1.45e-5},
-        "UF4":   {"A": 7.78, "B": 9.92e-4},
-        "LaF3":  {"A": 5.79, "B": 6.82e-4},
-        "KF":    {"A": 2.64, "B": 6.57e-4},
-        "NaF":   {"A": 2.70, "B": 5.90e-4},
-        "SrF2":  {"A": 4.78, "B": 7.51e-4},
-        "ThF4":  {"A": 7.11, "B": 7.59e-4},
-        "ZrF4":  {"A": 5.36, "B": 1.23e-3}
-    }
-    AVOGADRO_NUMBER = 6.02214076e23     # atoms/mol
-    BARN_CM_CONVERSION = 1e24           # (cm^2 / barn)
+    SALT_COEFFICIENTS = {"LiF": {"A": 2.37, "B": 5e-4}, "BeF2": {"A": 1.97, "B": 1.45e-5},
+        "UF4": {"A": 7.78, "B": 9.92e-4}, "LaF3": {"A": 5.79, "B": 6.82e-4}, "KF": {"A": 2.64, "B": 6.57e-4},
+        "NaF": {"A": 2.70, "B": 5.90e-4}, "SrF2": {"A": 4.78, "B": 7.51e-4}, "ThF4": {"A": 7.11, "B": 7.59e-4},
+        "ZrF4": {"A": 5.36, "B": 1.23e-3}}
+    AVOGADRO_NUMBER = 6.02214076e23  # atoms/mol
+    BARN_CM_CONVERSION = 1e24  # (cm^2 / barn)
 
-    def __init__(self, composition_str: str, enrichments: dict = None, impurities_wt: dict = None):
+    def __init__(self, composition_str: str, enrichments: dict = None, impurities_wt: dict = None,
+                 uf3_to_uf4_ratio: float = None):
         """
         Initializes the FluorideSalt object.
 
@@ -33,8 +28,8 @@ class FluorideSalt:
             composition_str: String defining the molar composition of the salt (e.g., "78%LiF-22%UF4").
             enrichments: Dictionary defining custom isotopic enrichments (e.g., {'U': {235: 0.05, 238: 0.95}}).
             impurities_wt: Dictionary defining impurities by weight fraction (e.g., {'Fe-56': 1e-5}).
+            uf3_to_uf4_ratio: Molar ratio of U3+ to U4+ to set the fluorine potential.
         """
-        # Programmatically add lanthanide coefficients
         lanthanide_symbols = ["La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu"]
         for symbol in lanthanide_symbols:
             formula = f"{symbol}F3"
@@ -43,17 +38,18 @@ class FluorideSalt:
 
         self.enrichments = enrichments or {}
         self.impurities_wt = impurities_wt or {}
+        self.uf3_to_uf4_ratio = uf3_to_uf4_ratio
+
         self.total_impurity_frac = sum(self.impurities_wt.values())
         if self.total_impurity_frac >= 1.0:
             raise ValueError("Total weight fraction of impurities must be less than 1.")
-        
+
         self.components = self._parse_composition(composition_str)
         self.elemental_masses = self._calculate_elemental_masses()
         self.molar_masses = {}
         self._validate_and_calculate_masses()
 
     def _parse_composition(self, s: str) -> dict:
-        # This function remains the same as before
         components = {}
         parts = s.split('-')
         xxx_component_salt = None
@@ -82,9 +78,7 @@ class FluorideSalt:
         return components
 
     def _calculate_elemental_masses(self) -> dict:
-        """Calculate avg atomic mass for each element based on enrichment or natural abundance."""
         elemental_masses = {}
-        # Find all unique elements in the salt composition AND impurities
         all_elements = set()
         for salt_formula in self.components.keys():
             for symbol, count in re.findall(r'([A-Z][a-z]*)(\d*)', salt_formula):
@@ -93,34 +87,34 @@ class FluorideSalt:
             symbol = re.match(r"([A-Z][a-z]*)", isotope_name).group(1)
             all_elements.add(symbol)
 
-
         for symbol in all_elements:
+            if symbol in elemental_masses:
+                continue
+
             iso_dist = {}
             if symbol in self.enrichments:
-                # Use user-provided enrichment
                 custom_dist = self.enrichments[symbol]
                 if abs(sum(custom_dist.values()) - 1.0) > 1e-6:
                     raise ValueError(f"Enrichment fractions for {symbol} must sum to 1.")
                 iso_dist = custom_dist
             else:
-                # Use natural abundance
                 try:
                     iso_data = ISOTOPIC_DATA[symbol.lower()]
                     iso_dist = {mass_num: data['abundance'] for mass_num, data in iso_data.items()}
                 except KeyError:
-                    # If data is not found, it might be an impurity with no natural abundance defined
-                    # which is fine as long as it's not part of the main salt composition.
                     if any(symbol in f for f in self.components.keys()):
                         raise ValueError(f"Isotopic data not found for element: {symbol}")
                     else:
-                        continue
+                        iso_dist = {}
 
-
-            # Calculate weighted average atomic mass
             avg_mass = 0.0
+            if not iso_dist and symbol.lower() in ISOTOPIC_DATA:
+                elemental_masses[symbol] = 0
+                continue
+
             for mass_num, fraction in iso_dist.items():
                 try:
-                    isotope_mass = ISOTOPIC_DATA[symbol.lower()][mass_num]['mass']
+                    isotope_mass = ISOTOPIC_DATA[symbol.lower()][int(mass_num)]['mass']
                     avg_mass += isotope_mass * fraction
                 except KeyError:
                     raise ValueError(f"Isotope {symbol}-{mass_num} not found in data.")
@@ -128,7 +122,6 @@ class FluorideSalt:
         return elemental_masses
 
     def _calculate_molar_mass(self, formula: str) -> float:
-        """Calculates molar mass of a formula using pre-calculated elemental masses."""
         total_mass = 0.0
         elements = re.findall(r'([A-Z][a-z]*)(\d*)', formula)
         if not elements: raise ValueError(f"Cannot parse formula: {formula}")
@@ -140,7 +133,6 @@ class FluorideSalt:
         return total_mass
 
     def _validate_and_calculate_masses(self):
-        # This function remains mostly the same
         total_percentage = sum(self.components.values())
         if abs(total_percentage - 100.0) > 1e-6:
             raise ValueError(f"Molar percentages must sum to 100, but sum to {total_percentage}")
@@ -166,49 +158,37 @@ class FluorideSalt:
             molar_volume_pure = molar_mass / density_pure
             mixture_molar_mass += molar_fraction * molar_mass
             mixture_molar_volume += molar_fraction * molar_volume_pure
-        
+
         if mixture_molar_volume <= 0:
             raise ValueError("Mixture molar volume is non-positive.")
-            
-        # Density of the pure salt mixture
+
         pure_salt_density = mixture_molar_mass / mixture_molar_volume
-        
-        # Adjust density for the mass of impurities, assuming volume is constant
         final_density = pure_salt_density / (1.0 - self.total_impurity_frac)
-        
+
         return final_density
 
     def get_atom_densities(self, temperature: float) -> dict:
         """
-        Calculates the atom density of each isotope in the mixture, including impurities.
-
-        Args:
-            temperature: The temperature in Kelvin.
-
-        Returns:
-            A dictionary mapping isotope names (e.g., 'U-235') to their
-            atom densities in [atoms / barn-cm].
+        Calculates the atom density of each isotope in the mixture, including impurities and fluorine potential adjustment.
         """
-        bulk_density = self.density(temperature) # g/cm^3
+        bulk_density = self.density(temperature)
         salt_weight_fraction = 1.0 - self.total_impurity_frac
         salt_mass_density = bulk_density * salt_weight_fraction
 
-        # Calculate overall mixture molar mass (already weighted by molar fractions)
-        mixture_molar_mass = sum(
-            (p / 100.0) * self.molar_masses[s] for s, p in self.components.items()
-        )
-
-        # Total number density of the salt "molecules" [molecules/cm^3]
-        total_salt_number_density = (salt_mass_density / mixture_molar_mass) * self.AVOGADRO_NUMBER
+        mixture_molar_mass = sum((p / 100.0) * self.molar_masses[s] for s, p in self.components.items())
+        total_salt_number_density = (
+                                                salt_mass_density / mixture_molar_mass) * self.AVOGADRO_NUMBER if mixture_molar_mass > 0 else 0
 
         isotope_densities = defaultdict(float)
-        # 1. Calculate densities for base salt components
+
+        # 1. Calculate nominal densities for all isotopes from the base salt
         for salt_formula, salt_percentage in self.components.items():
             elements_in_formula = re.findall(r'([A-Z][a-z]*)(\d*)', salt_formula)
             for symbol, count_str in elements_in_formula:
                 atoms_per_molecule = int(count_str) if count_str else 1
 
-                # Get isotopic distribution for this element
+                element_total_density = total_salt_number_density * (salt_percentage / 100.0) * atoms_per_molecule
+
                 iso_dist = {}
                 if symbol in self.enrichments:
                     iso_dist = self.enrichments[symbol]
@@ -217,22 +197,29 @@ class FluorideSalt:
                     iso_dist = {mass_num: data['abundance'] for mass_num, data in iso_data.items()}
 
                 for mass_num, fraction in iso_dist.items():
-                    if fraction == 0.0:  # Skip zero-fraction nuclides
-                        continue
-                    isotope_name = f"{symbol}-{mass_num}"
-                    # Contribution to atom density from this salt component
-                    density_contrib = (total_salt_number_density *    # [molecules/cm^3]
-                                       (salt_percentage / 100.0) *    # [unit-less fraction]
-                                       atoms_per_molecule *           # [atoms of element / molecule]
-                                       fraction)                      # [atoms of isotope / atoms of element]
+                    if fraction > 0:
+                        isotope_name = f"{symbol}-{mass_num}"
+                        isotope_densities[isotope_name] += element_total_density * fraction
 
-                    isotope_densities[isotope_name] += density_contrib
-        
-        # 2. Add densities for impurities
+        # 2. Adjust fluorine density based on UF3/UF4 ratio
+        if self.uf3_to_uf4_ratio is not None:
+            total_uranium_density = sum(v for k, v in isotope_densities.items() if k.startswith('U-'))
+            if total_uranium_density > 0:
+                ratio = self.uf3_to_uf4_ratio
+                frac_u3 = ratio / (1.0 + ratio)
+
+                # Each U3+ ion means one less F atom compared to the nominal UF4
+                fluorine_density_reduction = total_uranium_density * frac_u3
+
+                # Assume F is monoisotopic (F-19)
+                isotope_densities['F-19'] -= fluorine_density_reduction
+                if isotope_densities['F-19'] < 0:
+                    raise ValueError("Fluorine potential adjustment resulted in negative fluorine density.")
+
+        # 3. Add densities for impurities
         for isotope_name, weight_frac in self.impurities_wt.items():
             match = re.match(r"([A-Z][a-z]*)-(\d+)", isotope_name)
-            if not match:
-                raise ValueError(f"Could not parse impurity isotope name: {isotope_name}")
+            if not match: raise ValueError(f"Could not parse impurity isotope name: {isotope_name}")
             symbol, mass_num_str = match.groups()
             mass_num = int(mass_num_str)
 
@@ -245,8 +232,7 @@ class FluorideSalt:
             impurity_atom_density = (impurity_mass_density / isotope_mass) * self.AVOGADRO_NUMBER
             isotope_densities[isotope_name] += impurity_atom_density
 
-
-        # Convert from atoms/cm^3 to atoms/barn-cm
+        # Convert all densities from atoms/cm^3 to atoms/barn-cm
         for iso, dens in isotope_densities.items():
             isotope_densities[iso] = dens / self.BARN_CM_CONVERSION
 
@@ -256,35 +242,40 @@ class FluorideSalt:
 # Example Usage:
 if __name__ == "__main__":
     try:
-        # Define a salt with 5% enriched Uranium and some impurities
         enrichment_leu = {'U': {235: 0.05, 238: 0.95}}
-        # Impurities are defined as weight fractions (e.g., 10 ppm Fe-56)
-        impurities = {'Fe-56': 10e-6, 'Cr-52': 5e-6, 'Ni-58': 2e-6}
-        
+        impurities = {'Fe-56': 10e-6, 'Cr-52': 5e-6}
+        uf3_uf4_ratio = 0.1  # Molar ratio of U3+/U4+ is 0.1
+
         leu_salt_str = "78%LiF-XXX%UF4"
 
-        leu_salt = FluorideSalt(leu_salt_str, enrichments=enrichment_leu, impurities_wt=impurities)
+        salt = FluorideSalt(leu_salt_str, enrichments=enrichment_leu, impurities_wt=impurities,
+                            uf3_to_uf4_ratio=uf3_uf4_ratio)
 
         print(f"Original Composition String: '{leu_salt_str}'")
         print(f"With Enrichments: {enrichment_leu}")
         print(f"With Impurities (wt. frac): {impurities}")
-        
-        print("\nCalculated Component Percentages:")
-        for salt, perc in leu_salt.components.items():
-            print(f"  - {salt}: {perc:.2f}%")
+        print(f"With U3+/U4+ Ratio: {uf3_uf4_ratio}")
 
-        print("\nAverage elemental masses (g/mol):")
-        for el, mass in sorted(leu_salt.elemental_masses.items()):
-            print(f"  - {el}: {mass:.4f}")
+        print("\nCalculated Component Percentages:")
+        for s, p in salt.components.items():
+            print(f"  - {s}: {p:.2f}%")
 
         temp_K = 950
-        atom_densities = leu_salt.get_atom_densities(temp_K)
+        atom_densities = salt.get_atom_densities(temp_K)
 
         print(f"\n--- Atom Densities at {temp_K} K ---")
-        print(f"Bulk Density: {leu_salt.density(temp_K):.4f} g/cm³")
+        print(f"Bulk Density: {salt.density(temp_K):.4f} g/cm³")
         print("Isotope Densities (atoms/barn-cm):")
+
+        # For comparison, calculate without the ratio
+        salt_no_ratio = FluorideSalt(leu_salt_str, enrichments=enrichment_leu, impurities_wt=impurities)
+        densities_no_ratio = salt_no_ratio.get_atom_densities(temp_K)
+
         for iso, dens in atom_densities.items():
-            print(f"  - {iso:<6}: {dens:.4e}")
+            if iso.startswith('F-'):
+                print(f"  - {iso:<7}: {dens:.4e} (nominal was {densities_no_ratio.get(iso, 0):.4e})")
+            else:
+                print(f"  - {iso:<7}: {dens:.4e}")
 
     except (ValueError, KeyError, RuntimeError) as e:
         print(f"\nAn error occurred: {e}")
