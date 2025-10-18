@@ -18,6 +18,7 @@ NOW: str = datetime.now().replace(microsecond=0).isoformat()
 SCALE_bin_path: str = os.getenv('SCALE_BIN', '/opt/scale6.3.2-mpi/bin/')
 ATOM_DENS_MINIMUM: float = 1e-60
 MAVRIC_NG_XSLIB: str = 'v7.1-28n19g'
+DAY_IN_SECONDS: float = 24.0 * 60.0 * 60.0
 
 # Predefined lists of atom densities for convenience. Check and make yours :)
 # https://www.sandmeyersteel.com/316H.html
@@ -990,13 +991,17 @@ class DoseEstimator:
         if _o is not None:
             self.sample_weight: float = _o.sample_weight  # Mass of the sample [g]
             self.sample_density: float = _o.sample_density  # Mass density of the sample [g/cm3]
-            self.sample_volume: float =  getattr(_o, 'sample_volume', np.nan)  # Sample volume [cm3], if exists
+            self.sample_volume: float = getattr(_o, 'sample_volume', np.nan)  # Sample volume [cm3], if exists
             self.DECAYED_SAMPLE_F71_file_name: str = _o.SAMPLE_F71_file_name
             self.DECAYED_SAMPLE_F71_position: int = _o.SAMPLE_F71_position
             self.DECAYED_SAMPLE_days: float = _o.SAMPLE_DECAY_days  # Sample decay time [days]
             self.decayed_atom_dens: dict = _o.decayed_atom_dens  # Atom density of the decayed sample
-            self.beta_over_gamma: float = _o.get_beta_to_gamma()  # Beta over gamma spectral ratio
-            self.neutron_intensity: float = _o.get_neutron_integral()  # Integral of neutron spectra
+            if _o.decayed_atom_dens:  # if the ORIGEN case was run...
+                self.beta_over_gamma: float = _o.get_beta_to_gamma()  # Beta over gamma spectral ratio
+                self.neutron_intensity: float = _o.get_neutron_integral()  # Integral of neutron spectra
+            else:
+                self.beta_over_gamma: float = -1.0
+                self.neutron_intensity: float = -1.0
             self.ORIGEN_dir: str = _o.case_dir  # Directory to run the case
             self.case_dir: str = self.ORIGEN_dir + '_MAVRIC'
             self.cwd: str = _o.cwd  # Current running directory
