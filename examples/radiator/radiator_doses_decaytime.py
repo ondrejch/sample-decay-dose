@@ -53,7 +53,7 @@ def single_run() -> dict:
 
 def main():
     mavric_res = single_run()
-    print(mavric_res)
+    print(f'Results: {mavric_res}')
     with open('my_response.json', 'w') as fout:
         json5.dump(mavric_res, fout, indent=4)
 
