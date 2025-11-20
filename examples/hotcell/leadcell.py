@@ -15,12 +15,11 @@ n_jobs: int = cpu_count()  # How many MAVRIC cases to run in parallel
 cwd: str = os.getcwd()
 hotcell_inner_box2: float = 70.0 / 2.0  # 70 x 70 x 70 cm
 hotcell_lead_shield: float = 7.5        # 7.5 cm of lead shielding
-sample_mass: float = 0.7                # 0.1 g sample
+sample_mass: float = 0.1                # 0.1 g sample
 
 r = {}
 d = {}
 decay_days = np.linspace(1, 128, 128)
-#decay_days = np.linspace(1, 128, 2)
 
 
 def single_run(decay_day: float) -> dict:
