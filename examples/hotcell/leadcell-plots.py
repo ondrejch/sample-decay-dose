@@ -1,12 +1,10 @@
 import os
-import re
 import numpy as np
 import json5
 import matplotlib.pyplot as plt
-# from leadcell import sample_mass
-sample_mass: float = 0.7                # 0.1 g sample
+
+sample_mass: float = 0.1                # 0.1 g sample
 do_n_doses: bool = False
-#do_n_doses: bool = True
 
 cwd: str = os.getcwd()
 particles = {'2': 'Gamma, contact dose', '6': 'Gamma, 30cm handling dose'}

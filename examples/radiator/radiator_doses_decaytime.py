@@ -31,7 +31,7 @@ def single_run() -> dict:
     radiator.N_planes_box = 15
     print(f"Radiator inside fluid total volume: {radiator.all_pins_volume} cm3")
     radiator.histories_per_batch = int(100000 * 1)
-    radiator.histories_per_batch = int(1000 * 1)
+    radiator.batches = int(50 * 1)
     radiator.reuse_adjoint_flux = False  #True
 
     radiator.run_mavric()
