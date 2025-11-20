@@ -18,7 +18,7 @@ sample_mass: float = 0.1                # 0.1 g sample
 
 r = {}
 d = {}
-decay_days = np.linspace(1, 128, 128)
+decay_days = np.linspace(1, 128, 1)
 
 
 def single_run(decay_day: float) -> dict:
@@ -60,8 +60,8 @@ def dose_parallel(decay_days) -> dict:
 
 
 def main():
-    # mavric_res = dose_serial(decay_days)
-    mavric_res = dose_parallel(decay_days)
+    mavric_res = dose_serial(decay_days)
+    # mavric_res = dose_parallel(decay_days)
     # Reconstruct r from parallel runs
     r = {decay_days[i]: mavric_res[i] for i in range(len(decay_days))}
 
