@@ -18,10 +18,9 @@ sample_mass: float = 0.1                # 0.1 g sample
 
 r = {}
 d = {}
-decay_days = np.linspace(1, 128, 1)
 
 
-def single_run(decay_day: float) -> dict:
+def single_run() -> dict:
     burned_salt = OrigenFromTriton('./origen.f71', sample_mass)
     burned_salt.set_f71_pos(5.0 * 365.0 * DAY_IN_SECONDS, '1')
     burned_salt.read_burned_material()       # No decay
@@ -31,49 +30,32 @@ def single_run(decay_day: float) -> dict:
     radiator.layers_temperature_K = [600.0, 300.0]
     radiator.N_planes_box = 15
     print(f"Radiator inside fluid total volume: {radiator.all_pins_volume} cm3")
-    radiator.histories_per_batch = int(100000 * np.sqrt(decay_day))
-    radiator.histories_per_batch = int(1000 * np.sqrt(decay_day))
+    radiator.histories_per_batch = int(100000 * 1)
+    radiator.histories_per_batch = int(1000 * 1)
     radiator.reuse_adjoint_flux = False  #True
 
     radiator.run_mavric()
-    # mavric.get_responses()
-
-    # print(mavric.responses)
-    # print(mavric.total_dose)
-
-    r[decay_day] = radiator.responses
-    d[decay_day] = radiator.total_dose
+    radiator.get_responses()
     return radiator.responses
 
-
-def dose_serial(decay_days) -> dict:
-    results = {}
-    for decay_day in decay_days:
-        results[decay_day] = single_run(decay_day)
-    return results
-
-
-def dose_parallel(decay_days) -> dict:
-    results = Parallel(n_jobs=n_jobs)(delayed(single_run)(decay_day) for decay_day in decay_days)
-    print(results)
-    return results
+# def dose_serial(decay_days) -> dict:
+#     results = {}
+#     for decay_day in decay_days:
+#         results[decay_day] = single_run(decay_day)
+#     return results
+#
+#
+# def dose_parallel(decay_days) -> dict:
+#     results = Parallel(n_jobs=n_jobs)(delayed(single_run)(decay_day) for decay_day in decay_days)
+#     print(results)
+#     return results
 
 
 def main():
-    mavric_res = dose_serial(decay_days)
-    # mavric_res = dose_parallel(decay_days)
-    # Reconstruct r from parallel runs
-    r = {decay_days[i]: mavric_res[i] for i in range(len(decay_days))}
-
-    rs = dict(sorted(r.items()))
-    print(rs)
-    with open('responses.json', 'w') as fout:
-        json5.dump(r, fout, indent=4)
-
-#    ds = dict(sorted(d.items()))
-#    print(ds)
-#    with open('doses.json', 'w') as fout:
-#        json5.dump(ds, fout, indent=4)
+    mavric_res = single_run()
+    print(mavric_res)
+    with open('my_response.json', 'w') as fout:
+        json5.dump(mavric_res, fout, indent=4)
 
 
 if __name__ == '__main__':
