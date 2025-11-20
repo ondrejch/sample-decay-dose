@@ -280,6 +280,9 @@ read importanceMap
         mavric_output += f'''
 '   xblocks=4
 '   yblocks=4
+   macromaterial
+       mmsubcell=8
+   end macromaterial 
 end importanceMap
 
 read tallies
@@ -307,7 +310,6 @@ read tallies
         locationID=2
         responseID=2
     end pointDetector
-
 end tallies
 
 end data
