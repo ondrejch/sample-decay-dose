@@ -25,3 +25,21 @@ def _load_isotopic_data():
 # This line executes when the 'sample_decay_dose' package is imported,
 # loading the data once and making it available globally within the package.
 ISOTOPIC_DATA = _load_isotopic_data()
+
+
+ELEMENTS: list = ['neutron', 'h',                                                                       'he',
+    'li', 'be',                                                                'b', 'c', 'n', 'o', 'f', 'ne',
+    'na', 'mg',                                                             'al', 'si', 'p', 's', 'cl', 'ar',
+    'k', 'ca', 'sc', 'ti', 'v', 'cr', 'mn', 'fe', 'co', 'ni', 'cu', 'zn', 'ga', 'ge', 'as', 'se', 'br', 'kr',
+    'rb', 'sr', 'y', 'zr', 'nb', 'mo', 'tc', 'ru', 'rh', 'pd', 'ag', 'cd', 'in', 'sn', 'sb', 'te', 'i', 'xe',
+    'cs', 'ba',
+          'la', 'ce', 'pr', 'nd', 'pm', 'sm', 'eu', 'gd', 'tb', 'dy', 'ho', 'er', 'tm', 'yb', 'lu',
+                     'hf', 'ta', 'w', 're', 'os', 'ir', 'pt', 'au', 'hg', 'tl', 'pb', 'bi', 'po', 'at', 'rn',
+    'fr', 'ra',
+          'ac', 'th', 'pa', 'u', 'np', 'pu', 'am', 'cm', 'bk', 'cf', 'es', 'fm', 'md', 'no', 'lr',
+                     'rf', 'db', 'sg', 'bh', 'hs', 'mt', 'ds', 'rg', 'cn', 'nh', 'fl', 'mc', 'lv', 'ts', 'og']
+
+__all__ = [
+    'ISOTOPIC_DATA',
+    'ELEMENTS'
+]
