@@ -9,7 +9,7 @@ def _load_isotopic_data():
     """
     # The path is constructed relative to this __init__.py file.
     # It navigates up to the repository root, then into the 'data' directory.
-    data_path = os.path.join(os.path.dirname(__file__), 'data/isotopic_data.json')
+    data_path = os.path.join(os.path.dirname(__file__), 'isotopic_data.json')
     try:
         with open(data_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
