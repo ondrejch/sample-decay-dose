@@ -3,6 +3,7 @@ from collections import defaultdict
 from sample_decay_dose.data import ISOTOPIC_DATA as _isotopic_data
 from sample_decay_dose.ValencyMapper import ValencyMapper
 
+
 class FluorideSalt:
     """
     Represents a mixed fluoride salt, calculating its density and isotopic atom densities.
@@ -437,14 +438,14 @@ class FluorideSalt:
 
 class FlibeUF4Salt(FluorideSalt):
     """
-    A specialized class for LiF-BeF2-UF4 salts (FLiBe-UF4).
-    Assumes a 2:1 molar ratio of LiF to BeF2.
-    Provides a simplified interface for defining the salt composition.
+    A specialized class for LiF-BeF2-UF4 salts (FLiBe-UF4) with optional admixtures.
+    Assumes a 2:1 molar ratio of LiF to BeF2 for the solvent.
     """
 
     def __init__(self, name: str, temperature: float,
                  u_enr_weight: dict, u_impurities_weight: dict,
-                 UF4: float, UF3_to_UF4: float = 0.05,
+                 UF4: float, admixtures: dict = None,
+                 UF3_to_UF4: float = 0.05,
                  Li7_enr: float = 0.99995):
         """
         Initializes the FLiBe-UF4 salt.
@@ -453,45 +454,83 @@ class FlibeUF4Salt(FluorideSalt):
             name (str): A name for the salt material.
             temperature (float): The operating temperature in Kelvin.
             u_enr_weight (dict): Dictionary of Uranium isotope names to their weight fractions.
-                                 Example: {'u-235': 0.05, 'u-238': 0.95}
-            u_impurities_weight (dict): Dictionary of impurity isotopes/elements to their weight fractions
-                                        *relative to the uranium mass*.
-                                        Example: {'Al': 275e-6, 'Ac-227': 1e-9}
+            u_impurities_weight (dict): Dictionary of impurities relative to the uranium mass.
             UF4 (float): Molar fraction of UF4 in the salt.
-            UF3_to_UF4 (float): Molar ratio of U3+ to U4+ for fluorine potential.
+            admixtures (dict): Optional dictionary defining extra salts.
+                               Example: {'LuF3': {'mol_frac': 0.01, 'enrichment': {176: 1.0}}}
+            UF3_to_UF4 (float): Molar ratio of U3+ to U4+.
             Li7_enr (float): Weight fraction enrichment of Li-7.
         """
         self.name = name
         self.temperature = temperature
 
-        # --- Step 1: Assemble molar composition and enrichments for the base class ---
-        composition_str = f"{(1 - UF4) * (2 / 3) * 100:.4f}%LiF-{(1 - UF4) * (1 / 3) * 100:.4f}%BeF2-{UF4 * 100:.4f}%UF4"
+        # --- Handle Admixtures ---
+        total_admixture_frac = 0.0
+        if admixtures:
+            total_admixture_frac = sum(v.get('mol_frac', 0) for v in admixtures.values())
+
+        if not (0 <= UF4 + total_admixture_frac < 1):
+            raise ValueError("Sum of UF4 and admixture molar fractions must be less than 1.")
+
+        flibe_frac = 1.0 - UF4 - total_admixture_frac
+
+        # --- Assemble Composition String ---
+        # 2:1 ratio for LiF:BeF2
+        components = {
+            'UF4': UF4,
+            'LiF': flibe_frac * (2.0 / 3.0),
+            'BeF2': flibe_frac * (1.0 / 3.0)
+        }
+
+        if admixtures:
+            for salt, props in admixtures.items():
+                components[salt] = props.get('mol_frac', 0)
+
+        composition_str = "-".join([f"{frac * 100:.6f}%{salt}" for salt, frac in components.items() if frac > 0])
+
+        # --- Assemble Enrichments ---
         enrichments = {'Li7_enr': Li7_enr}
         if u_enr_weight:
             enrichments['U'] = u_enr_weight
 
-        # --- Step 2: Correctly calculate impurity weight fractions relative to the total salt mass ---
-        # This requires a temporary salt object to get the correct average molar masses.
+        if admixtures:
+            for salt, props in admixtures.items():
+                if 'enrichment' in props:
+                    # Extract cation from salt formula (e.g. "LuF3" -> "Lu")
+                    cation_match = re.match(r"([A-Z][a-z]?)", salt, re.IGNORECASE)
+                    if not cation_match:
+                        raise ValueError(f"Could not parse cation from admixture salt: {salt}")
+                    cation = cation_match.group(1).capitalize()
+                    enrichments[cation] = props['enrichment']
+
+        # --- Calculate Impurity Weight Fractions (Relative to Total Salt Mass) ---
+        # We need a temporary object to calculate the mass of Uranium per mole of salt
         temp_salt = FluorideSalt(composition_str, enrichments=enrichments)
         avg_u_mass = temp_salt.elemental_masses.get('U', 0)
 
-        total_salt_mass_per_mole = 0
-        for salt, mol_frac_percent in temp_salt.components.items():
-            total_salt_mass_per_mole += (mol_frac_percent / 100.0) * temp_salt.molar_masses[salt]
+        # Calculate total mass of 1 mole of the salt mixture
+        total_salt_mass_per_mole = sum(
+            (frac / 100.0) * temp_salt.molar_masses[s]
+            for s, frac in temp_salt.components.items()
+        )
 
+        # Calculate mass of Uranium in 1 mole of salt
+        # UF4 component percentage / 100 * Atomic Mass of U
         m_u_per_mole_salt = (temp_salt.components.get('UF4', 0) / 100.0) * avg_u_mass
 
-        impurity_masses = {}
+        final_impurities_wt = {}
         if m_u_per_mole_salt > 0 and u_impurities_weight:
+            impurity_masses = {}
             for key, wt_frac_of_u in u_impurities_weight.items():
                 impurity_masses[key] = wt_frac_of_u * m_u_per_mole_salt
 
-        total_impurity_mass = sum(impurity_masses.values())
-        total_system_mass = total_salt_mass_per_mole + total_impurity_mass
-        final_impurities_wt = {key: mass / total_system_mass for key, mass in
-                               impurity_masses.items()} if total_system_mass > 0 else {}
+            total_impurity_mass = sum(impurity_masses.values())
+            total_system_mass = total_salt_mass_per_mole + total_impurity_mass
 
-        # --- Step 3: Call the final parent constructor with all arguments correctly processed ---
+            if total_system_mass > 0:
+                final_impurities_wt = {k: m / total_system_mass for k, m in impurity_masses.items()}
+
+        # --- Initialize Base Class ---
         super().__init__(
             composition_str=composition_str,
             enrichments=enrichments,
@@ -553,7 +592,7 @@ class FlibeSalt(FluorideSalt):
 class FlibeUF4AdmixtureSalt(FlibeUF4Salt):
     """
     Extends FlibeUF4Salt to include arbitrary fluoride salt admixtures.
-    Note: Impurities are still calculated as a weight fraction of Uranium ONLY.
+    This class is now a thin wrapper around FlibeUF4Salt, which handles admixtures directly.
     """
 
     def __init__(self, name: str, temperature: float,
@@ -562,78 +601,18 @@ class FlibeUF4AdmixtureSalt(FlibeUF4Salt):
                  Li7_enr: float = 0.99995):
         """
         Initializes a FLiBe-UF4 salt with additional fluoride admixtures.
-
-        Args:
-            admixtures (dict): A dictionary defining the admixtures.
-                Example: {'LuF3': {'mol_frac': 0.01, 'enrichment': {176: 1.0}}}
-            All other arguments are the same as for FlibeUF4Salt.
+        Delegates completely to FlibeUF4Salt.
         """
-        # This child class is now much simpler. It just figures out the
-        # final composition string and then calls its parent.
-
-        total_admixture_frac = 0.0
-        if admixtures is not None:
-            total_admixture_frac = sum(v.get('mol_frac', 0) for v in admixtures.values())
-        if not (0 <= UF4 + total_admixture_frac < 1):
-            raise ValueError("Sum of UF4 and admixture molar fractions must be less than 1.")
-
-        flibe_frac = 1.0 - UF4 - total_admixture_frac
-
-        # --- Create the full composition string ---
-        # This will be parsed by the base class, which handles all canonicalization.
-        components = {'UF4': UF4, 'LiF': flibe_frac * (2 / 3), 'BeF2': flibe_frac * (1 / 3)}
-        if admixtures:
-            for salt, props in admixtures.items():
-                components[salt] = props.get('mol_frac', 0)
-
-        composition_str = "-".join([f"{frac * 100:.4f}%{salt}" for salt, frac in components.items() if frac > 0])
-
-        # --- Create the full enrichments dictionary ---
-        full_enrichments = {'Li7_enr': Li7_enr}
-        if u_enr_weight:
-            full_enrichments['U'] = u_enr_weight
-
-        if admixtures:
-            for salt, props in admixtures.items():
-                if 'enrichment' in props:
-                    cation_match = re.match(r"([A-Z][a-z]?)", salt, re.IGNORECASE)
-                    if not cation_match:
-                        raise ValueError(f"Could not parse cation from admixture salt: {salt}")
-                    cation = cation_match.group(1).capitalize()
-                    full_enrichments[cation] = props['enrichment']
-
-        # --- Correctly calculate impurity fractions based on the TOTAL salt mass ---
-        # We need a temporary FluorideSalt object to get the correct average masses.
-        temp_salt = FluorideSalt(composition_str, enrichments=full_enrichments)
-        avg_u_mass = temp_salt.elemental_masses.get('U', 0)
-
-        total_salt_mass_per_mole = 0
-        for salt, mol_frac_percent in temp_salt.components.items():
-            total_salt_mass_per_mole += (mol_frac_percent / 100.0) * temp_salt.molar_masses[salt]
-
-        m_u_per_mole_salt = (temp_salt.components.get('UF4', 0) / 100.0) * avg_u_mass
-
-        impurity_masses = {}
-        if m_u_per_mole_salt > 0 and u_impurities_weight:
-            for key, wt_frac_of_u in u_impurities_weight.items():
-                impurity_masses[key] = wt_frac_of_u * m_u_per_mole_salt
-
-        total_impurity_mass = sum(impurity_masses.values())
-        total_system_mass = total_salt_mass_per_mole + total_impurity_mass
-        final_impurities_wt = {key: mass / total_system_mass for key, mass in
-                               impurity_masses.items()} if total_system_mass > 0 else {}
-
-        # --- Final Initialization ---
-        # We can now call the base class constructor with all arguments correctly processed.
-        FluorideSalt.__init__(self,
-                              composition_str=composition_str,
-                              enrichments=full_enrichments,
-                              impurities_wt=final_impurities_wt,
-                              uf3_to_uf4_ratio=UF3_to_UF4)
-
-        # Finally, set the name and temperature on the final object.
-        self.name = name
-        self.temperature = temperature
+        super().__init__(
+            name=name,
+            temperature=temperature,
+            u_enr_weight=u_enr_weight,
+            u_impurities_weight=u_impurities_weight,
+            UF4=UF4,
+            admixtures=admixtures,
+            UF3_to_UF4=UF3_to_UF4,
+            Li7_enr=Li7_enr
+        )
 
 
 if __name__ == "__main__":
@@ -680,7 +659,7 @@ if __name__ == "__main__":
         for iso, dens in atom_densities_flibe.items():
             print(f"  - {iso:<8}: {dens:.4e}")
 
-        # Example using the FlibeUF4AdmixtureSalt class with case-insensitive admixtures
+        # Example using the FlibeUF4AdmixtureSalt class (now wrapper)
         print("\n--- Testing FlibeUF4AdmixtureSalt Child Class (case-insensitive) ---")
 
         admixture_salt = FlibeUF4AdmixtureSalt(
@@ -709,10 +688,10 @@ if __name__ == "__main__":
         for iso, dens in atom_densities_admix.items():
             print(f"  - {iso:<8}: {dens:.4e}")
 
-        # --- Test the new from_atom_densities method ---
+        # --- Test the from_atom_densities method ---
         print("\n--- Testing from_atom_densities Reconstruction ---")
         reconstructed_salt = FluorideSalt.from_atom_densities(atom_densities_admix)
-        print(atom_densities_admix)
+        # print(atom_densities_admix)
         print(f"Original Composition: {admixture_salt.components}")
         print(f"Reconstructed Composition: {reconstructed_salt.components}")
         # Compare the two dictionaries, allowing for small float inaccuracies
