@@ -30,7 +30,7 @@ class FluorideSalt:
         Args:
             composition_str: String defining the molar composition of the salt (e.g., "78%LiF-22%UF4").
             enrichments: Dictionary defining custom isotopic enrichments. Can be mole fractions (e.g., {'U': {235: 0.05}})
-                         or special weight fraction keys (e.g., {'Li7_enr': 0.9999}).
+                         or special weight fraction keys (e.g., {'Li7_enr': 0.9999, 'U235_enr': 0.1975}).
             impurities_wt: Dictionary defining impurities by weight fraction of the *total salt mass*.
                            Example: {'Fe-56': 1e-5}.
             uf3_to_uf4_ratio: Molar ratio of U3+ to U4+ to set the fluorine potential.
@@ -94,7 +94,11 @@ class FluorideSalt:
             x6 = n6 / total_li_moles
             processed['Li'] = {7: x7, 6: x6}
 
-        # Handle Uranium weight fraction enrichment
+        # Handle U-235 weight fraction enrichment (Auto-calculate U-234/U-238)
+        if 'U235_enr' in processed:
+            self._set_uranium_isotopics_from_enrichment(processed)
+
+        # Handle generic Uranium weight fraction enrichment (Explicit dictionary)
         if 'U' in processed and isinstance(processed['U'], dict):
             # Check if it's in the user-friendly {'u-235': wt_frac} format
             if any(isinstance(k, str) for k in processed['U'].keys()):
@@ -111,6 +115,48 @@ class FluorideSalt:
                     processed['U'] = {mass: mol / total_moles for mass, mol in u_enr_mole.items()}
 
         return processed
+
+    def _set_uranium_isotopics_from_enrichment(self, processed_enrichments: dict):
+        """
+        Calculates U-234, U-235, and U-238 weight fractions based on U-235 enrichment,
+        then converts them to mole fractions.
+        
+        Uses the standard correlation for fresh fuel (typical in SCALE/ASTM):
+        w_234 = 0.0089 * w_235
+        w_238 = 1.0 - w_235 - w_234
+        """
+        w235 = processed_enrichments.pop('U235_enr')
+        if not (0 <= w235 <= 1):
+            raise ValueError("U-235 enrichment must be between 0 and 1.")
+
+        # Correlation for U-234 in fresh enriched uranium
+        w234 = 0.0089 * w235
+        w238 = 1.0 - w235 - w234
+        
+        # Handle edge case of very high enrichment where sum might exceed 1.0
+        if w238 < 0:
+            total_minor = w235 + w234
+            w235 /= total_minor
+            w234 /= total_minor
+            w238 = 0.0
+
+        # Retrieve isotopic masses
+        m234 = self.ISOTOPIC_DATA['u'][234]['mass']
+        m235 = self.ISOTOPIC_DATA['u'][235]['mass']
+        m238 = self.ISOTOPIC_DATA['u'][238]['mass']
+
+        # Convert weight fractions to mole fractions
+        n234 = w234 / m234
+        n235 = w235 / m235
+        n238 = w238 / m238
+        
+        total_moles = n234 + n235 + n238
+
+        processed_enrichments['U'] = {
+            234: n234 / total_moles,
+            235: n235 / total_moles,
+            238: n238 / total_moles
+        }
 
     @classmethod
     def from_atom_densities(cls, atom_densities: dict, valency_estimate_type: str = 'upper'):
