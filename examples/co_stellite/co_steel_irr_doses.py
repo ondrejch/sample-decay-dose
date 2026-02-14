@@ -5,7 +5,7 @@ Ondrej Chvala <ochvala@utexas.edu>
 """
 
 from sample_decay_dose import SampleDose
-from sample_decay_dose.SampleDose import extract_flux_values
+from sample_decay_dose.utils import extract_flux_values
 
 import os
 import re

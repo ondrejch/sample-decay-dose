@@ -4,8 +4,8 @@ Irradiation of SS-316 with a specified wt% of cobalt in a steel pipe, handling a
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
-from sample_decay_dose import SampleDose
-from sample_decay_dose.SampleDose import extract_flux_values
+from sample_decay_dose import SampleDose, utils
+from sample_decay_dose.utils import extract_flux_values
 
 import os
 import re
@@ -67,7 +67,7 @@ for decay_days in np.geomspace(1. / 24., 360, 60):
 
     mavric = SampleDose.HandlingContactDoseEstimatorGenericTank(irr)
     mavric.cyl_r = pipe1_ir
-    mavric.sample_h2 = SampleDose.get_cyl_h(mavric.sample_volume, mavric.cyl_r)
+    mavric.sample_h2 = utils.get_cyl_h(mavric.sample_volume, mavric.cyl_r)
     mavric.layers_mats = [SampleDose.ADENS_SS316H_COLD]
     mavric.layers_thicknesses = [pipe1_thick]
     mavric.layers_temperature_K = [300.0]

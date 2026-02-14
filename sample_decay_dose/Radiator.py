@@ -1,8 +1,8 @@
 import os
 import numpy as np
 
-from sample_decay_dose.SampleDose import NOW, MAVRIC_NG_XSLIB, Origen, run_scale, atom_dens_for_mavric, \
-    get_f71_positions_index, OrigenFromTriton
+from sample_decay_dose.SampleDose import NOW, MAVRIC_NG_XSLIB, Origen, OrigenFromTriton
+from sample_decay_dose.utils import get_f71_positions_index, run_scale, atom_dens_for_mavric
 from sample_decay_dose.HotCell import HotCellDoses
 from typing import TypedDict
 

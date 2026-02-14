@@ -4,7 +4,7 @@ Example use case of SampleDose - irradiation of FLi7Be
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
-from sample_decay_dose import SampleDose
+from sample_decay_dose import SampleDose, utils
 import numpy as np
 import json5
 
@@ -54,7 +54,7 @@ irr.run_irradiate_decay_sample()
 
 """ Bare sample """
 mavric_bare = SampleDose.HandlingContactDoseEstimatorGenericTank(irr)
-mavric_bare.cyl_r = SampleDose.get_cyl_r(mavric_bare.sample_volume)
+mavric_bare.cyl_r = utils.get_cyl_r(mavric_bare.sample_volume)
 mavric_bare.sample_h2 = mavric_bare.cyl_r
 mavric_bare.layers_mats = []
 mavric_bare.layers_thicknesses = []
@@ -65,7 +65,7 @@ print(mavric_bare.responses)
 
 """ Sample in a 1mm thick steel vial """
 mavric_vial = SampleDose.HandlingContactDoseEstimatorGenericTank(irr)
-mavric_vial.cyl_r = SampleDose.get_cyl_r(mavric_vial.sample_volume)
+mavric_vial.cyl_r = utils.get_cyl_r(mavric_vial.sample_volume)
 mavric_vial.sample_h2 = mavric_vial.cyl_r
 mavric_vial.layers_mats = [SampleDose.ADENS_SS316H_COLD]    # Stainless steel 316
 mavric_vial.layers_thicknesses = [0.1]                      # 1 mm thick
@@ -82,6 +82,3 @@ print(f"Handling gamma dose: {mavric_bare.responses['6']['value'] * 1e3} ± {mav
 print("** Sample in a steel vial **")
 print(f"Contact gamma dose: {mavric_vial.responses['2']['value'] * 1e3} ± {mavric_vial.responses['2']['stdev'] * 1e3} mrem/h")
 print(f"Handling gamma dose: {mavric_vial.responses['6']['value'] * 1e3} ± {mavric_vial.responses['6']['stdev'] * 1e3} mrem/h")
-
-
-

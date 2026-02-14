@@ -1,7 +1,8 @@
 import os
 import re
 
-from sample_decay_dose.SampleDose import NOW, MAVRIC_NG_XSLIB, HandlingContactDoseEstimatorGenericTank, Origen, get_cyl_r
+from sample_decay_dose.SampleDose import NOW, MAVRIC_NG_XSLIB, HandlingContactDoseEstimatorGenericTank, Origen
+from sample_decay_dose.utils import get_cyl_r
 
 
 class HotCellDoses(HandlingContactDoseEstimatorGenericTank):

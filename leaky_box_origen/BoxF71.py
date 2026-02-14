@@ -18,8 +18,9 @@ import numpy as np
 import pandas as pd
 from bisect import bisect_left
 import json5
-from sample_decay_dose.SampleDose import NOW, nicely_print_atom_dens, atom_dens_for_origen, \
-    get_f71_positions_index, get_burned_material_total_mass_dens, get_burned_nuclide_atom_dens, run_scale
+from sample_decay_dose.SampleDose import NOW
+from sample_decay_dose.utils import nicely_print_atom_dens, get_f71_positions_index, get_burned_nuclide_atom_dens, \
+    get_burned_material_total_mass_dens, run_scale, atom_dens_for_origen
 
 PCTperDAY: float = 0.000000115740740741
 

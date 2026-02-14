@@ -9,7 +9,7 @@ import json5
 import numpy as np
 import pandas as pd
 import scipy
-from sample_decay_dose import SampleDose
+from sample_decay_dose import SampleDose, utils
 
 f71_file_name: str = 'ThEIRENE.f71'
 decay_f71_file_name: str = 'decay-u233.f71'
@@ -93,7 +93,7 @@ def read_and_decay():
         thermal_power: float = my_run['power']
         enrichment: str = my_run['enr']
         print(my_f71_file_name)
-        df = SampleDose.get_f71_nuclide_case(my_f71_file_name, 'gram', [13])
+        df = utils.get_f71_nuclide_case(my_f71_file_name, 'gram', [13])
         dt = df.transpose()
         for col in dt.columns:  # remove ' around nuclide names
             dt.rename(columns={col: col.replace("'", "")}, inplace=True)
@@ -112,13 +112,13 @@ def read_and_decay():
               f'total year 1: {runs[my_path]["u233 g in 1MWy"]:.3e} g/MW')
 
         # ORIGEN decay of Pa-233 box
-        last_Pa_pos: int = SampleDose.get_last_position_for_case(my_f71_file_name, 13)
+        last_Pa_pos: int = utils.get_last_position_for_case(my_f71_file_name, 13)
         # print(last_Pa_pos)
         with open(os.path.join(my_path, decay_inp_file_name), 'w') as f:    # write ORIGEN decay deck
             f.write(decay_Pa_origen_deck(last_Pa_pos))
         os.chdir(my_path)
-        SampleDose.run_scale(decay_inp_file_name)       # run ORIGEN decay in the correct directory
-        df = SampleDose.get_f71_nuclide_case(decay_f71_file_name, 'becq', [1])
+        utils.run_scale(decay_inp_file_name)       # run ORIGEN decay in the correct directory
+        df = utils.get_f71_nuclide_case(decay_f71_file_name, 'becq', [1])
         # print(df, os.getcwd(), os.path.exists(decay_f71_file_name), decay_f71_file_name)
         os.chdir(cwd)
 

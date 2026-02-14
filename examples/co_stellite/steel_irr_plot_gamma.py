@@ -9,7 +9,7 @@ import re
 import numpy as np
 import json5
 import matplotlib.pyplot as plt
-from sample_decay_dose.SampleDose import extract_flux_values
+from sample_decay_dose.utils import extract_flux_values
 
 scale_out: str = os.path.expanduser('~/0.02/80-upper-encl-stellite/01-triton/msrr.out')
 flux_data = extract_flux_values(scale_out)

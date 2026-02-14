@@ -5,6 +5,7 @@ import sys
 import types
 
 import sample_decay_dose.SampleDose as sd
+from sample_decay_dose import utils
 
 
 def ensure_dummy_isotopes():
@@ -28,60 +29,60 @@ class TestSampleDoseFunctions(unittest.TestCase):
 
     def test_scale_adens(self):
         adens = {'h-1': 1.0, 'o-16': 0.5}
-        self.assertEqual(sd.scale_adens(adens, 2.0), {'h-1': 2.0, 'o-16': 1.0})
-        self.assertEqual(sd.scale_adens(adens), adens)
+        self.assertEqual(utils.scale_adens(adens, 2.0), {'h-1': 2.0, 'o-16': 1.0})
+        self.assertEqual(utils.scale_adens(adens), adens)
 
     def test_get_rho_from_atom_density(self):
         ensure_dummy_isotopes()
         adens = {'h-1': 0.04, 'o-16': 0.02}
         expected = (1.007 * 0.04 + 15.995 * 0.02) * 1.660539
-        self.assertAlmostEqual(sd.get_rho_from_atom_density(adens), expected, places=5)
+        self.assertAlmostEqual(utils.get_rho_from_atom_density(adens), expected, places=5)
 
     def test_get_cyl_r(self):
         V = 10.0
-        self.assertAlmostEqual(sd.get_cyl_r(V), (V / (2.0 * np.pi)) ** (1 / 3))
+        self.assertAlmostEqual(utils.get_cyl_r(V), (V / (2.0 * np.pi)) ** (1 / 3))
 
     def test_get_cyl_r_4_1(self):
         V = 10.0
-        self.assertAlmostEqual(sd.get_cyl_r_4_1(V), (V / (4.0 * np.pi)) ** (1 / 3))
+        self.assertAlmostEqual(utils.get_cyl_r_4_1(V), (V / (4.0 * np.pi)) ** (1 / 3))
 
     def test_get_fill_height_4_1(self):
         cyl_V = 100.0
         fill_V = 50.0
-        r = sd.get_cyl_r_4_1(cyl_V)
+        r = utils.get_cyl_r_4_1(cyl_V)
         expected = fill_V / (np.pi * r ** 2)
-        self.assertAlmostEqual(sd.get_fill_height_4_1(fill_V, cyl_V), expected)
+        self.assertAlmostEqual(utils.get_fill_height_4_1(fill_V, cyl_V), expected)
         with self.assertRaises(ValueError):
-            sd.get_fill_height_4_1(200.0, cyl_V)
+            utils.get_fill_height_4_1(200.0, cyl_V)
 
     def test_get_cyl_h(self):
         V = 100.0
         r = 5.0
         expected = V / (np.pi * r ** 2)
-        self.assertAlmostEqual(sd.get_cyl_h(V, r), expected)
+        self.assertAlmostEqual(utils.get_cyl_h(V, r), expected)
         with self.assertRaises(ValueError):
-            sd.get_cyl_h(10.0, 0.0)
+            utils.get_cyl_h(10.0, 0.0)
         with self.assertRaises(ValueError):
-            sd.get_cyl_h(10.0, -1.0)
+            utils.get_cyl_h(10.0, -1.0)
 
     @patch('sample_decay_dose.SampleDose.subprocess.run')
     def test_run_scale_success(self, mock_run):
         proc = MagicMock()
         proc.stdout.decode.return_value = "All good\n"
         mock_run.return_value = proc
-        self.assertTrue(sd.run_scale('deck.inp'))
+        self.assertTrue(utils.run_scale('deck.inp'))
 
     @patch('sample_decay_dose.SampleDose.subprocess.run')
     def test_run_scale_failure(self, mock_run):
         proc = MagicMock()
         proc.stdout.decode.return_value = "Error: something failed\n"
         mock_run.return_value = proc
-        self.assertFalse(sd.run_scale('deck.inp'))
+        self.assertFalse(utils.run_scale('deck.inp'))
 
     def test_atom_dens_for_origen(self):
         adens = {'h-1': 1.0, 'o-16': 0.5}
         expected = 'h-1 = 1.0 \no-16 = 0.5 \n'
-        self.assertEqual(sd.atom_dens_for_origen(adens), expected)
+        self.assertEqual(utils.atom_dens_for_origen(adens), expected)
 
     def test_atom_dens_for_mavric(self):
         adens = {'h-1': 1.0, 'o-16': 0.5, 'u-235m': 0.1}
@@ -90,7 +91,7 @@ class TestSampleDoseFunctions(unittest.TestCase):
             'o-16 1 0 0.5 873.0 end\n'
             'u-235 1 0 0.1 873.0 end\n'
         )
-        self.assertEqual(sd.atom_dens_for_mavric(adens), expected)
+        self.assertEqual(utils.atom_dens_for_mavric(adens), expected)
 
     @patch('sample_decay_dose.SampleDose.subprocess.run')
     def test_get_f71_positions_index(self, mock_run):
@@ -100,7 +101,7 @@ class TestSampleDoseFunctions(unittest.TestCase):
             b"2 1.0 1.0 1.0 1.0 1.0 1.0 2 1 2 1\n"
             b"state definition present\n"
         )
-        idx = sd.get_f71_positions_index('x.f71')
+        idx = utils.get_f71_positions_index('x.f71')
         self.assertIn(1, idx)
         self.assertIn(2, idx)
         # case is token 8 (zero-based) -> '1' for the second line
@@ -115,7 +116,7 @@ class TestSampleDoseFunctions(unittest.TestCase):
             b"U235,0,0,0,0,1.20e-3\n"
             b"Pu239,0,0,0,0,5.00e-5\n"
         )
-        dens = sd.get_burned_nuclide_atom_dens('x.f71', 5)
+        dens = utils.get_burned_nuclide_atom_dens('x.f71', 5)
         self.assertAlmostEqual(dens['u-235'], 1.20e-3)
         self.assertAlmostEqual(dens['pu-239'], 5.00e-5)
 

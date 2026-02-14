@@ -4,7 +4,7 @@ Example use case of SampleDose -- calculate decay doses of sample as a function 
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
-from sample_decay_dose import SampleDose
+from sample_decay_dose import SampleDose, utils
 import numpy as np
 import pandas as pd
 import json5
@@ -38,7 +38,7 @@ def mavric_process(case: tuple[float, float]) -> dict:
     # Calculate dose next to the tank
     mavric = SampleDose.DoseEstimatorGenericTank(origen_decay)
     mavric.cyl_r = my_inner_r
-    mavric.sample_h2 = SampleDose.get_cyl_h(my_volume, my_inner_r)
+    mavric.sample_h2 = utils.get_cyl_h(my_volume, my_inner_r)
     # Material composition of additional layers, in dictionaries of atom densities
     mavric.layers_mats = [SampleDose.ADENS_SS316H_HOT, SampleDose.ADENS_KAOWOOL_COLD, SampleDose.ADENS_SS316H_COLD,
                           SampleDose.ADENS_CONCRETE_COLD]
@@ -63,7 +63,7 @@ def mavric_process(case: tuple[float, float]) -> dict:
     return _res
 
 
-my_atom_density: dict = SampleDose.read_cvs_atom_dens(my_atoms_file, my_volume)
+my_atom_density: dict = utils.read_cvs_atom_dens(my_atoms_file, my_volume)
 print_atoms()
 origen_decay = SampleDose.OrigenDecayBox(my_atom_density, my_volume)  # This needs to be global scope
 

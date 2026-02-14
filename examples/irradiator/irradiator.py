@@ -4,7 +4,7 @@ Wastewater irradiator using SampleDose - irradiation of SS316
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
-from sample_decay_dose import SampleDose
+from sample_decay_dose import SampleDose, utils
 import os
 import shutil
 import numpy as np
@@ -96,14 +96,14 @@ class IrradiatorDose(SampleDose.Origen):
         os.chdir(self.cwd + '/' + self.case_dir)
 
         with open(self.IRRPLATE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
-            f.write(SampleDose.atom_dens_for_mavric(self.irr_plate_atom_dens, 1, self.irr_plate_temperature_K))
+            f.write(utils.atom_dens_for_mavric(self.irr_plate_atom_dens, 1, self.irr_plate_temperature_K))
 
         with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRIC input deck
             f.write(self.mavric_deck())
 
         if self.debug > 0:
             print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
-        SampleDose.run_scale(self.MAVRIC_input_file_name)
+        utils.run_scale(self.MAVRIC_input_file_name)
         os.chdir(self.cwd)
 
     def mavric_deck(self) -> str:
@@ -246,7 +246,7 @@ end
 
 def run_analysis():
     # Irradiator plate
-    plate_density: float = SampleDose.get_rho_from_atom_density(SS316_Co1ppm_ADENS_COLD)  # [g/cm3]
+    plate_density: float = utils.get_rho_from_atom_density(SS316_Co1ppm_ADENS_COLD)  # [g/cm3]
     plate_size: float = 100.0  # [cm]
     plate_height: float = 2.54  # [cm]
     plate_mass: float = square_plate_volume(plate_size, plate_height) * plate_density  # [g]
