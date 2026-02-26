@@ -176,10 +176,11 @@ class FluorideSalt:
         valence_mapper = ValencyMapper(estimate_type=valency_estimate_type)
 
         for nuclide, density in atom_densities.items():
-            match = re.match(r"([A-Z][a-z]*)-(\d+)", nuclide)
+            match = re.match(r"([A-Za-z][a-z]*)-(\d+)(m?)$", nuclide)
             if not match:
                 raise ValueError(f"Could not parse nuclide name: '{nuclide}'")
-            symbol, mass_num = match.groups()
+            symbol_raw, mass_num, _ = match.groups()
+            symbol = symbol_raw[0].upper() + symbol_raw[1:].lower()
             mass_num = int(mass_num)
 
             elemental_densities[symbol] += density

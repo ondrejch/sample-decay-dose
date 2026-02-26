@@ -226,23 +226,23 @@ end
             raise FileNotFoundError(
                 "Expected decayed sample MAVRIC output file: \n" + self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name)
         os.chdir(self.cwd + '/' + self.case_dir)
-
-        with open(self.MAVRIC_out_file_name, 'r') as f:
-            d: str = f.read()
-        rs: list = re.findall(r'Point Detector (\d).  (\w+) detector\n.*\n.*\n.*\n.*\n.*\s+response (\d)\s+'
-                              r'([+-]?\d+\.\d+[Ee]?[+-]?\d+)\s+([+-]?\d+\.\d+[Ee]?[+-]?\d+)?'
-                              r'\s+([+-]?\d+\.\d+[Ee]?[+-]?\d+)?', d)
-        self.responses = {
-            t[0]: {'particle': t[1], 'pid': t[2], 'value': float(t[3]), 'stdev': 0.0 if t[4] == '' else float(t[4])} for
-            t in rs}
-
-        os.chdir(self.cwd)
+        try:
+            with open(self.MAVRIC_out_file_name, 'r') as f:
+                d: str = f.read()
+            rs: list = re.findall(r'Point Detector (\d).  (\w+) detector\n.*\n.*\n.*\n.*\n.*\s+response (\d)\s+'
+                                  r'([+-]?\d+\.\d+[Ee]?[+-]?\d+)\s+([+-]?\d+\.\d+[Ee]?[+-]?\d+)?'
+                                  r'\s+([+-]?\d+\.\d+[Ee]?[+-]?\d+)?', d)
+            self.responses = {
+                t[0]: {'particle': t[1], 'pid': t[2], 'value': float(t[3]), 'stdev': 0.0 if t[4] == '' else float(t[4])}
+                for t in rs}
+        finally:
+            os.chdir(self.cwd)
         if self.debug > 3:
             print(self.responses)
 
     def print_response(self):
         """ Prints dose responses """
-        if self.responses is not {}:
+        if self.responses:
             r1: dict = self.responses['1']  # Neutron dose, contact
             r2: dict = self.responses['2']  # Photon dose, contact
             r5: dict = self.responses['5']  # Neutron dose, handling (30cm)

@@ -31,12 +31,13 @@ def get_positions_index(f71file: str) -> dict:
     skip_data = ['pos', '(-)']  # sip records starting with this
     end_data = 'state definition present'  # stop reading after reaching this
     for line in output:
+        if end_data in line:
+            break
         data = line.split()
+        if not data:
+            continue
         if data[0].strip() in skip_data:
             continue
-        if line.count(end_data) > 0:
-            break
-        # print(data)
         f71_idx[int(data[0])] = {
             'time': data[1],
             'power': data[2],
@@ -55,7 +56,7 @@ def get_positions_index(f71file: str) -> dict:
 def get_burned_material_atom_dens(f71file: str, position: int) -> dict:
     """ Read atom density of nuclides from SCALE's F71 file """
     output = subprocess.run(
-        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=atom", "-idform='{:Ee}{:AAA}{:m}'",
+        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=atom", "-idform={:Ee}{:AAA}{:m}",
          f71file], capture_output=True)
     output = output.stdout.decode().split("\n")
     densities = {}  # densities[nuclide] = (density at position of f71 file)
@@ -83,7 +84,7 @@ def get_burned_material_atom_dens(f71file: str, position: int) -> dict:
 def get_burned_material_total_mass_dens(f71file: str, position: int) -> float:
     """ Read mass density of nuclides from SCALE's F71 file, calculate total \rho [g/cm^3] """
     output = subprocess.run(
-        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=gper", "-idform='{:Ee}{:AAA}{:m}'",
+        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=gper", "-idform={:Ee}{:AAA}{:m}",
          f71file], capture_output=True)
     output = output.stdout.decode().split("\n")
     my_rho: float = 0
@@ -108,7 +109,7 @@ def run_scale(deck_file: str):
     """ Run a SCALE deck """
     scale_out = subprocess.run([f"{SCALE_bin_path}/scalerte", "-m", deck_file], capture_output=True)
     scale_out = scale_out.stdout.decode().split("\n")
-    if scale_out.count('Error') > 0:
+    if any("error" in line.lower() for line in scale_out):
         print('Failed run: ', deck_file)
         return False
     else:
@@ -258,32 +259,45 @@ class DoseEstimator:
             raise FileNotFoundError("Expected decayed sample MAVRIC output file: \n" +
                                     self.cwd + '/' + self.case_dir + '/' + self.DECAYED_SAMPLE_out_file_name)
         os.chdir(self.cwd + '/' + self.case_dir)
+        try:
+            tally_sep: str = 'Final Tally Results Summary'
+            is_in_tally: bool = False
+            response_re = re.compile(
+                r'\bresponse\s+(\d+)\s+([+-]?\d+(?:\.\d+)?(?:[Ee][+-]?\d+)?)\s+([+-]?\d+(?:\.\d+)?(?:[Ee][+-]?\d+)?)?'
+            )
 
-        tally_sep: str = 'Final Tally Results Summary'
-        is_in_tally: bool = False
+            self.responses = {}
+            with open(self.DECAYED_SAMPLE_out_file_name, 'r') as f:
+                for line in f.read().splitlines():
+                    if tally_sep in line:
+                        is_in_tally = True
+                        continue
+                    if not is_in_tally:
+                        continue
+                    m = response_re.search(line)
+                    if not m:
+                        continue
+                    rid: str = m.group(1)
+                    value: float = float(m.group(2))
+                    stdev: float = 0.0 if m.group(3) in (None, '') else float(m.group(3))
+                    self.responses[rid] = {'value': value, 'stdev': stdev}
 
-        with open(self.DECAYED_SAMPLE_out_file_name, 'r') as f:
-            for line in f.read().splitlines():
-                if line.count(tally_sep) > 0:
-                    is_in_tally = True
-                if is_in_tally:
-                    if line.count('response') == 1:
-                        s = line.split()
-                        if float(s[2]) == 0:
-                            self.responses[s[1]] = {'value': float(s[2]), 'stdev': 0.0}
-                        else:
-                            self.responses[s[1]] = {'value': float(s[2]), 'stdev': float(s[3])}
-
-        self.beta_over_gamma = self.get_beta_to_gamma()
-        self.responses['3'] = {'value': self.beta_over_gamma * float(s[2]), 'stdev': self.beta_over_gamma * float(s[3])}
-
-        os.chdir(self.cwd)
+            self.beta_over_gamma = self.get_beta_to_gamma()
+            gamma_response: dict | None = self.responses.get('2')
+            if gamma_response is None:
+                raise RuntimeError(f'Failed to parse photon response from {self.DECAYED_SAMPLE_out_file_name}')
+            self.responses['3'] = {
+                'value': self.beta_over_gamma * gamma_response['value'],
+                'stdev': self.beta_over_gamma * gamma_response['stdev']
+            }
+        finally:
+            os.chdir(self.cwd)
         if self.debug > 3:
             print(self.responses)
 
     def print_response(self):
         """ Prints dose responses """
-        if self.responses is not {}:
+        if self.responses:
             r1: dict = self.responses['1']
             r2: dict = self.responses['2']
             r3: dict = self.responses['3']

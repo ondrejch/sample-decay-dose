@@ -65,14 +65,14 @@ class TestSampleDoseFunctions(unittest.TestCase):
         with self.assertRaises(ValueError):
             utils.get_cyl_h(10.0, -1.0)
 
-    @patch('sample_decay_dose.SampleDose.subprocess.run')
+    @patch('sample_decay_dose.utils.subprocess.run')
     def test_run_scale_success(self, mock_run):
         proc = MagicMock()
         proc.stdout.decode.return_value = "All good\n"
         mock_run.return_value = proc
         self.assertTrue(utils.run_scale('deck.inp'))
 
-    @patch('sample_decay_dose.SampleDose.subprocess.run')
+    @patch('sample_decay_dose.utils.subprocess.run')
     def test_run_scale_failure(self, mock_run):
         proc = MagicMock()
         proc.stdout.decode.return_value = "Error: something failed\n"
@@ -93,7 +93,7 @@ class TestSampleDoseFunctions(unittest.TestCase):
         )
         self.assertEqual(utils.atom_dens_for_mavric(adens), expected)
 
-    @patch('sample_decay_dose.SampleDose.subprocess.run')
+    @patch('sample_decay_dose.utils.subprocess.run')
     def test_get_f71_positions_index(self, mock_run):
         # Tokens: id time power flux fluence energy initialhm libpos case step DCGNAB
         mock_run.return_value.stdout = (
@@ -109,7 +109,7 @@ class TestSampleDoseFunctions(unittest.TestCase):
         # optional: also check libpos for clarity
         self.assertEqual(idx[2]['libpos'], '2')
 
-    @patch('sample_decay_dose.SampleDose.subprocess.run')
+    @patch('sample_decay_dose.utils.subprocess.run')
     def test_get_burned_nuclide_atom_dens(self, mock_run):
         mock_run.return_value.stdout = (
             b"case,1,2,3,4,5\n"

@@ -10,14 +10,13 @@ from datetime import datetime
 import numpy as np
 from bisect import bisect_left
 from sample_decay_dose.read_opus import integrate_opus
+from sample_decay_dose.constants import SCALE_bin_path, ATOM_DENS_MINIMUM
 from sample_decay_dose.utils import nicely_print_atom_dens, get_rho_from_atom_density, scale_adens, \
     get_f71_positions_index, get_last_position_for_case, get_burned_nuclide_atom_dens, get_burned_nuclide_data, \
     get_burned_material_total_mass_dens, get_F33_num_sets, get_cyl_r, get_cyl_r_4_1, get_fill_height_4_1, get_cyl_h, \
     run_scale, atom_dens_for_origen, atom_dens_for_mavric
 
 NOW: str = datetime.now().replace(microsecond=0).isoformat()
-SCALE_bin_path: str = os.getenv('SCALE_BIN', '/opt/scale6.3.2-mpi/bin/')
-ATOM_DENS_MINIMUM: float = 1e-60
 MAVRIC_NG_XSLIB: str = 'v7.1-28n19g'
 DAY_IN_SECONDS: float = 24.0 * 60.0 * 60.0
 
@@ -155,21 +154,22 @@ class OrigenFromTriton(Origen):
         """
         if not os.path.exists(self.case_dir):
             os.mkdir(self.case_dir)
-        os.chdir(self.case_dir)
+        os.chdir(os.path.join(self.cwd, self.case_dir))
+        try:
+            with open(self.SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
+                f.write(atom_dens_for_origen(self.burned_atom_dens))
 
-        with open(self.SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
-            f.write(atom_dens_for_origen(self.burned_atom_dens))
+            with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
+                f.write(self.origen_deck())
 
-        with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
-            f.write(self.origen_deck())
+            if self.debug > 0:
+                print(f'ORIGEN: decaying sample for {self.SAMPLE_DECAY_days} days')
+                print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
+            run_scale(self.ORIGEN_input_file_name)
 
-        if self.debug > 0:
-            print(f'ORIGEN: decaying sample for {self.SAMPLE_DECAY_days} days')
-            print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
-        run_scale(self.ORIGEN_input_file_name)
-
-        self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
-        os.chdir(self.cwd)
+            self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
+        finally:
+            os.chdir(self.cwd)
         if self.debug > 2:
             # print(list(self.decayed_atom_dens.items())[:25])
             nicely_print_atom_dens(self.decayed_atom_dens)
@@ -378,12 +378,13 @@ class OrigenIrradiation(Origen):
             atom_dens = ADENS_SS316H_HOT
         if not os.path.exists(self.case_dir):
             os.mkdir(self.case_dir)
-        os.chdir(self.case_dir)
-
-        self.sample_density = get_rho_from_atom_density(atom_dens)
-        with open(self.SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write at-dens input for Origen irradiation
-            f.write(atom_dens_for_origen(atom_dens))
-        os.chdir(self.cwd)
+        os.chdir(os.path.join(self.cwd, self.case_dir))
+        try:
+            self.sample_density = get_rho_from_atom_density(atom_dens)
+            with open(self.SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write at-dens input for Origen irradiation
+                f.write(atom_dens_for_origen(atom_dens))
+        finally:
+            os.chdir(self.cwd)
 
     def run_irradiate_decay_sample(self):
         """  Writes Origen input file, runs Origen to irradiate and decay it, and Opus to plot spectra.
@@ -391,19 +392,20 @@ class OrigenIrradiation(Origen):
         """
         if not os.path.exists(self.case_dir + '/' + self.SAMPLE_ATOM_DENS_file_name_Origen):
             raise FileNotFoundError("Write atom density for Origen first")
-        os.chdir(self.case_dir)
+        os.chdir(os.path.join(self.cwd, self.case_dir))
+        try:
+            with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
+                f.write(self.origen_deck())
 
-        with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
-            f.write(self.origen_deck())
+            if self.debug > 0:
+                print(f'ORIGEN: burning sample for {self.irradiate_days} days at {self.irradiate_flux} n/cm2/s, '
+                      f'then decaying for {self.SAMPLE_DECAY_days} days')
+                print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
+            run_scale(self.ORIGEN_input_file_name)
 
-        if self.debug > 0:
-            print(f'ORIGEN: burning sample for {self.irradiate_days} days at {self.irradiate_flux} n/cm2/s, '
-                  f'then decaying for {self.SAMPLE_DECAY_days} days')
-            print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
-        run_scale(self.ORIGEN_input_file_name)
-
-        self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
-        os.chdir(self.cwd)
+            self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
+        finally:
+            os.chdir(self.cwd)
         if self.debug > 2:
             # print(list(self.decayed_atom_dens.items())[:25])
             nicely_print_atom_dens(self.decayed_atom_dens)
@@ -534,12 +536,13 @@ class OrigenDecayBox(Origen):
             raise ValueError(f'Adens is None or Volume is zero: {self.SAMPLE_ATOM_DENSITY}, {self.sample_volume}')
         if not os.path.exists(self.case_dir):
             os.mkdir(self.case_dir)
-        os.chdir(self.case_dir)
-
-        self.sample_density = get_rho_from_atom_density(self.SAMPLE_ATOM_DENSITY)
-        with open(self.SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write at-dens input for Origen irradiation
-            f.write(atom_dens_for_origen(self.SAMPLE_ATOM_DENSITY))
-        os.chdir(self.cwd)
+        os.chdir(os.path.join(self.cwd, self.case_dir))
+        try:
+            self.sample_density = get_rho_from_atom_density(self.SAMPLE_ATOM_DENSITY)
+            with open(self.SAMPLE_ATOM_DENS_file_name_Origen, 'w') as f:  # write at-dens input for Origen irradiation
+                f.write(atom_dens_for_origen(self.SAMPLE_ATOM_DENSITY))
+        finally:
+            os.chdir(self.cwd)
 
     def run_decay_sample(self):
         """  Writes Origen input file, runs Origen to decay it, and Opus to plot spectra.
@@ -547,19 +550,20 @@ class OrigenDecayBox(Origen):
         """
         if not os.path.exists(self.case_dir + '/' + self.SAMPLE_ATOM_DENS_file_name_Origen):
             raise FileNotFoundError("Write atom density for Origen first")
-        os.chdir(self.case_dir)
+        os.chdir(os.path.join(self.cwd, self.case_dir))
+        try:
+            with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
+                f.write(self.origen_deck())
 
-        with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
-            f.write(self.origen_deck())
+            if self.debug > 0:
+                print(f'ORIGEN: decaying for {self.SAMPLE_DECAY_days} days')
+                print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
+            run_scale(self.ORIGEN_input_file_name)
 
-        if self.debug > 0:
-            print(f'ORIGEN: decaying for {self.SAMPLE_DECAY_days} days')
-            print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
-        run_scale(self.ORIGEN_input_file_name)
-
-        print(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
-        self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
-        os.chdir(self.cwd)
+            print(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
+            self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
+        finally:
+            os.chdir(self.cwd)
         if self.debug > 2:
             # print(list(self.decayed_atom_dens.items())[:25])
             nicely_print_atom_dens(self.decayed_atom_dens)
@@ -692,22 +696,23 @@ class DoseEstimator:
                 "Expected decayed sample F71 file: \n" + self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
         if not os.path.exists(self.case_dir):
             os.mkdir(self.case_dir)
-        os.chdir(self.case_dir)
+        os.chdir(os.path.join(self.cwd, self.case_dir))
+        try:
+            shutil.copy2(self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name,
+                         self.cwd + '/' + self.case_dir)
+            os.chdir(self.cwd + '/' + self.case_dir)
 
-        shutil.copy2(self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name,
-                     self.cwd + '/' + self.case_dir)
-        os.chdir(self.cwd + '/' + self.case_dir)
+            with open(self.SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
+                f.write(atom_dens_for_mavric(self.decayed_atom_dens, 1, self.sample_temperature_K))
 
-        with open(self.SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
-            f.write(atom_dens_for_mavric(self.decayed_atom_dens, 1, self.sample_temperature_K))
+            with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRIC input deck
+                f.write(self.mavric_deck())
 
-        with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRIC input deck
-            f.write(self.mavric_deck())
-
-        if self.debug > 0:
-            print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
-        run_scale(self.MAVRIC_input_file_name)
-        os.chdir(self.cwd)
+            if self.debug > 0:
+                print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
+            run_scale(self.MAVRIC_input_file_name)
+        finally:
+            os.chdir(self.cwd)
 
     def get_responses(self):
         """ Reads over the MAVRIC output and returns responses for rem/h doses """
@@ -715,36 +720,44 @@ class DoseEstimator:
             raise FileNotFoundError(
                 "Expected decayed sample MAVRIC output file: \n" + self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name)
         os.chdir(self.cwd + '/' + self.case_dir)
+        try:
+            tally_sep: str = 'Final Tally Results Summary'
+            is_in_tally: bool = False
+            response_re = re.compile(
+                r'\bresponse\s+(\d+)\s+([+-]?\d+(?:\.\d+)?(?:[Ee][+-]?\d+)?)\s+([+-]?\d+(?:\.\d+)?(?:[Ee][+-]?\d+)?)?'
+            )
 
-        tally_sep: str = 'Final Tally Results Summary'
-        is_in_tally: bool = False
+            self.responses = {}
+            with open(self.MAVRIC_out_file_name, 'r') as f:
+                for line in f.read().splitlines():
+                    if tally_sep in line:
+                        is_in_tally = True
+                        continue
+                    if not is_in_tally:
+                        continue
+                    m = response_re.search(line)
+                    if not m:
+                        continue
+                    rid: str = m.group(1)
+                    value: float = float(m.group(2))
+                    stdev: float = 0.0 if m.group(3) in (None, '') else float(m.group(3))
+                    self.responses[rid] = {'value': value, 'stdev': stdev}
 
-        s: list[str] = ['']
-        with open(self.MAVRIC_out_file_name, 'r') as f:
-            for line in f.read().splitlines():
-                if line.count(tally_sep) > 0:
-                    is_in_tally = True
-                if is_in_tally:
-                    if line.count('response') == 1:
-                        s = line.split()
-                        if float(s[2]) == 0:
-                            self.responses[s[1]] = {'value': float(s[2]), 'stdev': 0.0}
-                        else:
-                            self.responses[s[1]] = {'value': float(s[2]), 'stdev': float(s[3])}
-
-        if not s:  # This should handle MONACO crashes
-            s[1] = -1.0
-            s[2] = -1.0
-            s[3] = -1.0
-        self.responses['3'] = {'value': self.beta_over_gamma * float(s[2]), 'stdev': self.beta_over_gamma * float(s[3])}
-
-        os.chdir(self.cwd)
+            gamma_response: dict | None = self.responses.get('2')
+            if gamma_response is None:
+                raise RuntimeError(f'Failed to parse photon response from {self.MAVRIC_out_file_name}')
+            self.responses['3'] = {
+                'value': self.beta_over_gamma * gamma_response['value'],
+                'stdev': self.beta_over_gamma * gamma_response['stdev']
+            }
+        finally:
+            os.chdir(self.cwd)
         if self.debug > 3:
             print(self.responses)
 
     def print_response(self):
         """ Prints dose responses """
-        if self.responses is not {}:
+        if self.responses:
             r1: dict = self.responses['1']
             r2: dict = self.responses['2']
             r3: dict = self.responses['3']
@@ -920,24 +933,25 @@ class DoseEstimatorSquareTank(DoseEstimator):
                 "Expected decayed sample F71 file: \n" + self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
         if not os.path.exists(self.case_dir):
             os.mkdir(self.case_dir)
-        os.chdir(self.case_dir)
+        os.chdir(os.path.join(self.cwd, self.case_dir))
+        try:
+            shutil.copy2(self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name,
+                         self.cwd + '/' + self.case_dir)
+            os.chdir(self.cwd + '/' + self.case_dir)
 
-        shutil.copy2(self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name,
-                     self.cwd + '/' + self.case_dir)
-        os.chdir(self.cwd + '/' + self.case_dir)
+            with open(self.SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
+                f.write(atom_dens_for_mavric(self.decayed_atom_dens, 1, self.sample_temperature_K))
+                for k in range(len(self.layers_mats)):
+                    f.write(atom_dens_for_mavric(self.layers_mats[k], k + 10, self.layers_temperature_K[k]))
 
-        with open(self.SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
-            f.write(atom_dens_for_mavric(self.decayed_atom_dens, 1, self.sample_temperature_K))
-            for k in range(len(self.layers_mats)):
-                f.write(atom_dens_for_mavric(self.layers_mats[k], k + 10, self.layers_temperature_K[k]))
+            with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
+                f.write(self.mavric_deck())
 
-        with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
-            f.write(self.mavric_deck())
-
-        if self.debug > 0:
-            print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
-        run_scale(self.MAVRIC_input_file_name, nmpi)
-        os.chdir(self.cwd)
+            if self.debug > 0:
+                print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
+            run_scale(self.MAVRIC_input_file_name, nmpi)
+        finally:
+            os.chdir(self.cwd)
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
@@ -1676,7 +1690,7 @@ end
 
     def print_response(self):
         """ Prints dose responses """
-        if self.responses is not {}:
+        if self.responses:
             r1: dict = self.responses['1']  # Neutron dose, contact
             r2: dict = self.responses['2']  # Photon dose, contact
             r5: dict = self.responses['5']  # Neutron dose, handling (30cm)
@@ -1711,9 +1725,11 @@ class MHATank(HandlingContactDoseEstimatorGenericTank):
         if self.debug > 2:
             print(f'Initial sample density {self.sample_density} g/cm3')
         os.chdir(self.ORIGEN_dir)
-        sample_gram_dict: dict = get_burned_nuclide_data(self.DECAYED_SAMPLE_F71_file_name,
-                                                         self.DECAYED_SAMPLE_F71_position, 'gram')
-        os.chdir(self.cwd)
+        try:
+            sample_gram_dict: dict = get_burned_nuclide_data(self.DECAYED_SAMPLE_F71_file_name,
+                                                             self.DECAYED_SAMPLE_F71_position, 'gram')
+        finally:
+            os.chdir(self.cwd)
         self.sample_weight = 0.0
         for k,v in sample_gram_dict.items():
             self.sample_weight += v

@@ -84,22 +84,24 @@ class RadiatorBox(HotCellDoses):
                 "Expected decayed sample F71 file: \n" + os.path.join(self.cwd, self.DECAYED_SAMPLE_F71_file_name))
         if not os.path.exists(self.case_dir):
             os.mkdir(self.case_dir)
-        os.chdir(self.case_dir)
-        os.chdir(self.cwd + '/' + self.case_dir)
+        os.chdir(os.path.join(self.cwd, self.case_dir))
+        try:
+            os.chdir(self.cwd + '/' + self.case_dir)
 
-        with open(self.SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
-            f.write(atom_dens_for_mavric(self.origen_from_triton.burned_atom_dens, 1, self.sample_temperature_K))
-            for k in range(len(self.layers_mats)):
-                f.write(atom_dens_for_mavric(self.layers_mats[k], k + 10, self.layers_temperature_K[k]))
+            with open(self.SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
+                f.write(atom_dens_for_mavric(self.origen_from_triton.burned_atom_dens, 1, self.sample_temperature_K))
+                for k in range(len(self.layers_mats)):
+                    f.write(atom_dens_for_mavric(self.layers_mats[k], k + 10, self.layers_temperature_K[k]))
 
-        with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
-            f.write(self.mavric_deck())
+            with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRICinput deck
+                f.write(self.mavric_deck())
 
-        if self.debug > 0:
-            print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
+            if self.debug > 0:
+                print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
 
-        run_scale(self.MAVRIC_input_file_name, nmpi)
-        os.chdir(self.cwd)
+            run_scale(self.MAVRIC_input_file_name, nmpi)
+        finally:
+            os.chdir(self.cwd)
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
@@ -126,7 +128,7 @@ class RadiatorBox(HotCellDoses):
 
         x_planes: list[float] = list(np.linspace(-box_x2, box_x2, nX))      # boundaries for gridgeometry
         y_planes: list[float] = list(np.linspace(-box_y2, box_y2, self.N_planes_box))
-        z_planes: list[float] = list(np.linspace(-box_z2, box_z2, nX))
+        z_planes: list[float] = list(np.linspace(-box_z2, box_z2, nZ))
 
         x_planes_str: str = " ".join([f' {x:.5f}' for x in x_planes])
         y_planes_str: str = " ".join([f' {x:.5f}' for x in y_planes])

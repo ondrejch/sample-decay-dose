@@ -1,9 +1,36 @@
+import os
 import io
 import re
 import subprocess
 import numpy as np
 import pandas as pd
-from sample_decay_dose.SampleDose import SCALE_bin_path, ATOM_DENS_MINIMUM
+from sample_decay_dose.constants import SCALE_bin_path, ATOM_DENS_MINIMUM
+
+NUCLIDE_RE = re.compile(r"(?P<elem>[a-zA-Z]+)(?P<num>\d+)(?P<meta>m)?")
+
+
+def _format_cases_arg(my_cases) -> str:
+    if my_cases is None:
+        raise ValueError("my_cases cannot be None")
+    if isinstance(my_cases, int):
+        return f'-cases={my_cases}'
+    if not isinstance(my_cases, (list, tuple, set)):
+        raise TypeError(f"Unsupported my_cases type: {type(my_cases).__name__}")
+    case_values = [str(int(case)) for case in my_cases]
+    if not case_values:
+        raise ValueError("my_cases cannot be empty")
+    return f"-cases={','.join(case_values)}"
+
+
+def _as_nuclide_name(raw: str) -> str | None:
+    dummy = re.search(NUCLIDE_RE, raw.strip())
+    if dummy is None:
+        return None
+    elem = dummy.group("elem").lower()
+    num = int(dummy.group("num"))
+    if dummy.group("meta"):
+        return elem + "-" + str(num) + "m"
+    return elem + "-" + str(num)
 
 
 def is_number(s):
@@ -37,14 +64,15 @@ def get_rho_from_atom_density(adens: dict) -> float:
         if v > 0.0:
             iso_name = k.lower()
             iso_name = re.sub(r'm$', '', iso_name)  # strip "m"
-            iso_name = re.sub(r'([a-zA-Z]+)(\d+)', '\g<1>-\g<2>', iso_name)  # add dash
+            iso_name = re.sub(r'([a-zA-Z]+)(\d+)', r'\g<1>-\g<2>', iso_name)  # add dash
             my_rho += rel_iso_mass[iso_name] * v * m_Da * 1e24
     return my_rho
 
 
 def scale_adens(adens: dict, scalef: float = 1.0) -> dict:
     """" Scale atom densities by a factor scalef """
-    assert not np.isnan(scalef)
+    if np.isnan(scalef):
+        raise ValueError("Scale factor cannot be NaN")
     new_adens: dict = {}
     for k, v in adens.items():
         new_adens[k] = v * scalef
@@ -59,18 +87,19 @@ def get_f71_positions_index(f71file: str) -> dict:
     skip_data = ['pos', '(-)']  # sip records starting with this
     end_data = 'state definition present'  # stop reading after reaching this
     for line in output:
+        if end_data in line:
+            break
         data = line.split()
+        if not data:
+            continue
         if data[0].strip() in skip_data:
             continue
-        if line.count(end_data) > 0:
-            break
-        # print(data)
         try:
             f71_idx[int(data[0])] = {'time': data[1], 'power': data[2], 'flux': data[3], 'fluence': data[4],
                 'energy': data[5], 'initialhm': data[6], 'libpos': data[7], 'case': data[8], 'step': data[9],
                 'DCGNAB': data[10]}
-        except (IndexError, ValueError):
-            raise IndexError
+        except (IndexError, ValueError) as exc:
+            raise ValueError(f"Failed parsing F71 index line: '{line}'") from exc
     return f71_idx
 
 
@@ -78,7 +107,10 @@ def get_last_position_for_case(f71file: str, case: int = 1) -> int:
     iii = get_f71_positions_index(f71file)
     if not iii:
         raise RuntimeError("Got no data from get_f71_positions_index()")
-    maxi = max([i for i, rec in iii.items() if rec['case'] == str(case)])
+    candidates = [i for i, rec in iii.items() if rec['case'] == str(case)]
+    if not candidates:
+        raise ValueError(f"Case {case} was not found in {f71file}")
+    maxi = max(candidates)
     return maxi
 
 
@@ -88,9 +120,9 @@ def get_f71_nuclide_case(f71file: str, f71units: str = 'atom', my_cases=None) ->
                 kilo|wpel|watt|mevs|part|inte|ener """
     if my_cases is None:
         my_cases = [1]
-    cases_str: str = f'-cases={my_cases}'
+    cases_str: str = _format_cases_arg(my_cases)
     output = subprocess.run([f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=20", f"-units={f71units}",
-        "-idform='{:Ee}{:AAA}{:m}'", cases_str, f71file], capture_output=True)
+        "-idform={:Ee}{:AAA}{:m}", cases_str, f71file], capture_output=True)
     return pd.read_csv(io.StringIO(output.stdout.decode()), skipinitialspace=True, index_col=0)
 
 
@@ -100,9 +132,9 @@ def get_f71_elements_case(f71file: str, f71units: str = 'atom', my_cases=None) -
                 kilo|wpel|watt|mevs|part|inte|ener """
     if my_cases is None:
         my_cases = [1]
-    cases_str: str = f'-cases={my_cases}'
+    cases_str: str = _format_cases_arg(my_cases)
     output = subprocess.run(
-        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=20", f"-units={f71units}", "-idform='{:Ee}'",
+        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=20", f"-units={f71units}", "-idform={:Ee}",
             cases_str, f71file], capture_output=True)
     return pd.read_csv(io.StringIO(output.stdout.decode()), skipinitialspace=True, index_col=0)
 
@@ -110,32 +142,33 @@ def get_f71_elements_case(f71file: str, f71units: str = 'atom', my_cases=None) -
 def get_burned_nuclide_atom_dens(f71file: str, position: int, my_cases: list[int] = None) -> dict:
     """ Read atom density of nuclides from SCALE's F71 file """
     runlist: list = [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=atom",
-        "-idform='{:Ee}{:AAA}{:m}'", f71file]
+        "-idform={:Ee}{:AAA}{:m}", f71file]
     if my_cases:
-        cases_str: str = f'-cases={my_cases}'
+        cases_str: str = _format_cases_arg(my_cases)
         runlist = [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=atom",
-            "-idform='{:Ee}{:AAA}{:m}'", cases_str, f71file]
+            "-idform={:Ee}{:AAA}{:m}", cases_str, f71file]
 
     output = subprocess.run(runlist, capture_output=True)
     output = output.stdout.decode().split("\n")
     densities = {}  # densities[nuclide] = (density at position of f71 file)
     skip = ["case", "step", "time", "power", "flux", "volume"]
-    regexp = re.compile(r"(?P<elem>[a-zA-Z]+)(?P<num>\d+)(?P<meta>m)?")
     for line in output:
         data = line.split(',')
+        if not data or data[0] == '':
+            continue
         if data[0].strip() in skip:
             continue
-        elif len(data) > 1:
-            dummy = re.search(regexp, data[0].strip())
-            elem = dummy.group("elem").lower()  # convert to all lower cases
-            num = int(dummy.group("num"))  # to cut off leading zeros
-            if dummy.group("meta"):
-                nuclide = elem + "-" + str(num) + "m"  # for metastable isotopes
-            else:
-                nuclide = elem + "-" + str(num)
-            if float(data[position]) > ATOM_DENS_MINIMUM:
-                # The [x] here is what causes the code to return only the densities at position x of the f71 file
-                densities[nuclide] = float(data[position])
+        if len(data) <= position:
+            continue
+        nuclide = _as_nuclide_name(data[0])
+        if nuclide is None:
+            continue
+        try:
+            value = float(data[position])
+        except ValueError:
+            continue
+        if value > ATOM_DENS_MINIMUM:
+            densities[nuclide] = value
     sorted_densities = {k: v for k, v in sorted(densities.items(), key=lambda item: -item[1])}
     return sorted_densities
 
@@ -145,31 +178,32 @@ def get_burned_nuclide_data(f71file: str, position: int, f71units: str = 'atom',
     f71units:   abso|fiss|capt|airm|apel|atom|becq|curi|gamw|gamm|gato|gper|gram|h2om|
                 kilo|wpel|watt|mevs|part|inte|ener """
     runlist: list = [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", f"-units={f71units}",
-        "-idform='{:Ee}{:AAA}{:m}'", f71file]
+        "-idform={:Ee}{:AAA}{:m}", f71file]
     if my_cases:
-        cases_str: str = f'-cases={my_cases}'
+        cases_str: str = _format_cases_arg(my_cases)
         runlist = [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", f"-units={f71units}",
-            "-idform='{:Ee}{:AAA}{:m}'", cases_str, f71file]
+            "-idform={:Ee}{:AAA}{:m}", cases_str, f71file]
     output = subprocess.run(runlist, capture_output=True)
     output = output.stdout.decode().split("\n")
     f71unit_data = {}
     skip = ["case", "step", "time", "power", "flux", "volume"]
-    regexp = re.compile(r"(?P<elem>[a-zA-Z]+)(?P<num>\d+)(?P<meta>m)?")
     for line in output:
         data = line.split(',')
+        if not data or data[0] == '':
+            continue
         if data[0].strip() in skip:
             continue
-        elif len(data) > 1:
-            dummy = re.search(regexp, data[0].strip())
-            elem = dummy.group("elem").lower()  # convert to all lower cases
-            num = int(dummy.group("num"))  # to cut off leading zeros
-            if dummy.group("meta"):
-                nuclide = elem + "-" + str(num) + "m"  # for metastable isotopes
-            else:
-                nuclide = elem + "-" + str(num)
-            if float(data[position]) > ATOM_DENS_MINIMUM:
-                # The [x] here is what causes the code to return only the densities at position x of the f71 file
-                f71unit_data[nuclide] = float(data[position])
+        if len(data) <= position:
+            continue
+        nuclide = _as_nuclide_name(data[0])
+        if nuclide is None:
+            continue
+        try:
+            value = float(data[position])
+        except ValueError:
+            continue
+        if value > ATOM_DENS_MINIMUM:
+            f71unit_data[nuclide] = value
     sorted_f71unit_data = {k: v for k, v in sorted(f71unit_data.items(), key=lambda item: -item[1])}
     return sorted_f71unit_data
 
@@ -177,48 +211,50 @@ def get_burned_nuclide_data(f71file: str, position: int, f71units: str = 'atom',
 def get_single_nuclide_case(f71file: str, position: int, my_nuclide: str) -> float:
     my_nuclide = my_nuclide.lower()
     output = subprocess.run(
-        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=becq", "-idform='{:Ee}{:AAA}{:m}'",
+        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=becq", "-idform={:Ee}{:AAA}{:m}",
             f71file], capture_output=True)
     output = output.stdout.decode().split("\n")
-    # bqs = {}  # densities[nuclide] = (density at position of f71 file)
     skip = ["case", "step", "time", "power", "flux", "volume"]
-    regexp = re.compile(r"(?P<elem>[a-zA-Z]+)(?P<num>\d+)(?P<meta>m)?")
     for line in output:
         data = line.split(',')
+        if not data or data[0] == '':
+            continue
         if data[0].strip() in skip:
             continue
-        elif len(data) > 1:
-            dummy = re.search(regexp, data[0].strip())
-            elem = dummy.group("elem").lower()  # convert to all lower cases
-            num = int(dummy.group("num"))  # to cut off leading zeros
-            if dummy.group("meta"):
-                nuclide = elem + "-" + str(num) + "m"  # for metastable isotopes
-            else:
-                nuclide = elem + "-" + str(num)
-            if float(data[position]) > ATOM_DENS_MINIMUM:
-                # The [x] here is what causes the code to return only the densities at position x of the f71 file
-                # bqs[nuclide] = float(data[position])
-                if nuclide == my_nuclide:
-                    # print(f"{my_nuclide}: {data[position]}")
-                    return float(data[position])
-    # sorted_densities = {k: v for k, v in sorted(bqs.items(), key=lambda item: -item[1])}
+        if len(data) <= position:
+            continue
+        nuclide = _as_nuclide_name(data[0])
+        if nuclide is None:
+            continue
+        try:
+            value = float(data[position])
+        except ValueError:
+            continue
+        if value > ATOM_DENS_MINIMUM and nuclide == my_nuclide:
+            return value
     return -1.0
 
 
 def get_burned_material_total_mass_dens(f71file: str, position: int) -> float:
     """ Read mass density of nuclides from SCALE's F71 file, calculate total \rho [g/cm^3] """
     output = subprocess.run(
-        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=gper", "-idform='{:Ee}{:AAA}{:m}'",
+        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=gper", "-idform={:Ee}{:AAA}{:m}",
             f71file], capture_output=True)
     output = output.stdout.decode().split("\n")
     my_rho: float = 0
     skip = ["case", "step", "time", "power", "flux", "volume"]
     for line in output:
         data = line.split(',')
+        if not data or data[0] == '':
+            continue
         if data[0].strip() in skip:
             continue
-        elif len(data) > 1:
+        if len(data) <= position:
+            continue
+        try:
             my_rho = my_rho + float(data[position])
+        except ValueError:
+            continue
     return my_rho
 
 
@@ -226,9 +262,12 @@ def get_F33_num_sets(f33file: str) -> int:
     """ Returns the number of numSets in SCALE F33 file """
     output = subprocess.run([f"{SCALE_bin_path}/obiwan", "info", f33file], capture_output=True)
     output = output.stdout.decode().split("\n")
+    f33_base: str = os.path.basename(f33file)
     for line in output:
         data = line.split()
-        if data[0] in f33file:
+        if not data:
+            continue
+        if data[0] == f33_base or data[0] in f33file:
             return int(data[2])
     return -1
 
@@ -343,9 +382,13 @@ def read_scale_keff(scale_out_file: str) -> tuple[float, float]:
     """ Returns a k_eff from SCALE output file """
     with open(scale_out_file, 'r') as file:
         content = file.read()
-    subtext1: str = re.findall(r'best estimate system k-eff \s+(.*)', content)[0]
+    keff_matches = re.findall(r'best estimate system k-eff \s+(.*)', content)
+    if not keff_matches:
+        raise ValueError(f"Could not find k-eff in {scale_out_file}")
+    subtext1: str = keff_matches[0]
     k_list: list = re.findall(r'(\d+\.\d+)', subtext1)
-    assert len(k_list) == 2
+    if len(k_list) != 2:
+        raise ValueError(f"Expected k-eff value and uncertainty in line: '{subtext1}'")
     return float(k_list[0]), float(k_list[1])
 
 
