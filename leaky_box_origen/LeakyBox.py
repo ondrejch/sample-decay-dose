@@ -532,7 +532,7 @@ def main():
     if is_xe_136_testing:  # Add analytical calculations
         pd_B['total'] = pd_B['xe-136'] * volume
         pd_C['total'] = pd_C['xe-136'] * volume
-        """
+        r"""
 N_i^A(t) & = N_i^A e^{ - \epsilon_i^A t} 
 N_i^B(t) & = N_i^A \epsilon_i^A \frac{e^{-\epsilon_i^B t} - e^{-\epsilon_i^A t}} {\epsilon_i^A - \epsilon_i^B}
 N_i^C(t) & = N_i^A \frac{ -\epsilon_i^B e^{-\epsilon_i^A t} + \epsilon_i^A (e^{-\epsilon_i^B t} - 1) + \epsilon_i^B}
@@ -557,7 +557,7 @@ N_i^C(t) & = N_i^A \frac{ -\epsilon_i^B e^{-\epsilon_i^A t} + \epsilon_i^A (e^{-
         lambda_xe_135: float = 2.106574217602 * 1e-5  # Xe-135 decay constant [1/s]
         pd_B['total'] = pd_B['xe-135'] * volume
         pd_C['total'] = pd_C['xe-135'] * volume
-        """
+        r"""
 N_i^A(t) & = N_i^A e^{ - (\lambda_i + \epsilon_i^A) t}  \\
 \\
 N_i^B(t) & = N_i^A \epsilon_i^A 

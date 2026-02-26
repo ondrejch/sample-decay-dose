@@ -12,17 +12,32 @@ import os
 import re
 
 cwd: str = os.getcwd()
-stellite_mass: float = float(re.findall(r'_([\d.]+)g', cwd)[0])
-irradiation_years: float = float(re.findall(r'dose-([\d.]+)year_', cwd)[0])
+case_dir: str = os.path.basename(cwd)
+mass_match = re.search(r'_([\d.]+)g', case_dir)
+years_match = re.search(r'dose-([\d.]+)year_', case_dir)
+if not mass_match or not years_match:
+    raise ValueError(
+        "Current directory name must contain '_<mass>g' and 'dose-<years>year_'. "
+        f"Got: {case_dir} (full path: {cwd})"
+    )
+stellite_mass: float = float(mass_match.group(1))
+irradiation_years: float = float(years_match.group(1))
 
 stellite_adens: dict = {'c-12': 0.001136285, 'c-13': 1.228975e-05, 'cr-50': 0.001152783, 'cr-52': 0.02223027,
     'cr-53': 0.002520734, 'cr-54': 0.000627464, 'co-59': 0.05488167, 'ni-58': 0.001454611, 'ni-60': 0.0005603136,
     'ni-61': 2.435644e-05, 'ni-62': 7.765899e-05, 'ni-64': 1.977746e-05, 'mo-92': 0.000405459, 'mo-94': 0.0002533775,
     'mo-95': 0.0004364792, 'mo-96': 0.0004578914, 'mo-97': 0.0002624366, 'mo-98': 0.0006640524, 'mo-100': 0.0002654562}
 
-scale_out: str = os.path.expanduser('~/0.02/80-upper-encl-stellite/03-triton-longer/msrr.out')
+scale_out: str = os.path.expanduser(os.getenv('STELLITE_SCALE_OUT', '~/0.02/80-upper-encl-stellite/03-triton-longer/msrr.out'))
+if not os.path.isfile(scale_out):
+    raise FileNotFoundError(
+        f"Could not find SCALE output file at '{scale_out}'. "
+        "Set STELLITE_SCALE_OUT to override."
+    )
 
 flux_data = extract_flux_values(scale_out)
+if 9000 not in flux_data:
+    raise KeyError(f"Mixture 9000 flux not found in '{scale_out}'.")
 stellite_flux: float = flux_data[9000]
 print(f'Stellite flux = {stellite_flux} n/cm2/s, mass: {stellite_mass} g, irradiate for {irradiation_years} years')
 

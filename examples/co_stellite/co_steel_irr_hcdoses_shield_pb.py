@@ -21,11 +21,26 @@ w_co = args.wtpctCo * 1e-2  # convert to percent
 print(f'Using cobalt impurity of {w_co:.4f} weight fraction')
 
 cwd: str = os.getcwd()
-steel_mass: float = float(re.findall(r'_([\d.]+)g', cwd)[0])
-irradiation_years: float = float(re.findall(r'dose-([\d.]+)year_', cwd)[0])
+case_dir: str = os.path.basename(cwd)
+mass_match = re.search(r'_([\d.]+)g', case_dir)
+years_match = re.search(r'dose-([\d.]+)year_', case_dir)
+if not mass_match or not years_match:
+    raise ValueError(
+        "Current directory name must contain '_<mass>g' and 'dose-<years>year_'. "
+        f"Got: {case_dir} (full path: {cwd})"
+    )
+steel_mass: float = float(mass_match.group(1))
+irradiation_years: float = float(years_match.group(1))
 
-scale_out: str = os.path.expanduser('~/0.02/80-upper-encl-stellite/03-triton-longer/msrr.out')
+scale_out: str = os.path.expanduser(os.getenv('STELLITE_SCALE_OUT', '~/0.02/80-upper-encl-stellite/03-triton-longer/msrr.out'))
+if not os.path.isfile(scale_out):
+    raise FileNotFoundError(
+        f"Could not find SCALE output file at '{scale_out}'. "
+        "Set STELLITE_SCALE_OUT to override."
+    )
 flux_data = extract_flux_values(scale_out)
+if 8140 not in flux_data:
+    raise KeyError(f"Mixture 8140 flux not found in '{scale_out}'.")
 irradiation_flux: float = flux_data[8140]
 print(f'Steel flux = {irradiation_flux} n/cm2/s, mass: {steel_mass} g, irradiate for {irradiation_years} years')
 

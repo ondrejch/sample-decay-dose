@@ -4,14 +4,11 @@ Plotting script for storage_tank_doses_scan_parallel.py
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
-import os
 import numpy as np
 import pandas as pd
 import json5
 import matplotlib.pyplot as plt
-from matplotlib import colors, cm, ticker
-
-os.chdir('.')
+from matplotlib import colors, ticker
 my_data = {
     '1 day': '34-1_decay_days',
     '2 days': '33-2_decay_days',
@@ -78,9 +75,10 @@ def make_plot(title: str, my_dir: str):
     return pd_mrem_dose, pd_mrem_stdev
 
 
-for t, d in my_data.items():
-    print(f'Processing {t}, {d}')
-    make_plot(t, d)
+def run():
+    for t, d in my_data.items():
+        print(f'Processing {t}, {d}')
+        make_plot(t, d)
 
     writer = pd.ExcelWriter('storage_dose.xlsx')
     for t, d in my_data.items():
@@ -92,3 +90,7 @@ for t, d in my_data.items():
             to_excel(writer, sheet_name=f'dose (mrem per h), {t}', float_format="%0.1f")
         pd_stdev.to_excel(writer, sheet_name=f'dose ± stdev, {t}', float_format="%0.2f")
     writer.close()
+
+
+if __name__ == "__main__":
+    run()

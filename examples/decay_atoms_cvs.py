@@ -161,9 +161,9 @@ def make_plot(title: str, my_dir: str):
     return pd_mrem_dose, pd_mrem_stdev
 
 
-def plot(datafile='doses.json'):
-    import os
-    os.chdir('/home/o/MSRR-local/92-offgas_dose')
+def plot(base_dir='.'):
+    from pathlib import Path
+    base_path = Path(base_dir).expanduser().resolve()
     my_data = {
         '1 day': '41-1day_decay',
         '2 days': '42-2days_decay',
@@ -171,9 +171,9 @@ def plot(datafile='doses.json'):
         '14 days': '44-14days_decay',
         '30 days': '45-30days_decay'
     }
-    writer = pd.ExcelWriter('offgas_dose.xlsx')
+    writer = pd.ExcelWriter(base_path / 'offgas_dose.xlsx')
     for t, d in my_data.items():
-        pd_dose, pd_stdev = make_plot(t, d)
+        pd_dose, pd_stdev = make_plot(t, str(base_path / d))
         # header = f'Rows = Steel [cm], Columns = Concrete [cm]'
         # pd_dose.columns = pd.MultiIndex.from_product([[header],  pd_dose.columns])
         pd_dose.style.map(lambda v: 'color:#8B0000' if v > 20 else None). \

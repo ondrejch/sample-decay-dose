@@ -7,6 +7,7 @@ Ondrej Chvala <ochvala@utexas.edu>
 """
 import numpy as np
 import json5
+import argparse
 from sample_decay_dose import SampleDose
 from joblib import Parallel, delayed, cpu_count
 
@@ -114,6 +115,21 @@ def plot(datafile='doses.json'):
 
 
 if __name__ == "__main__":
-    # run_analysis()
-    # plot()
-    plot('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/40-decaydays_1200kg/doses.json')
+    parser = argparse.ArgumentParser(
+        description='Parallel no-shield storage tank dose scan and plotting.'
+    )
+    parser.add_argument(
+        '--run-analysis',
+        action='store_true',
+        help='Run ORIGEN/MAVRIC jobs before plotting.'
+    )
+    parser.add_argument(
+        '--datafile',
+        default='doses.json',
+        help='Path to a JSON file with dose data for plotting.'
+    )
+    args = parser.parse_args()
+
+    if args.run_analysis:
+        run_analysis()
+    plot(args.datafile)

@@ -15,13 +15,13 @@ sample_mass: float = 1200.0e3  # 1200 kg
 decay_days: float = 2.0  # 2 days
 
 
-def mavric_process(case: tuple[float, float]) -> dict:
+def mavric_process(_origen_triton: SampleDose.OrigenFromTriton, case: tuple[float, float]) -> dict:
     """ Separating the MAVRIC part into a function for parallel execution """
     steel_cm: float
     concrete_cm: float
     (steel_cm, concrete_cm) = case
     # Calculate dose next to the tank
-    mavric = SampleDose.DoseEstimatorStorageTank(origen_triton)
+    mavric = SampleDose.DoseEstimatorStorageTank(_origen_triton)
     # Material composition of additional layers, in dictionaries of atom densities
     mavric.layers_mats = [SampleDose.ADENS_SS316H_HOT, SampleDose.ADENS_KAOWOOL_COLD, SampleDose.ADENS_SS316H_COLD,
                           SampleDose.ADENS_CONCRETE_COLD]
@@ -69,7 +69,7 @@ def run_analysis():
             case_inputs.append((s_cm, c_cm))
 
     # Parallel MAVRIC jobs
-    results = Parallel(n_jobs=n_jobs)(delayed(mavric_process)(case) for case in case_inputs)
+    results = Parallel(n_jobs=n_jobs)(delayed(mavric_process)(origen_triton, case) for case in case_inputs)
 
     print(results)
     with open('doses.json', 'w') as file_out:

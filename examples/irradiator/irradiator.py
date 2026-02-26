@@ -87,24 +87,24 @@ class IrradiatorDose(SampleDose.Origen):
         if not os.path.isfile(self.cwd + '/' + self.ORIGEN_dir + '/' + self.irr_plate_F71_file_name):
             raise FileNotFoundError(
                 "Expected decayed sample F71 file: \n" + self.cwd + '/' + self.ORIGEN_dir + '/' + self.irr_plate_F71_file_name)
-        if not os.path.exists(self.case_dir):
-            os.mkdir(self.case_dir)
-        os.chdir(self.case_dir)
+        case_path: str = os.path.join(self.cwd, self.case_dir)
+        if not os.path.exists(case_path):
+            os.mkdir(case_path)
+        os.chdir(case_path)
+        try:
+            shutil.copy2(self.cwd + '/' + self.ORIGEN_dir + '/' + self.irr_plate_F71_file_name, case_path)
 
-        shutil.copy2(self.cwd + '/' + self.ORIGEN_dir + '/' + self.irr_plate_F71_file_name,
-                     self.cwd + '/' + self.case_dir)
-        os.chdir(self.cwd + '/' + self.case_dir)
+            with open(self.IRRPLATE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
+                f.write(utils.atom_dens_for_mavric(self.irr_plate_atom_dens, 1, self.irr_plate_temperature_K))
 
-        with open(self.IRRPLATE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
-            f.write(utils.atom_dens_for_mavric(self.irr_plate_atom_dens, 1, self.irr_plate_temperature_K))
+            with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRIC input deck
+                f.write(self.mavric_deck())
 
-        with open(self.MAVRIC_input_file_name, 'w') as f:  # write MAVRIC input deck
-            f.write(self.mavric_deck())
-
-        if self.debug > 0:
-            print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
-        utils.run_scale(self.MAVRIC_input_file_name)
-        os.chdir(self.cwd)
+            if self.debug > 0:
+                print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
+            utils.run_scale(self.MAVRIC_input_file_name)
+        finally:
+            os.chdir(self.cwd)
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
@@ -187,10 +187,10 @@ read definitions
 
     gridGeometry 9
         title="Denovo grid"
-        xLinear {self.tally_planes_xy} {-plate_a_half} {plate_a_half}
-        yLinear {self.tally_planes_xy} {-plate_a_half} {plate_a_half}
-        zLinear {self.tally_planes_z} {plate_h_half} {box_z_half}
-        zLinear {self.tally_planes_z} {-box_z_half} {-plate_h_half} 
+        xLinear {self.denovo_planes_xy} {-plate_a_half} {plate_a_half}
+        yLinear {self.denovo_planes_xy} {-plate_a_half} {plate_a_half}
+        zLinear {self.denovo_planes_z} {plate_h_half} {box_z_half}
+        zLinear {self.denovo_planes_z} {-box_z_half} {-plate_h_half} 
         zLinear {self.denovo_planes_z} {-plate_h_half} {plate_h_half} 
     end gridGeometry
 end definitions
@@ -200,7 +200,7 @@ read sources
         title="Sample photons"
         photon
         useNormConst
-        cuboid {-plate_a_half} {plate_a_half} {-plate_a_half} {plate_a_half} {-plate_a_half} {plate_a_half} 
+        cuboid {-plate_a_half} {plate_a_half} {-plate_a_half} {plate_a_half} {-plate_h_half} {plate_h_half} 
         eDistributionID=2
     end src
 end sources
@@ -254,7 +254,6 @@ def run_analysis():
     irr = SampleDose.OrigenIrradiation('EIRENE.mix0002.f33', plate_mass)
     irr.irradiate_days = 7.0 * 365.24  # 7 years
     irr.irradiate_flux = 7.37e12  # n/s/cm2
-    irr.set_decay_days(0.5 * 365.24)  # 6 months
     irr.set_decay_days(1. * 365.24)
     irr.SAMPLE_F71_position = 50  # How many decay steps
     irr.case_dir = 'run_irradiator_1m'
