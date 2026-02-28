@@ -470,6 +470,7 @@ def _out_name(prefix: str | None, stem: str, ext: str) -> str:
 
 
 def _write_excel(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataFrame, out_prefix: str | None) -> None:
+    # Persist A/B/C time series to a workbook for quick inspection.
     writer = pd.ExcelWriter(_out_name(out_prefix, 'leaky_boxes', '.xlsx'))
     pd_A.to_excel(writer, sheet_name='box A')
     pd_B.to_excel(writer, sheet_name='box B')
@@ -477,9 +478,23 @@ def _write_excel(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataFrame, out
     writer.close()
 
 
+def _write_dataframes_json(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataFrame, out_prefix: str | None) -> str:
+    # JSON snapshot of the three dataframes (column -> list).
+    payload = {
+        'box_A': pd_A.to_dict(orient='list'),
+        'box_B': pd_B.to_dict(orient='list'),
+        'box_C': pd_C.to_dict(orient='list'),
+    }
+    fname = _out_name(out_prefix, 'leaky_boxes', '.json')
+    with open(fname, 'w') as f:
+        json5.dump(payload, f, indent=2)
+    return fname
+
+
 def _add_analytic_columns(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataFrame, isotope: str,
                           n0_density: float, n0_total: float, eps_a: float, eps_b: float,
                           lambda_decay: float | None) -> None:
+    # Fill analytic solutions and relative differences for the test isotope.
     if lambda_decay is None:
         lambda_decay = 0.0
 
@@ -503,6 +518,7 @@ def _add_analytic_columns(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataF
 
 def plot_results(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataFrame, isotope: str, out_prefix: str | None,
                  logy: bool = True) -> str:
+    # Plot analytic vs ORIGEN for A (density) and B/C (totals).
     import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(3, 1, sharex=True, figsize=(8, 10))
@@ -546,6 +562,7 @@ def plot_results(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataFrame, iso
 
 def _plot_isotopes(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataFrame, isotopes: list[str],
                    volume: float, out_prefix: str | None) -> None:
+    # Generate ORIGEN-only plots for selected isotopes from F71 runs.
     for iso in isotopes:
         if iso not in pd_A.columns or iso not in pd_B.columns or iso not in pd_C.columns:
             continue
@@ -558,7 +575,30 @@ def _plot_isotopes(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataFrame, i
         plot_results(pd_A_plot, pd_B_plot, pd_C_plot, iso, plot_prefix)
 
 
+def _write_box_c_timeseries_json(pd_C: pd.DataFrame, volume_cm3: float, out_prefix: str | None,
+                                 source_volume_cm3: float | None = None) -> str:
+    # Save Box C atom densities vs time with volume metadata.
+    payload: dict = {
+        'volume_cm3': float(volume_cm3),
+        'time_s': [float(x) for x in pd_C['time [s]'].tolist()],
+        'time_d': [float(x) for x in pd_C['time [d]'].tolist()],
+        'atom_densities': {},
+    }
+    if source_volume_cm3 is not None:
+        payload['source_volume_cm3'] = float(source_volume_cm3)
+    for col in pd_C.columns:
+        if col in ('time [s]', 'time [d]'):
+            continue
+        payload['atom_densities'][col] = [float(x) for x in pd_C[col].tolist()]
+
+    fname = _out_name(out_prefix, 'boxC_timeseries', '.json')
+    with open(fname, 'w') as f:
+        json5.dump(payload, f, indent=2)
+    return fname
+
+
 def _get_case_max_time(index: dict, case: str) -> float:
+    # Max time for a given case in an F71 index.
     case_str = str(case)
     times = [float(v['time']) for v in index.values() if str(v.get('case')) == case_str]
     if not times:
@@ -567,6 +607,7 @@ def _get_case_max_time(index: dict, case: str) -> float:
 
 
 def _get_case_time_from_end(index: dict, case: str, offset_from_end: int) -> float:
+    # Time selection by offset from the end (e.g., pre-last = 1).
     case_str = str(case)
     times = sorted(float(v['time']) for v in index.values() if str(v.get('case')) == case_str)
     if len(times) <= offset_from_end:
@@ -576,6 +617,7 @@ def _get_case_time_from_end(index: dict, case: str, offset_from_end: int) -> flo
 
 def _setup_box_a(f71_path: str, f71_case: str, f71_time_seconds: float | None,
                  sample_mass_g: float, do_skip_calcs: bool) -> DecayBoxA:
+    # Configure Box A from F71 (case/time selection + initial decay settings).
     box_a = DecayBoxA(f71_path, sample_mass_g)
     if do_skip_calcs:
         box_a.skip_calculation = True
@@ -592,6 +634,7 @@ def _setup_box_a(f71_path: str, f71_case: str, f71_time_seconds: float | None,
 def _run_simulation(box_a: DecayBoxA, apply_volume_scaling: bool, do_skip_calcs: bool,
                     out_prefix: str | None, box_B_n_steps: int = 8, box_C_n_steps: int = 8
                     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, float, float, float]:
+    # Core leaky-box simulation (A->B->C) shared by tests and F71 runs.
     box_A_leak_rate: float = PCTperDAY
     box_B_leak_rate: float = PCTperDAY * 0.1
 
@@ -703,7 +746,7 @@ def run_test(isotope: str, lambda_decay: float | None, apply_volume_scaling: boo
              f71_time_seconds: float | None = None,
              sample_mass_g: float = 1200e3) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run a single isotope test and return dataframes."""
-    # Baseline decay calculation setup
+    # Baseline decay calculation setup (forces a single-isotope inventory).
     origen_triton_box_A = _setup_box_a(f71_path, f71_case, f71_time_seconds, sample_mass_g, do_skip_calcs)
     origen_triton_box_A.atom_dens = {isotope: 1.0}
     pd_A, pd_B, pd_C, volume, box_A_leak_rate, box_B_leak_rate = _run_simulation(
@@ -720,6 +763,7 @@ def run_test(isotope: str, lambda_decay: float | None, apply_volume_scaling: boo
                           box_A_leak_rate, box_B_leak_rate, lambda_decay)
 
     _write_excel(pd_A, pd_B, pd_C, out_prefix)
+    _write_dataframes_json(pd_A, pd_B, pd_C, out_prefix)
     plot_results(pd_A, pd_B, pd_C, isotope, out_prefix)
     return pd_A, pd_B, pd_C
 
@@ -729,12 +773,15 @@ def run_from_f71(apply_volume_scaling: bool, do_skip_calcs: bool, out_prefix: st
                  f71_time_seconds: float | None = None, sample_mass_g: float = 1200e3,
                  plot_isotopes: list[str] | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run a simulation using the actual F71 nuclide composition (no analytic comparison)."""
+    # Uses full F71 composition; analytic columns are not added.
     origen_triton_box_A = _setup_box_a(f71_path, f71_case, f71_time_seconds, sample_mass_g, do_skip_calcs)
     pd_A, pd_B, pd_C, volume, _, _ = _run_simulation(
         origen_triton_box_A, apply_volume_scaling, do_skip_calcs, out_prefix
     )
 
     _write_excel(pd_A, pd_B, pd_C, out_prefix)
+    _write_dataframes_json(pd_A, pd_B, pd_C, out_prefix)
+    _write_box_c_timeseries_json(pd_C, volume, out_prefix, source_volume_cm3=origen_triton_box_A.volume)
 
     if plot_isotopes:
         _plot_isotopes(pd_A, pd_B, pd_C, plot_isotopes, volume, out_prefix)
@@ -743,6 +790,7 @@ def run_from_f71(apply_volume_scaling: bool, do_skip_calcs: bool, out_prefix: st
 
 
 def run_all_tests(apply_volume_scaling: bool, do_skip_calcs: bool):
+    # Convenience wrapper for Xe-136 and Xe-135 test cases.
     tests = {
         'xe-136': None,
         'xe-135': 2.106574217602 * 1e-5,  # Xe-135 decay constant [1/s]

@@ -137,7 +137,7 @@ class ValencyMapper:
 if __name__ == '__main__':
     # --- Example Usage ---
 
-    # Initialize with default ('upper') estimate
+    # Initialize with the default ('upper') estimate
     mapper = ValencyMapper()
     print(f"--- Using '{mapper.active_map_name}' estimate ---")
     print(f"Valency of Uranium (U): {mapper['U']}")
