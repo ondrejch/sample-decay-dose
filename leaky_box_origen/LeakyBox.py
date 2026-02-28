@@ -616,7 +616,8 @@ def _get_case_time_from_end(index: dict, case: str, offset_from_end: int) -> flo
 
 
 def _setup_box_a(f71_path: str, f71_case: str, f71_time_seconds: float | None,
-                 sample_mass_g: float, do_skip_calcs: bool) -> DecayBoxA:
+                 sample_mass_g: float, do_skip_calcs: bool,
+                 decay_days: float, steps_per_day: int) -> DecayBoxA:
     # Configure Box A from F71 (case/time selection + initial decay settings).
     box_a = DecayBoxA(f71_path, sample_mass_g)
     if do_skip_calcs:
@@ -626,8 +627,8 @@ def _setup_box_a(f71_path: str, f71_case: str, f71_time_seconds: float | None,
         f71_time_seconds = _get_case_time_from_end(box_a.BURNED_MATERIAL_F71_index, f71_case, 1)
     box_a.set_f71_pos(f71_time_seconds, case=f71_case)
     box_a.read_burned_material()
-    box_a.DECAY_days = 12
-    box_a.DECAY_steps = 12 * 2 + 2
+    box_a.DECAY_days = decay_days
+    box_a.DECAY_steps = int(decay_days * steps_per_day) + 2
     return box_a
 
 
@@ -744,10 +745,13 @@ def run_test(isotope: str, lambda_decay: float | None, apply_volume_scaling: boo
              do_skip_calcs: bool, out_prefix: str | None = None,
              f71_path: str = DEFAULT_F71_PATH, f71_case: str = DEFAULT_F71_CASE,
              f71_time_seconds: float | None = None,
-             sample_mass_g: float = 1200e3) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+             sample_mass_g: float = 1200e3, decay_days: float = 12.0,
+             steps_per_day: int = 2) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run a single isotope test and return dataframes."""
     # Baseline decay calculation setup (forces a single-isotope inventory).
-    origen_triton_box_A = _setup_box_a(f71_path, f71_case, f71_time_seconds, sample_mass_g, do_skip_calcs)
+    origen_triton_box_A = _setup_box_a(
+        f71_path, f71_case, f71_time_seconds, sample_mass_g, do_skip_calcs, decay_days, steps_per_day
+    )
     origen_triton_box_A.atom_dens = {isotope: 1.0}
     pd_A, pd_B, pd_C, volume, box_A_leak_rate, box_B_leak_rate = _run_simulation(
         origen_triton_box_A, apply_volume_scaling, do_skip_calcs, out_prefix
@@ -771,10 +775,13 @@ def run_test(isotope: str, lambda_decay: float | None, apply_volume_scaling: boo
 def run_from_f71(apply_volume_scaling: bool, do_skip_calcs: bool, out_prefix: str | None = None,
                  f71_path: str = DEFAULT_F71_PATH, f71_case: str = DEFAULT_F71_CASE,
                  f71_time_seconds: float | None = None, sample_mass_g: float = 1200e3,
-                 plot_isotopes: list[str] | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+                 plot_isotopes: list[str] | None = None, decay_days: float = 12.0,
+                 steps_per_day: int = 2) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run a simulation using the actual F71 nuclide composition (no analytic comparison)."""
     # Uses full F71 composition; analytic columns are not added.
-    origen_triton_box_A = _setup_box_a(f71_path, f71_case, f71_time_seconds, sample_mass_g, do_skip_calcs)
+    origen_triton_box_A = _setup_box_a(
+        f71_path, f71_case, f71_time_seconds, sample_mass_g, do_skip_calcs, decay_days, steps_per_day
+    )
     pd_A, pd_B, pd_C, volume, _, _ = _run_simulation(
         origen_triton_box_A, apply_volume_scaling, do_skip_calcs, out_prefix
     )
@@ -789,7 +796,8 @@ def run_from_f71(apply_volume_scaling: bool, do_skip_calcs: bool, out_prefix: st
     return pd_A, pd_B, pd_C
 
 
-def run_all_tests(apply_volume_scaling: bool, do_skip_calcs: bool):
+def run_all_tests(apply_volume_scaling: bool, do_skip_calcs: bool,
+                  decay_days: float = 12.0, steps_per_day: int = 2):
     # Convenience wrapper for Xe-136 and Xe-135 test cases.
     tests = {
         'xe-136': None,
@@ -797,7 +805,8 @@ def run_all_tests(apply_volume_scaling: bool, do_skip_calcs: bool):
     }
     for iso, lam in tests.items():
         prefix = iso.replace('-', '')
-        run_test(iso, lam, apply_volume_scaling, do_skip_calcs, out_prefix=prefix)
+        run_test(iso, lam, apply_volume_scaling, do_skip_calcs, out_prefix=prefix,
+                 decay_days=decay_days, steps_per_day=steps_per_day)
 
 
 def main():
