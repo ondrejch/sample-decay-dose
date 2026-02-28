@@ -1,6 +1,13 @@
 #!/bin/env python3
 """
-OBSOLETE broken development version! Use LeakyBox.py
+Legacy leaky-box variant using SCALE/Origen. Kept in sync with LeakyBox.py.
+
+Explanation of differences vs LeakyBox.py:
+- LeakyBox.py is the maintained implementation and recommended entry point.
+- BoxF71.py historically experimented with a DiffLeak (sealed vs leaky difference) approach.
+- The refactored main path now mirrors LeakyBox.py logic (interval-averaged A->B feed,
+  time-weighted B->C feed, analytic comparisons, plots), but `main_old()` preserves the
+  older DiffLeak workflow for reference.
 
 Leaky box using SCALE/Origen
 Ondrej Chvala <ochvala@utexas.edu>
@@ -164,7 +171,7 @@ case {{
     }}
     time {{
         units=DAYS
-        t=[{time_interp_steps}I 0.00001 {self.DECAY_days}]
+        t=[{time_interp_steps}I 0.01 {self.DECAY_days}]
         start=0
     }}
 {removal} 
@@ -233,6 +240,9 @@ class DecayBoxB(Origen):
             if len(self.atom_dens) > 0:
                 with open(self.ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
                     f.write(atom_dens_for_origen(self.atom_dens))
+            else:
+                # Ensure the file exists; the ORIGEN deck always copies it in the shell preamble.
+                open(self.ATOM_DENS_file_name_Origen, 'w').close()
 
             with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
                 f.write(self.origen_deck())
@@ -323,7 +333,7 @@ end
 
 
 class LeakyBox:
-    """ Handles two ORIGEN calculations, one with leakage one without.
+    """ Handles the ORIGEN calculations with leakage.
     Calculates nuclide leak rate from box N, which is a corresponding feed rate into box N+!
     """
 
@@ -536,18 +546,131 @@ def get_dataframe(leaky_box_adens: dict[dict]) -> pd.DataFrame:
     return pd.DataFrame(_list)  # .set_index('time [s]', append=True)
 
 
-is_xe_136_testing: bool = False  # Use 1 Xe-136 at / b-sm instead of read composition
-is_xe_135_testing: bool = True  # Use 1 Xe-135 at / b-sm instead of read composition
-if is_xe_135_testing and is_xe_136_testing:
-    raise ValueError("Tests are exclusive!")
-
-do_skip_calcs: bool = False     # If True, skips SCALE calculations & re-reads existing data
+def _sorted_steps_by_time(step_dict: dict) -> list[tuple[int, dict]]:
+    # Ensure deterministic chronological order for interval math.
+    return sorted(step_dict.items(), key=lambda kv: float(kv[1]['time']))
 
 
-def main():
-    """ Calculate which nuclides leak """
+def _average_rates(prev_rates: dict, cur_rates: dict, volume_ratio: float = 1.0) -> dict:
+    # Trapezoidal (endpoint) average of feed rates over a single interval.
+    avg_rates: dict = {}
+    if prev_rates is None:
+        prev_rates = {}
+    if cur_rates is None:
+        cur_rates = {}
+    for iso in set(prev_rates.keys()) | set(cur_rates.keys()):
+        avg_rates[iso] = 0.5 * (prev_rates.get(iso, 0.0) + cur_rates.get(iso, 0.0)) * volume_ratio
+    return avg_rates
+
+
+def _time_average_rates(leak_rates: dict, volume_ratio: float = 1.0) -> dict:
+    # Time-weighted average of rates across all sub-intervals in a run.
+    steps = _sorted_steps_by_time(leak_rates)
+    if len(steps) < 2:
+        return {}
+    total_dt: float = 0.0
+    accum: dict = {}
+    for (_, prev_v), (_, cur_v) in zip(steps, steps[1:]):
+        t0 = float(prev_v['time'])
+        t1 = float(cur_v['time'])
+        dt = t1 - t0
+        if dt <= 0.0:
+            continue
+        total_dt += dt
+        prev_rates = prev_v.get('rate', {})
+        cur_rates = cur_v.get('rate', {})
+        for iso in set(prev_rates.keys()) | set(cur_rates.keys()):
+            r0 = prev_rates.get(iso, 0.0)
+            r1 = cur_rates.get(iso, 0.0)
+            accum[iso] = accum.get(iso, 0.0) + 0.5 * (r0 + r1) * dt
+    if total_dt <= 0.0:
+        return {}
+    return {iso: (val / total_dt) * volume_ratio for iso, val in accum.items()}
+
+
+do_skip_calcs: bool = False  # If True, skips SCALE calculations & re-reads existing data
+apply_volume_scaling: bool = False  # If True, scales feed by source_volume / dest_volume
+
+
+def _out_name(prefix: str | None, stem: str, ext: str) -> str:
+    if prefix:
+        return f"{stem}_{prefix}{ext}"
+    return f"{stem}{ext}"
+
+
+def _add_analytic_columns(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataFrame, isotope: str,
+                          n0_density: float, n0_total: float, eps_a: float, eps_b: float,
+                          lambda_decay: float | None) -> None:
+    if lambda_decay is None:
+        lambda_decay = 0.0
+
+    pd_A['analytic'] = (n0_density * np.exp(-(eps_a + lambda_decay) * pd_A['time [s]']))
+    pd_B['analytic'] = (n0_total *
+                        eps_a *
+                        (np.exp(-(eps_a + lambda_decay) * pd_B['time [s]']) -
+                         np.exp(-(eps_b + lambda_decay) * pd_B['time [s]']))
+                        / (eps_b - eps_a)
+                        )
+    pd_C['analytic'] = (n0_total * np.exp(-lambda_decay * pd_C['time [s]']) *
+                        (-eps_b * np.exp(-eps_a * pd_C['time [s]']) +
+                         eps_a * (np.exp(-eps_b * pd_C['time [s]']) - 1.0) + eps_b)
+                        / (eps_b - eps_a)
+                        )
+
+    pd_A['diff [%]'] = 100.0 * (pd_A[isotope] - pd_A['analytic']) / pd_A['analytic']
+    pd_B['diff [%]'] = 100.0 * (pd_B['total'] - pd_B['analytic']) / pd_B['analytic']
+    pd_C['diff [%]'] = 100.0 * (pd_C['total'] - pd_C['analytic']) / pd_C['analytic']
+
+
+def plot_results(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataFrame, isotope: str, out_prefix: str | None,
+                 logy: bool = True) -> str:
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(3, 1, sharex=True, figsize=(8, 10))
+
+    # Box A (per-volume densities)
+    axes[0].plot(pd_A['time [d]'], pd_A[isotope], label='ORIGEN', color='tab:blue')
+    if 'analytic' in pd_A.columns:
+        axes[0].plot(pd_A['time [d]'], pd_A['analytic'], '--', label='Analytic', color='tab:orange')
+    axes[0].set_title(f'Box A ({isotope})')
+    axes[0].set_ylabel('atoms/b-cm')
+
+    # Box B (total atoms)
+    axes[1].plot(pd_B['time [d]'], pd_B['total'], label='ORIGEN', color='tab:blue')
+    if 'analytic' in pd_B.columns:
+        axes[1].plot(pd_B['time [d]'], pd_B['analytic'], '--', label='Analytic', color='tab:orange')
+    axes[1].set_title(f'Box B ({isotope})')
+    axes[1].set_ylabel('total atoms')
+
+    # Box C (total atoms)
+    axes[2].plot(pd_C['time [d]'], pd_C['total'], label='ORIGEN', color='tab:blue')
+    if 'analytic' in pd_C.columns:
+        axes[2].plot(pd_C['time [d]'], pd_C['analytic'], '--', label='Analytic', color='tab:orange')
+    axes[2].set_title(f'Box C ({isotope})')
+    axes[2].set_ylabel('total atoms')
+    axes[2].set_xlabel('time [days]')
+
+    if logy:
+        for ax in axes:
+            ax.set_yscale('log')
+
+    for ax in axes:
+        ax.grid(True, which='both', linestyle=':', alpha=0.5)
+        ax.legend()
+
+    fig.tight_layout()
+    fname = _out_name(out_prefix, 'leaky_boxes', '.png')
+    fig.savefig(fname, dpi=200)
+    plt.close(fig)
+    return fname
+
+
+def run_test(isotope: str, lambda_decay: float | None, apply_volume_scaling: bool,
+             do_skip_calcs: bool, out_prefix: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Run a single isotope test and return dataframes."""
     box_A_leak_rate: float = PCTperDAY
     box_B_leak_rate: float = PCTperDAY * 0.1
+
     # Baseline decay calculation setup
     origen_triton_box_A = DecayBoxA('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/SCALE_FILE.f71', 1200e3)
     if do_skip_calcs:
@@ -556,10 +679,8 @@ def main():
     origen_triton_box_A.read_burned_material()
     origen_triton_box_A.DECAY_days = 12
     origen_triton_box_A.DECAY_steps = 12 * 2 + 2
-    if is_xe_136_testing:
-        origen_triton_box_A.atom_dens = {'xe-136': 1.0}
-    if is_xe_135_testing:
-        origen_triton_box_A.atom_dens = {'xe-135': 1.0}
+    origen_triton_box_A.atom_dens = {isotope: 1.0}
+
     volume: float = 1.0  # origen_triton_box_A.volume
     print(volume)
 
@@ -568,169 +689,142 @@ def main():
     box_A.setup_cases(origen_triton_box_A)
     box_A.run_case()
     box_A.get_leak_rate_parallel()
-    with open('boxA.json5', 'w') as f:  # Save to json
+
+    with open(_out_name(out_prefix, 'boxA', '.json5'), 'w') as f:  # Save to json
         json5.dump(box_A.adens, f, indent=4)
-    with open('boxA_leak_rate.json5', 'w') as f:  # Save to json
+    with open(_out_name(out_prefix, 'boxA_leak_rate', '.json5'), 'w') as f:  # Save to json
         json5.dump(box_A.leak_rates, f, indent=4)
 
     origen_box_B: dict = {}  # ORIGEN runs that describe decay of box_B nuclides without leak
     box_B: dict = {}
     box_B_adens: dict = {}  # Summary of box_B atomic density as a function of decay time
     box_B_adens_current: dict = {}  # Content of box B
-    dl_C: dict = {}  # Leaking into box_C calculated from box_B_origen runs
     origen_box_C: dict = {}
     box_C_adens: dict = {}  # Summary of box_C atomic density as a function of decay time
-    box_C_adens_last: dict = {}  # Content of box C
-    prev_time_seconds: float = 0.0
+    box_C_adens_current: dict = {}  # Content of box C
+    box_B_n_steps: int = 8
+    box_C_n_steps: int = 8
 
-    for k, v in box_A.leak_rates.items():
+    # Iterate by time, not by dict insertion order, to keep interval math correct.
+    box_A_steps = _sorted_steps_by_time(box_A.leak_rates)
+    for idx in range(1, len(box_A_steps)):
+        prev_k, prev_v = box_A_steps[idx - 1]
+        k, v = box_A_steps[idx]
+        start_t = float(prev_v['time'])
+        end_t = float(v['time'])
         print(f'Box B {k}: {v}')
-        if k == 1:  # Skip the first time step, there is nothing in box_B
-            prev_time_seconds = v['time']
+        if end_t <= start_t:
             continue
         origen_box_B[k] = DecayBoxB(box_B_adens_current, volume)
         if do_skip_calcs:
             origen_box_B[k].skip_calculation = True
-        origen_box_B[k].nuclide_feed_rates = box_A.leak_rates[k]['rate']
-        origen_box_B[k].DECAY_steps = 4
-        origen_box_B[k].DECAY_start_seconds = prev_time_seconds
-        origen_box_B[k].DECAY_end_seconds = v['time']
+        volume_ratio = 1.0
+        if apply_volume_scaling:
+            source_vol = box_A.decay_leaks.volume
+            dest_vol = origen_box_B[k].volume
+            volume_ratio = source_vol / dest_vol if dest_vol else 1.0
+        # Feed into B is the interval-average leak rate from A (per unit volume).
+        origen_box_B[k].nuclide_feed_rates = _average_rates(prev_v['rate'], v['rate'], volume_ratio)
+        origen_box_B[k].DECAY_steps = box_B_n_steps
+        origen_box_B[k].DECAY_start_seconds = start_t
+        origen_box_B[k].DECAY_end_seconds = end_t
         origen_box_B[k].case_dir = f'_box_B_{k:04d}'
 
-        box_B[k] = DiffLeak()
+        box_B[k] = LeakyBox()
         box_B[k].removal_rate = box_B_leak_rate
         box_B[k].setup_cases(origen_box_B[k])
-        box_B[k].run_cases()
-        box_B[k].get_diff_parallel()
+        box_B[k].run_case()
+        box_B[k].get_leak_rate_parallel()
 
-        box_B_adens_current = box_B[k].decay_leaks.final_atom_dens
+        box_B_adens_current = origen_box_B[k].final_atom_dens
         box_B_adens[k] = {}
         box_B_adens[k]['time'] = v['time']
         box_B_adens[k]['adens'] = box_B_adens_current
 
-        # Now feed box C
-        leaked_adens = box_B[k].leaked[origen_box_B[k].DECAY_steps]['adens']
-        print(f'box_C_adens_last {box_C_adens_last}')
-        print(f'leaked_adens {k} {leaked_adens}')
-        box_C_adens_new = {iso: box_C_adens_last.get(iso, 0) + leaked_adens.get(iso, 0)
-                           for iso in set(box_C_adens_last) | set(leaked_adens)}
-        origen_box_C[k] = DecayBoxB(box_C_adens_new, volume)
-        origen_box_C[k].DECAY_steps = 4
-        origen_box_C[k].DECAY_start_seconds = prev_time_seconds
-        origen_box_C[k].DECAY_end_seconds = v['time']
+    # Now feed box C
+    for idx in range(1, len(box_A_steps)):
+        prev_k, prev_v = box_A_steps[idx - 1]
+        k, v = box_A_steps[idx]
+        start_t = float(prev_v['time'])
+        end_t = float(v['time'])
+        print(f'Box C {k}: {v}')
+        if end_t <= start_t:
+            continue
+
+        origen_box_C[k] = DecayBoxB(box_C_adens_current, volume)
+        if do_skip_calcs:
+            origen_box_C[k].skip_calculation = True
+        volume_ratio = 1.0
+        if apply_volume_scaling:
+            source_vol = box_B[k].decay_leaks.volume
+            dest_vol = origen_box_C[k].volume
+            volume_ratio = source_vol / dest_vol if dest_vol else 1.0
+        # Feed into C is the time-weighted average of B's leak rates across the whole sub-run.
+        origen_box_C[k].nuclide_feed_rates = _time_average_rates(box_B[k].leak_rates, volume_ratio)
+
+        origen_box_C[k].DECAY_steps = box_C_n_steps
+        origen_box_C[k].DECAY_start_seconds = start_t
+        origen_box_C[k].DECAY_end_seconds = end_t
         origen_box_C[k].case_dir = f'_box_C_{k:04d}'
         origen_box_C[k].run_decay_sample()
 
-        box_C_adens_last = origen_box_C[k].final_atom_dens
+        box_C_adens_current = origen_box_C[k].final_atom_dens
         box_C_adens[k] = {}
         box_C_adens[k]['time'] = v['time']
-        box_C_adens[k]['adens'] = box_C_adens_last
+        box_C_adens[k]['adens'] = box_C_adens_current
 
-        # dl_C[k] = DiffLeak()
-        # dl_C[k].removal_rate = box_B_leak_rate  # Removal rate from box B to box_C
-        # dl_C[k].setup_cases(origen_box_B[k])
-        # dl_C[k].run_cases()
-        #
-        # box_B_adens_current = dl_C[k].decay_leaks.final_atom_dens
-        # box_B_adens[k] = {}
-        # box_B_adens[k]['time'] = v['time']
-        # box_B_adens[k]['adens'] = box_B_adens_current
-        # # dl_C[k].get_diff()
-        # dl_C[k].get_diff_parallel()
-        # box_C_adens[k] = {}
-        # box_C_adens[k]['time'] = v['time']
-        # box_C_adens[k]['adens'] = dl_C[k].leaked[origen_box_B[k].DECAY_steps]['adens']
-        prev_time_seconds = v['time']
-        print(k, v, box_C_adens[k])
-
-    with open('boxB.json5', 'w') as f:  # Save to json
+    with open(_out_name(out_prefix, 'boxB', '.json5'), 'w') as f:  # Save to json
         json5.dump(box_B_adens, f, indent=4)
-    with open('boxC.json5', 'w') as f:
+    with open(_out_name(out_prefix, 'boxC', '.json5'), 'w') as f:
         json5.dump(box_C_adens, f, indent=4)
 
     pd_A: pd.DataFrame = get_dataframe(box_A.adens)
     pd_B: pd.DataFrame = get_dataframe(box_B_adens)
     pd_C: pd.DataFrame = get_dataframe(box_C_adens)
 
-    print(pd_B.columns)
-    print(pd_C.columns)
-    if is_xe_136_testing:  # Add analytical calculations
-        pd_B['total'] = pd_B['xe-136'] * volume
-        pd_C['total'] = pd_C['xe-136'] * volume
-        r"""
-N_i^A(t) & = N_i^A e^{ - \epsilon_i^A t} 
-N_i^B(t) & = N_i^A \epsilon_i^A \frac{e^{-\epsilon_i^B t} - e^{-\epsilon_i^A t}} {\epsilon_i^A - \epsilon_i^B}
-N_i^C(t) & = N_i^A \frac{ -\epsilon_i^B e^{-\epsilon_i^A t} + \epsilon_i^A (e^{-\epsilon_i^B t} - 1) + \epsilon_i^B}
-{\epsilon_i^B - \epsilon_i^A}
-        """
-        pd_A['analytic'] = (1.0 * np.exp(-box_A_leak_rate * pd_A['time [s]']))
-        pd_B['analytic'] = (1.0 *
-                            box_A_leak_rate *
-                            (np.exp(-box_A_leak_rate * pd_B['time [s]']) - np.exp(-box_B_leak_rate * pd_B['time [s]']))
-                            / (box_B_leak_rate - box_A_leak_rate)
-                            )
-        pd_C['analytic'] = (1.0 *
-                            (-box_A_leak_rate * np.exp(-box_B_leak_rate * pd_C['time [s]']) +
-                             box_B_leak_rate * (np.exp(-box_A_leak_rate * pd_C['time [s]']) - 1.0) + box_A_leak_rate)
-                            / (box_A_leak_rate - box_B_leak_rate)
-                            )
-        pd_A['diff [%]'] = 100.0 * (pd_A['xe-136'] - pd_A['analytic']) / pd_A['analytic']
-        pd_B['diff [%]'] = 100.0 * (pd_B['total'] - pd_B['analytic']) / pd_B['analytic']
-        pd_C['diff [%]'] = 100.0 * (pd_C['total'] - pd_C['analytic']) / pd_C['analytic']
+    pd_B['total'] = pd_B[isotope] * volume
+    pd_C['total'] = pd_C[isotope] * volume
 
-    if is_xe_135_testing:  # Add analytical calculations
-        lambda_xe_135: float = 2.106574217602 * 1e-5  # Xe-135 decay constant [1/s]
-        pd_B['total'] = pd_B['xe-135'] * volume
-        pd_C['total'] = pd_C['xe-135'] * volume
-        r"""
-N_i^A(t) & = N_i^A e^{ - (\lambda_i + \epsilon_i^A) t}  \\
-\\
-N_i^B(t) & = N_i^A \epsilon_i^A 
-\frac{e^{-(\epsilon_i^A + \lambda_i)  t} - e^{-(\epsilon_i^B + \lambda_i) t}}
-{\epsilon_i^B - \epsilon_i^A} \\
-% B(t) = -(a N (e^(t (-(a + l))) - e^(t (-(b + l)))))/(a - b)
-\\
-N_i^C(t) & = N_i^A e^{ - \lambda_i  t} 
-\frac{ -\epsilon_i^B e^{-\epsilon_i^A t} + \epsilon_i^A (e^{-\epsilon_i^B t} - 1) + \epsilon_i^B}
-{\epsilon_i^B - \epsilon_i^A}
-        """
-        pd_A['analytic'] = (1.0 * np.exp(-(box_A_leak_rate + lambda_xe_135) * pd_A['time [s]']))
-        pd_B['analytic'] = (1.0 *
-                            box_A_leak_rate *
-                            (np.exp(-(box_A_leak_rate + lambda_xe_135) * pd_B['time [s]']) - np.exp(
-                                -(box_B_leak_rate + lambda_xe_135) * pd_B['time [s]']))
-                            / (box_B_leak_rate - box_A_leak_rate)
-                            )
-        pd_C['analytic'] = (1.0 * np.exp(-lambda_xe_135 * pd_C['time [s]']) *
-                            (-box_B_leak_rate * np.exp(-box_A_leak_rate * pd_C['time [s]']) +
-                             box_A_leak_rate * (
-                                     np.exp(-box_B_leak_rate * pd_C['time [s]']) - 1.0) + box_B_leak_rate)
-                            / (box_B_leak_rate - box_A_leak_rate)
-                            )
-        pd_A['diff [%]'] = 100.0 * (pd_A['xe-135'] - pd_A['analytic']) / pd_A['analytic']
-        pd_B['diff [%]'] = 100.0 * (pd_B['total'] - pd_B['analytic']) / pd_B['analytic']
-        pd_C['diff [%]'] = 100.0 * (pd_C['total'] - pd_C['analytic']) / pd_C['analytic']
+    n0_density = float(origen_triton_box_A.atom_dens.get(isotope, 0.0))
+    n0_total = n0_density * (origen_triton_box_A.volume if apply_volume_scaling else volume)
 
-    writer = pd.ExcelWriter('leaky_boxes.xlsx')
+    _add_analytic_columns(pd_A, pd_B, pd_C, isotope, n0_density, n0_total,
+                          box_A_leak_rate, box_B_leak_rate, lambda_decay)
 
+    writer = pd.ExcelWriter(_out_name(out_prefix, 'leaky_boxes', '.xlsx'))
     pd_A.to_excel(writer, sheet_name='box A')
     pd_B.to_excel(writer, sheet_name='box B')
     pd_C.to_excel(writer, sheet_name='box C')
     writer.close()
 
+    plot_results(pd_A, pd_B, pd_C, isotope, out_prefix)
+    return pd_A, pd_B, pd_C
 
-def main_old():
-    """ Calculate which nuclides leak using concentrations in box B """
+
+def run_all_tests(apply_volume_scaling: bool, do_skip_calcs: bool):
+    tests = {
+        'xe-136': None,
+        'xe-135': 2.106574217602 * 1e-5,  # Xe-135 decay constant [1/s]
+    }
+    for iso, lam in tests.items():
+        prefix = iso.replace('-', '')
+        run_test(iso, lam, apply_volume_scaling, do_skip_calcs, out_prefix=prefix)
+
+
+def main():
+    """Default entrypoint: run Xe-136 test."""
+    run_test('xe-136', None, apply_volume_scaling, do_skip_calcs, out_prefix='xe136')
+
+
+def main_old(isotope: str = 'xe-135'):
+    """Legacy method using DiffLeak; kept for reference."""
     # Baseline decay calculation setup
     origen_triton = DecayBoxA('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/SCALE_FILE.f71', 1200e3)
     origen_triton.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
     origen_triton.read_burned_material()
     origen_triton.DECAY_days = 12
     origen_triton.DECAY_steps = 120
-    if is_xe_136_testing:
-        origen_triton.atom_dens = {'xe-136': 1.0}
-    if is_xe_135_testing:
-        origen_triton.atom_dens = {'xe-135': 1.0}
+    origen_triton.atom_dens = {isotope: 1.0}
     volume: float = origen_triton.volume
     print(volume)
 

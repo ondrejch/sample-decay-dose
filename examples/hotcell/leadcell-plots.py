@@ -1,3 +1,6 @@
+"""
+Plotting helper for the hotcell lead-shield example.
+"""
 import os
 import numpy as np
 import json5

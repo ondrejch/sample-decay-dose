@@ -31,6 +31,16 @@ Scripts showing how to use the framework are in the **examples** directory
 * **plot\_doses.py** - results plotter
 * **storage_tank_doses_scan_parallel.py**  - an example how to parallelize several MAVRIC calculations for the same decayed sample. 
 
+Leaky-box ORIGEN utilities are in **leaky\_box\_origen**. Scratch scripts live in **play**.
+Unit tests are in **test**.
+
+See the per-directory READMEs for details:
+* examples/README.md
+* leaky_box_origen/README.md
+* play/README.md
+* sample_decay_dose/README.md
+* test/README.md
+
 ## Installation
 
 1. Clone this repository
