@@ -44,6 +44,25 @@ See the per-directory READMEs for details:
 ## Installation
 
 1. Clone this repository
-2. $ cd sample-decay-dose && pip install ./
+2. Python 3.10+ is required.
+3. Install Python dependencies:
+   - `pip install -r requirements.txt`
+   - or `pip install ./`
+4. Set SCALE binaries location, for example:
+   - `export SCALE_BIN=/opt/scale6.3.2-mpi/bin`
+
+## Runtime Requirements
+
+- SCALE/ORIGEN/MAVRIC executables available under `SCALE_BIN`.
+- For FGR-11 OCR extraction (`leaky_box_origen/extract_fgr11_dcf.py`):
+  - `pdftoppm`
+  - `tesseract`
+
+## Quick Validation
+
+- Run tests: `pytest -q`
+- Typical generated outputs:
+  - Leaky-box runs: `boxA*.json5`, `boxB*.json5`, `boxC*.json5`, `leaky_boxes*.xlsx/.json/.png`
+  - Dose post-processing: `leaky_boxes_dose*.csv/.png`
 
 Ondrej Chvala <ochvala@utexas.edu>

@@ -14,3 +14,6 @@ F71-based leakage simulations live.
 
 **Notes**
 - Defaults (F71 path, case/time selection, leak elements) are set in `LeakyBox.py`.
+- Override F71 defaults with environment variables:
+  - `LEAKYBOX_F71_PATH`
+  - `LEAKYBOX_F71_CASE`

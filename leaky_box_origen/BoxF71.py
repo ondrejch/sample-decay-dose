@@ -30,6 +30,11 @@ from sample_decay_dose.utils import nicely_print_atom_dens, get_f71_positions_in
     get_burned_material_total_mass_dens, run_scale, atom_dens_for_origen
 
 PCTperDAY: float = 0.000000115740740741
+DEFAULT_F71_PATH: str = os.getenv(
+    'LEAKYBOX_F71_PATH',
+    os.path.expanduser('~/0.03/20-burn-MHA/mha-4.5-a4/msrr.f71'),
+)
+DEFAULT_F71_CASE: str = os.getenv('LEAKYBOX_F71_CASE', '20')
 
 
 class Origen:
@@ -67,19 +72,24 @@ class DecayBoxA(Origen):
 
     def set_f71_pos(self, t: float = 5184000.0, case: str = '1'):
         """ Returns closest position in the F71 file for a case """
-        pos_times = [(k, float(v['time'])) for k, v in self.BURNED_MATERIAL_F71_index.items() if v['case'] == case]
+        pos_times = sorted(
+            (k, float(v['time'])) for k, v in self.BURNED_MATERIAL_F71_index.items() if v['case'] == case
+        )
+        if not pos_times:
+            raise ValueError(f"Case '{case}' not found in F71 index for {self.BURNED_MATERIAL_F71_file_name}")
         times = [x[1] for x in pos_times]
         t_min = min(times)
         t_max = max(times)
         if t < t_min:
             print(f"Error: Time {t} seconds is less than {t_min} s, the minimum time in records.")
-            pos_number: int = 0
+            pos_idx: int = 0
         elif t > t_max:
             print(f"Error: Time {t} seconds is longer than {t_max} s, the maximum time in records.")
-            pos_number: int = len(times) - 1
+            pos_idx: int = len(times) - 1
         else:
-            pos_number: int = bisect_left(times, t)
-        print(f'--> Closest F71 position found at slot {pos_number}, {times[pos_number]} seconds')
+            pos_idx: int = bisect_left(times, t)
+        pos_number: int = pos_times[pos_idx][0]
+        print(f'--> Closest F71 position found at slot {pos_number}, {times[pos_idx]} seconds')
         self.BURNED_MATERIAL_F71_position = pos_number
 
     def read_burned_material(self):
@@ -539,7 +549,7 @@ def get_dataframe(leaky_box_adens: dict[dict]) -> pd.DataFrame:
     """ Convert """
     _list = []
     for k, v in leaky_box_adens.items():
-        a = v['adens']
+        a = dict(v['adens'])
         a['time [s]'] = float(v['time'])
         a['time [d]'] = float(v['time']) / float(24 * 60 * 60)
         _list.append(a)
@@ -604,22 +614,35 @@ def _add_analytic_columns(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataF
     if lambda_decay is None:
         lambda_decay = 0.0
 
-    pd_A['analytic'] = (n0_density * np.exp(-(eps_a + lambda_decay) * pd_A['time [s]']))
-    pd_B['analytic'] = (n0_total *
-                        eps_a *
-                        (np.exp(-(eps_a + lambda_decay) * pd_B['time [s]']) -
-                         np.exp(-(eps_b + lambda_decay) * pd_B['time [s]']))
-                        / (eps_b - eps_a)
-                        )
-    pd_C['analytic'] = (n0_total * np.exp(-lambda_decay * pd_C['time [s]']) *
-                        (-eps_b * np.exp(-eps_a * pd_C['time [s]']) +
-                         eps_a * (np.exp(-eps_b * pd_C['time [s]']) - 1.0) + eps_b)
-                        / (eps_b - eps_a)
-                        )
+    t_a = pd_A['time [s]']
+    t_b = pd_B['time [s]']
+    t_c = pd_C['time [s]']
+    pd_A['analytic'] = n0_density * np.exp(-(eps_a + lambda_decay) * t_a)
 
-    pd_A['diff [%]'] = 100.0 * (pd_A[isotope] - pd_A['analytic']) / pd_A['analytic']
-    pd_B['diff [%]'] = 100.0 * (pd_B['total'] - pd_B['analytic']) / pd_B['analytic']
-    pd_C['diff [%]'] = 100.0 * (pd_C['total'] - pd_C['analytic']) / pd_C['analytic']
+    if np.isclose(eps_a, eps_b, rtol=0.0, atol=1e-18):
+        eps = eps_a
+        pd_B['analytic'] = n0_total * eps * t_b * np.exp(-(eps + lambda_decay) * t_b)
+        pd_C['analytic'] = n0_total * np.exp(-lambda_decay * t_c) * (1.0 - (1.0 + eps * t_c) * np.exp(-eps * t_c))
+    else:
+        pd_B['analytic'] = (n0_total *
+                            eps_a *
+                            (np.exp(-(eps_a + lambda_decay) * t_b) -
+                             np.exp(-(eps_b + lambda_decay) * t_b))
+                            / (eps_b - eps_a)
+                            )
+        pd_C['analytic'] = (n0_total * np.exp(-lambda_decay * t_c) *
+                            (-eps_b * np.exp(-eps_a * t_c) +
+                             eps_a * (np.exp(-eps_b * t_c) - 1.0) + eps_b)
+                            / (eps_b - eps_a)
+                            )
+
+    def _safe_pct_diff(obs: pd.Series, ana: pd.Series) -> pd.Series:
+        denom = np.where(np.abs(ana.to_numpy()) > 0.0, ana.to_numpy(), np.nan)
+        return pd.Series(100.0 * (obs.to_numpy() - ana.to_numpy()) / denom, index=ana.index)
+
+    pd_A['diff [%]'] = _safe_pct_diff(pd_A[isotope], pd_A['analytic'])
+    pd_B['diff [%]'] = _safe_pct_diff(pd_B['total'], pd_B['analytic'])
+    pd_C['diff [%]'] = _safe_pct_diff(pd_C['total'], pd_C['analytic'])
 
 
 def plot_results(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataFrame, isotope: str, out_prefix: str | None,
@@ -666,19 +689,25 @@ def plot_results(pd_A: pd.DataFrame, pd_B: pd.DataFrame, pd_C: pd.DataFrame, iso
 
 
 def run_test(isotope: str, lambda_decay: float | None, apply_volume_scaling: bool,
-             do_skip_calcs: bool, out_prefix: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+             do_skip_calcs: bool, out_prefix: str | None = None,
+             f71_path: str = DEFAULT_F71_PATH, f71_case: str = DEFAULT_F71_CASE,
+             f71_time_seconds: float | None = None,
+             sample_mass_g: float = 1200e3, decay_days: float = 12.0,
+             steps_per_day: float = 2.0) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run a single isotope test and return dataframes."""
     box_A_leak_rate: float = PCTperDAY
     box_B_leak_rate: float = PCTperDAY * 0.1
 
     # Baseline decay calculation setup
-    origen_triton_box_A = DecayBoxA('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/SCALE_FILE.f71', 1200e3)
+    origen_triton_box_A = DecayBoxA(f71_path, sample_mass_g)
     if do_skip_calcs:
         origen_triton_box_A.skip_calculation = True
-    origen_triton_box_A.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
+    if f71_time_seconds is None:
+        f71_time_seconds = 5.0 * 365.24 * 24.0 * 60.0 * 60.0  # legacy default: 5 years
+    origen_triton_box_A.set_f71_pos(f71_time_seconds, case=f71_case)
     origen_triton_box_A.read_burned_material()
-    origen_triton_box_A.DECAY_days = 12
-    origen_triton_box_A.DECAY_steps = 12 * 2 + 2
+    origen_triton_box_A.DECAY_days = decay_days
+    origen_triton_box_A.DECAY_steps = int(decay_days * steps_per_day) + 2
     origen_triton_box_A.atom_dens = {isotope: 1.0}
 
     volume: float = 1.0  # origen_triton_box_A.volume
@@ -801,14 +830,16 @@ def run_test(isotope: str, lambda_decay: float | None, apply_volume_scaling: boo
     return pd_A, pd_B, pd_C
 
 
-def run_all_tests(apply_volume_scaling: bool, do_skip_calcs: bool):
+def run_all_tests(apply_volume_scaling: bool, do_skip_calcs: bool,
+                  f71_path: str = DEFAULT_F71_PATH, f71_case: str = DEFAULT_F71_CASE):
     tests = {
         'xe-136': None,
         'xe-135': 2.106574217602 * 1e-5,  # Xe-135 decay constant [1/s]
     }
     for iso, lam in tests.items():
         prefix = iso.replace('-', '')
-        run_test(iso, lam, apply_volume_scaling, do_skip_calcs, out_prefix=prefix)
+        run_test(iso, lam, apply_volume_scaling, do_skip_calcs, out_prefix=prefix,
+                 f71_path=f71_path, f71_case=f71_case)
 
 
 def main():
@@ -816,11 +847,11 @@ def main():
     run_test('xe-136', None, apply_volume_scaling, do_skip_calcs, out_prefix='xe136')
 
 
-def main_old(isotope: str = 'xe-135'):
+def main_old(isotope: str = 'xe-135', f71_path: str = DEFAULT_F71_PATH, f71_case: str = DEFAULT_F71_CASE):
     """Legacy method using DiffLeak; kept for reference."""
     # Baseline decay calculation setup
-    origen_triton = DecayBoxA('/home/o/MSRR-local/53-Ko1-cr2half/10-burn/33-SalstDose/SCALE_FILE.f71', 1200e3)
-    origen_triton.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0)  # 5 years
+    origen_triton = DecayBoxA(f71_path, 1200e3)
+    origen_triton.set_f71_pos(5.0 * 365.24 * 24.0 * 60.0 * 60.0, case=f71_case)  # 5 years
     origen_triton.read_burned_material()
     origen_triton.DECAY_days = 12
     origen_triton.DECAY_steps = 120

@@ -1,3 +1,5 @@
+"""Shared utilities for SCALE/ORIGEN post-processing and geometry helpers."""
+
 import os
 import io
 import re
@@ -6,7 +8,19 @@ import numpy as np
 import pandas as pd
 from sample_decay_dose.constants import SCALE_bin_path, ATOM_DENS_MINIMUM
 
-NUCLIDE_RE = re.compile(r"(?P<elem>[a-zA-Z]+)(?P<num>\d+)(?P<meta>m)?")
+NUCLIDE_RE = re.compile(r"^(?P<elem>[a-zA-Z]+)-?(?P<num>\d+)(?P<meta>m)?$")
+
+
+def _run_subprocess(command: list[str], context: str) -> str:
+    """Run an external command and return decoded stdout, raising on failures."""
+    result = subprocess.run(command, capture_output=True)
+    return_code = result.returncode if isinstance(result.returncode, int) else 0
+    stdout = result.stdout.decode(errors='replace')
+    stderr = result.stderr.decode(errors='replace')
+    if return_code != 0:
+        error_text = stderr.strip() or stdout.strip() or f"exit code {return_code}"
+        raise RuntimeError(f"{context} failed for command {' '.join(command)}: {error_text}")
+    return stdout
 
 
 def _format_cases_arg(my_cases) -> str:
@@ -23,7 +37,7 @@ def _format_cases_arg(my_cases) -> str:
 
 
 def _as_nuclide_name(raw: str) -> str | None:
-    dummy = re.search(NUCLIDE_RE, raw.strip())
+    dummy = re.fullmatch(NUCLIDE_RE, raw.strip())
     if dummy is None:
         return None
     elem = dummy.group("elem").lower()
@@ -81,8 +95,10 @@ def scale_adens(adens: dict, scalef: float = 1.0) -> dict:
 
 def get_f71_positions_index(f71file: str) -> dict:
     """ Read info of SCALE's F71 file """
-    output = subprocess.run([f"{SCALE_bin_path}/obiwan", "view", "-format=info", f71file], capture_output=True)
-    output = output.stdout.decode().split("\n")
+    output = _run_subprocess(
+        [f"{SCALE_bin_path}/obiwan", "view", "-format=info", f71file],
+        f"Reading F71 index from {f71file}",
+    ).split("\n")
     f71_idx = {}
     skip_data = ['pos', '(-)']  # sip records starting with this
     end_data = 'state definition present'  # stop reading after reaching this
@@ -121,9 +137,12 @@ def get_f71_nuclide_case(f71file: str, f71units: str = 'atom', my_cases=None) ->
     if my_cases is None:
         my_cases = [1]
     cases_str: str = _format_cases_arg(my_cases)
-    output = subprocess.run([f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=20", f"-units={f71units}",
-        "-idform={:Ee}{:AAA}{:m}", cases_str, f71file], capture_output=True)
-    return pd.read_csv(io.StringIO(output.stdout.decode()), skipinitialspace=True, index_col=0)
+    output = _run_subprocess(
+        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=20", f"-units={f71units}",
+         "-idform={:Ee}{:AAA}{:m}", cases_str, f71file],
+        f"Reading F71 nuclide data from {f71file}",
+    )
+    return pd.read_csv(io.StringIO(output), skipinitialspace=True, index_col=0)
 
 
 def get_f71_elements_case(f71file: str, f71units: str = 'atom', my_cases=None) -> pd.DataFrame:
@@ -133,10 +152,12 @@ def get_f71_elements_case(f71file: str, f71units: str = 'atom', my_cases=None) -
     if my_cases is None:
         my_cases = [1]
     cases_str: str = _format_cases_arg(my_cases)
-    output = subprocess.run(
+    output = _run_subprocess(
         [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=20", f"-units={f71units}", "-idform={:Ee}",
-            cases_str, f71file], capture_output=True)
-    return pd.read_csv(io.StringIO(output.stdout.decode()), skipinitialspace=True, index_col=0)
+         cases_str, f71file],
+        f"Reading F71 elemental data from {f71file}",
+    )
+    return pd.read_csv(io.StringIO(output), skipinitialspace=True, index_col=0)
 
 
 def get_burned_nuclide_atom_dens(f71file: str, position: int, my_cases: list[int] = None) -> dict:
@@ -148,8 +169,7 @@ def get_burned_nuclide_atom_dens(f71file: str, position: int, my_cases: list[int
         runlist = [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=atom",
             "-idform={:Ee}{:AAA}{:m}", cases_str, f71file]
 
-    output = subprocess.run(runlist, capture_output=True)
-    output = output.stdout.decode().split("\n")
+    output = _run_subprocess(runlist, f"Reading atom densities from {f71file}").split("\n")
     densities = {}  # densities[nuclide] = (density at position of f71 file)
     skip = ["case", "step", "time", "power", "flux", "volume"]
     for line in output:
@@ -183,8 +203,7 @@ def get_burned_nuclide_data(f71file: str, position: int, f71units: str = 'atom',
         cases_str: str = _format_cases_arg(my_cases)
         runlist = [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", f"-units={f71units}",
             "-idform={:Ee}{:AAA}{:m}", cases_str, f71file]
-    output = subprocess.run(runlist, capture_output=True)
-    output = output.stdout.decode().split("\n")
+    output = _run_subprocess(runlist, f"Reading {f71units} data from {f71file}").split("\n")
     f71unit_data = {}
     skip = ["case", "step", "time", "power", "flux", "volume"]
     for line in output:
@@ -210,10 +229,11 @@ def get_burned_nuclide_data(f71file: str, position: int, f71units: str = 'atom',
 
 def get_single_nuclide_case(f71file: str, position: int, my_nuclide: str) -> float:
     my_nuclide = my_nuclide.lower()
-    output = subprocess.run(
+    output = _run_subprocess(
         [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=becq", "-idform={:Ee}{:AAA}{:m}",
-            f71file], capture_output=True)
-    output = output.stdout.decode().split("\n")
+         f71file],
+        f"Reading nuclide {my_nuclide} from {f71file}",
+    ).split("\n")
     skip = ["case", "step", "time", "power", "flux", "volume"]
     for line in output:
         data = line.split(',')
@@ -237,10 +257,11 @@ def get_single_nuclide_case(f71file: str, position: int, my_nuclide: str) -> flo
 
 def get_burned_material_total_mass_dens(f71file: str, position: int) -> float:
     """ Read mass density of nuclides from SCALE's F71 file, calculate total \rho [g/cm^3] """
-    output = subprocess.run(
+    output = _run_subprocess(
         [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=gper", "-idform={:Ee}{:AAA}{:m}",
-            f71file], capture_output=True)
-    output = output.stdout.decode().split("\n")
+         f71file],
+        f"Reading total mass density from {f71file}",
+    ).split("\n")
     my_rho: float = 0
     skip = ["case", "step", "time", "power", "flux", "volume"]
     for line in output:
@@ -260,8 +281,10 @@ def get_burned_material_total_mass_dens(f71file: str, position: int) -> float:
 
 def get_F33_num_sets(f33file: str) -> int:
     """ Returns the number of numSets in SCALE F33 file """
-    output = subprocess.run([f"{SCALE_bin_path}/obiwan", "info", f33file], capture_output=True)
-    output = output.stdout.decode().split("\n")
+    output = _run_subprocess(
+        [f"{SCALE_bin_path}/obiwan", "info", f33file],
+        f"Reading F33 info from {f33file}",
+    ).split("\n")
     f33_base: str = os.path.basename(f33file)
     for line in output:
         data = line.split()
@@ -336,14 +359,16 @@ def get_cyl_h(cyl_volume: float, cyl_r: float) -> float:
 
 def run_scale(deck_file: str, nmpi: int = 1):
     """ Run a SCALE deck """
-    scale_out = subprocess.run([f"{SCALE_bin_path}/scalerte", "-N", str(nmpi), "-m", deck_file], capture_output=True)
-    scale_out = scale_out.stdout.decode().split("\n")
-    if any("error" in line.lower() for line in scale_out):
+    result = subprocess.run([f"{SCALE_bin_path}/scalerte", "-N", str(nmpi), "-m", deck_file], capture_output=True)
+    return_code = result.returncode if isinstance(result.returncode, int) else 0
+    stdout_lines = result.stdout.decode(errors='replace').split("\n")
+    stderr_lines = result.stderr.decode(errors='replace').split("\n")
+    has_error_text = any("error" in line.lower() for line in stdout_lines + stderr_lines)
+    if return_code != 0 or has_error_text:
         print('Failed run: ', deck_file)
         return False
-    else:
-        print('OK run: ', deck_file)
-        return True
+    print('OK run: ', deck_file)
+    return True
 
 
 def atom_dens_for_origen(adens: dict) -> str:

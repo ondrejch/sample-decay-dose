@@ -68,14 +68,27 @@ class TestSampleDoseFunctions(unittest.TestCase):
     @patch('sample_decay_dose.utils.subprocess.run')
     def test_run_scale_success(self, mock_run):
         proc = MagicMock()
+        proc.returncode = 0
         proc.stdout.decode.return_value = "All good\n"
+        proc.stderr.decode.return_value = ""
         mock_run.return_value = proc
         self.assertTrue(utils.run_scale('deck.inp'))
 
     @patch('sample_decay_dose.utils.subprocess.run')
     def test_run_scale_failure(self, mock_run):
         proc = MagicMock()
+        proc.returncode = 0
         proc.stdout.decode.return_value = "Error: something failed\n"
+        proc.stderr.decode.return_value = ""
+        mock_run.return_value = proc
+        self.assertFalse(utils.run_scale('deck.inp'))
+
+    @patch('sample_decay_dose.utils.subprocess.run')
+    def test_run_scale_nonzero_return_code(self, mock_run):
+        proc = MagicMock()
+        proc.returncode = 1
+        proc.stdout.decode.return_value = "All good\n"
+        proc.stderr.decode.return_value = ""
         mock_run.return_value = proc
         self.assertFalse(utils.run_scale('deck.inp'))
 
@@ -96,6 +109,8 @@ class TestSampleDoseFunctions(unittest.TestCase):
     @patch('sample_decay_dose.utils.subprocess.run')
     def test_get_f71_positions_index(self, mock_run):
         # Tokens: id time power flux fluence energy initialhm libpos case step DCGNAB
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stderr = b""
         mock_run.return_value.stdout = (
             b"1 0.0 0.0 0.0 0.0 0.0 0.0 1 1 1 1\n"
             b"2 1.0 1.0 1.0 1.0 1.0 1.0 2 1 2 1\n"
@@ -110,7 +125,19 @@ class TestSampleDoseFunctions(unittest.TestCase):
         self.assertEqual(idx[2]['libpos'], '2')
 
     @patch('sample_decay_dose.utils.subprocess.run')
+    def test_get_f71_positions_index_raises_on_failed_subprocess(self, mock_run):
+        proc = MagicMock()
+        proc.returncode = 2
+        proc.stdout = b""
+        proc.stderr = b"obiwan failed"
+        mock_run.return_value = proc
+        with self.assertRaises(RuntimeError):
+            utils.get_f71_positions_index('x.f71')
+
+    @patch('sample_decay_dose.utils.subprocess.run')
     def test_get_burned_nuclide_atom_dens(self, mock_run):
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stderr = b""
         mock_run.return_value.stdout = (
             b"case,1,2,3,4,5\n"
             b"U235,0,0,0,0,1.20e-3\n"
@@ -119,6 +146,11 @@ class TestSampleDoseFunctions(unittest.TestCase):
         dens = utils.get_burned_nuclide_atom_dens('x.f71', 5)
         self.assertAlmostEqual(dens['u-235'], 1.20e-3)
         self.assertAlmostEqual(dens['pu-239'], 5.00e-5)
+
+    def test_as_nuclide_name_rejects_embedded_garbage(self):
+        self.assertIsNone(utils._as_nuclide_name("prefix u235 suffix"))
+        self.assertEqual(utils._as_nuclide_name("U-235"), "u-235")
+        self.assertEqual(utils._as_nuclide_name("Xe135m"), "xe-135m")
 
 
 class TestOrigenFromTritonMHA(unittest.TestCase):
@@ -152,6 +184,19 @@ class TestOrigenFromTritonMHA(unittest.TestCase):
         mock_mkdir.assert_called_with(self.o.case_dir)
         mock_run.assert_called_with(self.o.ORIGEN_input_file_name)
         self.assertIn('u-235', self.o.decayed_atom_dens)
+
+
+class TestF71PositionSelection(unittest.TestCase):
+
+    @patch('sample_decay_dose.SampleDose.get_f71_positions_index', return_value={
+        10: {'case': '1', 'time': '100.0'},
+        20: {'case': '1', 'time': '200.0'},
+        30: {'case': '1', 'time': '300.0'},
+    })
+    def test_set_f71_pos_uses_f71_position_key(self, _mock_idx):
+        o = sd.OrigenFromTriton(_f71='core.f71', _mass=1.0)
+        o.set_f71_pos(260.0, case='1')
+        self.assertEqual(o.BURNED_MATERIAL_F71_position, 30)
 
 
 class TestDoseEstimator(unittest.TestCase):

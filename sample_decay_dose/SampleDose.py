@@ -116,20 +116,25 @@ class OrigenFromTriton(Origen):
 
     def set_f71_pos(self, t: float = 5184000.0, case: str = '1'):
         """ Returns closest position in the F71 file for a case """
-        pos_times = [(k, float(v['time'])) for k, v in self.BURNED_MATERIAL_F71_index.items() if v['case'] == case]
+        pos_times = sorted(
+            (k, float(v['time'])) for k, v in self.BURNED_MATERIAL_F71_index.items() if v['case'] == case
+        )
+        if not pos_times:
+            raise ValueError(f"Case '{case}' not found in F71 index for {self.BURNED_MATERIAL_F71_file_name}")
         times = [x[1] for x in pos_times]
         t_min = min(times)
         t_max = max(times)
         if t < t_min:
             print(f"Error: Time {t} seconds is less than {t_min} s, the minimum time in records.")
-            pos_number: int = 0
+            pos_idx: int = 0
         elif t > t_max:
             print(f"Error: Time {t} seconds is longer than {t_max} s, the maximum time in records.")
-            pos_number: int = len(times) - 1
+            pos_idx: int = len(times) - 1
         else:
-            pos_number: int = bisect_left(times, t)
-        print(f'--> Closest F71 position found at slot {pos_number}, {times[pos_number]} seconds, '
-              f'{times[pos_number] / (60.0 * 60.0 * 24)} days.')
+            pos_idx: int = bisect_left(times, t)
+        pos_number: int = pos_times[pos_idx][0]
+        print(f'--> Closest F71 position found at slot {pos_number}, {times[pos_idx]} seconds, '
+              f'{times[pos_idx] / (60.0 * 60.0 * 24)} days.')
 
         self.BURNED_MATERIAL_F71_position = pos_number
 

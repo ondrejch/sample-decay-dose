@@ -10,6 +10,7 @@ from leaky_box_origen.LeakyBox import (
     _average_rates,
     _time_average_rates,
     _add_analytic_columns,
+    _inventory_to_release_rate,
     plot_results,
 )
 
@@ -74,6 +75,34 @@ class TestLeakyBoxHelpers(unittest.TestCase):
         self.assertTrue(np.allclose(pd_A["diff [%]"].values, 0.0, atol=1e-12))
         self.assertTrue(np.allclose(pd_B["diff [%]"].values, 0.0, atol=1e-12))
         self.assertTrue(np.allclose(pd_C["diff [%]"].values, 0.0, atol=1e-12))
+
+    def test_add_analytic_columns_equal_rates_is_stable(self):
+        isotope = "xe-136"
+        times = np.array([0.0, 1.0, 2.0])
+        eps = 0.1
+        n0_density = 1.0
+        n0_total = 1.0
+
+        pd_A = pd.DataFrame({"time [s]": times, isotope: np.ones_like(times)})
+        pd_B = pd.DataFrame({"time [s]": times, "total": np.ones_like(times)})
+        pd_C = pd.DataFrame({"time [s]": times, "total": np.ones_like(times)})
+
+        _add_analytic_columns(pd_A, pd_B, pd_C, isotope, n0_density, n0_total, eps, eps, None)
+        self.assertTrue(np.isfinite(pd_B["analytic"]).all())
+        self.assertTrue(np.isfinite(pd_C["analytic"]).all())
+
+    def test_inventory_to_release_rate(self):
+        df = pd.DataFrame({
+            "time [s]": [0.0, 1.0],
+            "time [d]": [0.0, 1.0 / 86400.0],
+            "xe-135": [10.0, 20.0],
+        })
+        out = _inventory_to_release_rate(df, removal_rate_s=0.25)
+        self.assertAlmostEqual(out.loc[0, "xe-135"], 2.5)
+        self.assertAlmostEqual(out.loc[1, "xe-135"], 5.0)
+        self.assertAlmostEqual(out.loc[1, "time [s]"], 1.0)
+        with self.assertRaises(ValueError):
+            _inventory_to_release_rate(df, removal_rate_s=0.0)
 
     def test_plot_results_creates_file(self):
         isotope = "xe-136"
