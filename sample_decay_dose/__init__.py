@@ -9,8 +9,7 @@ __all__ = [
     'Radiator',
     'read_opus',
     'utils',
-    'scalerte_ssh_agent',
-    'scalerte_ssh_client',
+    'gw_exe',
 ]
 
 # Backward compatibility for code importing sample_decay_dose.all

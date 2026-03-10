@@ -69,57 +69,7 @@ See the per-directory READMEs for details:
 
 ## SSH-native scalerte job API
 
-This repository now includes a portable SSH-native API for dispatching jobs from
-`cl` to worker nodes (`c0801,c0802,c0803,c0804`) without exposing network ports.
-
-### Components
-
-- `scalerte-ssh-agent`:
-  Runs on `cl`. Creates job directories in `~/.scalerte_ssh/jobs`, selects a worker
-  (least active jobs), launches the command via SSH, and stores `stdout/stderr/exit_code`.
-- `scalerte-ssh`:
-  Local wrapper that calls the remote agent through `ssh cl ...`.
-- `sample_decay_dose.scalerte_ssh_client.ScalerteSshClient`:
-  Python API for reusable integration in other projects.
-
-### One-time setup on `cl`
-
-Install this package on `cl` so `scalerte-ssh-agent` is available in PATH:
-
-```bash
-pip install /path/to/sample-decay-dose
-```
-
-### Local CLI examples
-
-Submit a job from your workstation:
-
-```bash
-scalerte-ssh submit --host cl --workdir /home/you/caseA --cmd "scalerte input.inp"
-```
-
-Check status and result:
-
-```bash
-scalerte-ssh status --host cl <job_id>
-scalerte-ssh result --host cl <job_id> --tail-lines 80
-```
-
-Stream logs until completion:
-
-```bash
-scalerte-ssh logs --host cl <job_id> --stream stdout --follow
-```
-
-### Python API example
-
-```python
-from sample_decay_dose.scalerte_ssh_client import ScalerteSshClient
-
-client = ScalerteSshClient(host="cl")
-job = client.submit("scalerte input.inp", workdir="/home/you/caseA")
-final = client.wait(job["job_id"], poll_seconds=3.0)
-print(final["state"], final["exit_code"])
-```
+Gateway executables and docs were moved to:
+`sample_decay_dose/gw_exe/` (see `sample_decay_dose/gw_exe/README.md`).
 
 Ondrej Chvala <ochvala@utexas.edu>
