@@ -5,6 +5,10 @@ Ondrej Chvala <ochvala@utexas.edu>
 
 Load analysis results from JSONS and re-generates the spreadsheet.
 """
+import argparse
+from datetime import date
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import json5
@@ -22,12 +26,38 @@ dtB: float = 0.0  # time offset box B
 dtC: float = 43200./2.0  # time offset Bbx C
 
 
-def main():
-    with open('boxA.json5', 'r') as f:  # Save to json
+def _resolve_run_dir(run_dir: str | None) -> Path:
+    if run_dir:
+        p = Path(run_dir).expanduser()
+        if not p.is_absolute():
+            p = (Path.cwd() / p).resolve()
+        else:
+            p = p.resolve()
+        return p
+
+    cwd = Path.cwd()
+    if (cwd / 'boxA.json5').is_file():
+        return cwd
+
+    base = Path(__file__).resolve().parent
+    today = base / f'run_{date.today().isoformat()}'
+    if (today / 'boxA.json5').is_file():
+        return today
+
+    runs = sorted(base.glob('run_*'))
+    if runs:
+        return runs[-1]
+
+    return cwd
+
+
+def main(run_dir: str | None = None):
+    base = _resolve_run_dir(run_dir)
+    with open(base / 'boxA.json5', 'r') as f:  # Save to json
         box_A_adens = json5.load(f)
-    with open('boxB.json5', 'r') as f:  # Save to json
+    with open(base / 'boxB.json5', 'r') as f:  # Save to json
         box_B_adens = json5.load(f)
-    with open('boxC.json5', 'r') as f:
+    with open(base / 'boxC.json5', 'r') as f:
         box_C_adens = json5.load(f)
 
     pd_A: pd.DataFrame = get_dataframe(box_A_adens)
@@ -94,7 +124,7 @@ N_i^C(t) & = N_i^A e^{ - \lambda_i  t}
         pd_B['diff [%]'] = 100.0 * (pd_B['total'] - pd_B['analytic']) / pd_B['analytic']
         pd_C['diff [%]'] = 100.0 * (pd_C['total'] - pd_C['analytic']) / pd_C['analytic']
 
-    writer = pd.ExcelWriter('leaky_boxes1.xlsx')
+    writer = pd.ExcelWriter(base / 'leaky_boxes1.xlsx')
 
     pd_A.to_excel(writer, sheet_name='box A')
     pd_B.to_excel(writer, sheet_name='box B')
@@ -103,5 +133,8 @@ N_i^C(t) & = N_i^A e^{ - \lambda_i  t}
 
 
 if __name__ == "__main__":
-    # pass
-    main()
+    parser = argparse.ArgumentParser(description="Regenerate leaky-box spreadsheet from saved JSON files.")
+    parser.add_argument("--run-dir", default=None,
+                        help="Run directory containing boxA.json5/boxB.json5/boxC.json5")
+    args = parser.parse_args()
+    main(run_dir=args.run_dir)

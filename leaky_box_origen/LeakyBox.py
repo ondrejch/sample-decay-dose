@@ -11,6 +11,10 @@ Box A --> Box B --> outside
 """
 import os
 import re
+from contextlib import contextmanager
+from datetime import date
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from bisect import bisect_left
@@ -26,6 +30,8 @@ DEFAULT_F71_PATH: str = os.getenv(
     os.path.expanduser('~/0.03/20-burn-MHA/mha-4.5-a4/msrr.f71'),
 )
 DEFAULT_F71_CASE: str = os.getenv('LEAKYBOX_F71_CASE', '20')
+LEAKY_BOX_ORIGEN_DIR: Path = Path(__file__).resolve().parent
+LEAKY_BOX_DATA_DIR: Path = LEAKY_BOX_ORIGEN_DIR / 'data'
 
 
 class Origen:
@@ -472,6 +478,64 @@ do_skip_calcs: bool = False  # If True, skips SCALE calculations & re-reads exis
 apply_volume_scaling: bool = False  # If True, scales feed by source_volume / dest_volume
 
 
+def _resolve_run_dir(run_dir: str | None = None, run_date: str | None = None) -> str:
+    # Default run artifacts location: leaky_box_origen/run_YYYY-MM-DD.
+    if run_dir:
+        resolved = Path(run_dir).expanduser()
+        if not resolved.is_absolute():
+            resolved = (Path.cwd() / resolved).resolve()
+        else:
+            resolved = resolved.resolve()
+    else:
+        if run_date is None:
+            run_date = date.today().isoformat()
+        resolved = LEAKY_BOX_ORIGEN_DIR / f'run_{run_date}'
+    resolved.mkdir(parents=True, exist_ok=True)
+    return str(resolved)
+
+
+def _resolve_input_file(path: str, fallback_dir: Path | None = None) -> str:
+    # Resolve inputs from cwd first, then optionally from a project data directory by basename.
+    resolved = Path(path).expanduser()
+    if resolved.exists():
+        return str(resolved.resolve())
+    if not resolved.is_absolute() and fallback_dir is not None:
+        candidate = (fallback_dir / resolved.name).resolve()
+        if candidate.exists():
+            return str(candidate)
+    return str(resolved)
+
+
+def _resolve_run_artifact(path: str) -> str:
+    # Resolve artifacts from cwd first, then today's run directory, then the newest run directory.
+    resolved = Path(path).expanduser()
+    if resolved.exists():
+        return str(resolved.resolve())
+    if resolved.is_absolute():
+        return str(resolved)
+
+    run_candidates = [LEAKY_BOX_ORIGEN_DIR / f'run_{date.today().isoformat()}']
+    run_candidates.extend(sorted(LEAKY_BOX_ORIGEN_DIR.glob('run_*'), reverse=True))
+    for run_dir in run_candidates:
+        if run_dir.is_dir():
+            candidate = (run_dir / resolved).resolve()
+            if candidate.exists():
+                return str(candidate)
+    return str(resolved)
+
+
+@contextmanager
+def _in_directory(path: str):
+    # Execute a block in a target directory and restore cwd on exit.
+    prev_cwd = os.getcwd()
+    os.makedirs(path, exist_ok=True)
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(prev_cwd)
+
+
 def _out_name(prefix: str | None, stem: str, ext: str) -> str:
     if prefix:
         return f"{stem}_{prefix}{ext}"
@@ -640,9 +704,10 @@ def _write_box_c_timeseries_json(pd_C: pd.DataFrame, volume_cm3: float, out_pref
     return fname
 
 
-def _find_case_f71(case_dirs: list[str], f71_name: str = 'origen.f71') -> str | None:
+def _find_case_f71(case_dirs: list[str], f71_name: str = 'origen.f71',
+                   search_roots: list[str] | None = None) -> str | None:
     # Locate an ORIGEN F71 file for a given case directory (supports legacy _leak suffix).
-    roots = [os.getcwd(), os.path.join(os.getcwd(), 'leaky_box_origen')]
+    roots = search_roots or [os.getcwd(), os.path.join(os.getcwd(), 'leaky_box_origen')]
     for case_dir in case_dirs:
         for root in roots:
             candidate = os.path.join(root, case_dir, f71_name)
@@ -660,6 +725,7 @@ def _total_activity_from_f71(f71_path: str, position: int = -1) -> float:
 def _activity_timeseries_from_box_json(box_json_path: str, case_prefix: str,
                                        position: int = -1) -> pd.DataFrame:
     # Build total activity vs time from per-case F71 outputs referenced by a box json5 file.
+    box_root = os.path.dirname(os.path.abspath(box_json_path))
     with open(box_json_path, 'r') as f:
         box_data = json5.load(f)
     steps = sorted(box_data.items(), key=lambda kv: float(kv[1]['time']))
@@ -674,7 +740,7 @@ def _activity_timeseries_from_box_json(box_json_path: str, case_prefix: str,
             f'_{case_prefix}_{k_int:04d}',
             f'_{case_prefix}_{k_int:04d}_leak',
         ]
-        f71_path = _find_case_f71(case_dirs)
+        f71_path = _find_case_f71(case_dirs, search_roots=[box_root])
         if f71_path is None:
             print(f"Warning: no F71 found for {case_prefix} step {k_int:04d}")
             total_bq = 0.0
@@ -714,6 +780,7 @@ def _write_activity_csv(pd_B_act: pd.DataFrame, pd_C_act: pd.DataFrame, out_pref
 def _activity_timeseries_per_nuclide_from_box_json(box_json_path: str, case_prefix: str,
                                                    position: int = -1) -> pd.DataFrame:
     # Build per-nuclide activity (Bq) vs time from per-case F71 outputs.
+    box_root = os.path.dirname(os.path.abspath(box_json_path))
     with open(box_json_path, 'r') as f:
         box_data = json5.load(f)
     steps = sorted(box_data.items(), key=lambda kv: float(kv[1]['time']))
@@ -728,7 +795,7 @@ def _activity_timeseries_per_nuclide_from_box_json(box_json_path: str, case_pref
             f'_{case_prefix}_{k_int:04d}',
             f'_{case_prefix}_{k_int:04d}_leak',
         ]
-        f71_path = _find_case_f71(case_dirs)
+        f71_path = _find_case_f71(case_dirs, search_roots=[box_root])
         activity = {}
         if f71_path is None:
             print(f"Warning: no F71 found for {case_prefix} step {k_int:04d}")
@@ -742,7 +809,7 @@ def _activity_timeseries_per_nuclide_from_box_json(box_json_path: str, case_pref
 
 def _load_dcf_csv(path: str) -> dict[str, float]:
     # Load dose coefficients (DCF) from CSV with columns: nuclide, dcf_sv_bq or dcf_rem_bq.
-    df = pd.read_csv(path)
+    df = pd.read_csv(_resolve_input_file(path, LEAKY_BOX_DATA_DIR))
     cols = {c.lower(): c for c in df.columns}
     if 'nuclide' not in cols:
         raise ValueError("DCF CSV must include 'nuclide' column")
@@ -771,7 +838,7 @@ def _load_dcf_csv(path: str) -> dict[str, float]:
 def _load_dcf_immersion_csv(path: str) -> dict[str, float]:
     # Load immersion (cloudshine) dose coefficients from CSV with columns:
     # nuclide, dcf_sv_per_bq_m3_day (Sv/day per Bq/m^3).
-    df = pd.read_csv(path)
+    df = pd.read_csv(_resolve_input_file(path, LEAKY_BOX_DATA_DIR))
     cols = {c.lower(): c for c in df.columns}
     if 'nuclide' not in cols or 'dcf_sv_per_bq_m3_day' not in cols:
         raise ValueError("Immersion DCF CSV must include 'nuclide' and 'dcf_sv_per_bq_m3_day' columns")
@@ -1028,20 +1095,26 @@ def compute_dose_from_box(box_json_path: str, case_prefix: str, dcf_inhal_csv: s
             - `release_rate_bq_s`: activity in each nuclide column is already Bq/s.
         removal_rate_s: Required when `activity_representation='inventory_bq'`.
     """
-    dcf_inhal = _load_dcf_csv(dcf_inhal_csv)
-    dcf_imm = _load_dcf_immersion_csv(dcf_immersion_csv) if dcf_immersion_csv else {}
-    activity_df = _activity_timeseries_per_nuclide_from_box_json(box_json_path, case_prefix)
-    if activity_representation == 'inventory_bq':
-        if removal_rate_s is None:
-            raise ValueError("removal_rate_s must be provided when activity_representation='inventory_bq'")
-        activity_df = _inventory_to_release_rate(activity_df, removal_rate_s)
-    elif activity_representation != 'release_rate_bq_s':
-        raise ValueError("activity_representation must be 'inventory_bq' or 'release_rate_bq_s'")
-    pd_dose = compute_dose_timeseries(activity_df, dcf_inhal, chi_q_schedule,
-                                      breathing_rate_m3_s, dcf_imm)
-    fname = _out_name(out_prefix, 'leaky_boxes_dose', '.csv')
-    pd_dose.to_csv(fname, index=False)
-    plot_dose_timeseries(pd_dose, out_prefix)
+    box_json_path = _resolve_run_artifact(box_json_path)
+    if not os.path.isfile(box_json_path):
+        raise FileNotFoundError(f"Box JSON not found: {box_json_path}")
+    dcf_inhal_csv = _resolve_input_file(dcf_inhal_csv, LEAKY_BOX_DATA_DIR)
+    dcf_immersion_csv = _resolve_input_file(dcf_immersion_csv, LEAKY_BOX_DATA_DIR) if dcf_immersion_csv else None
+    with _in_directory(os.path.dirname(os.path.abspath(box_json_path))):
+        dcf_inhal = _load_dcf_csv(dcf_inhal_csv)
+        dcf_imm = _load_dcf_immersion_csv(dcf_immersion_csv) if dcf_immersion_csv else {}
+        activity_df = _activity_timeseries_per_nuclide_from_box_json(box_json_path, case_prefix)
+        if activity_representation == 'inventory_bq':
+            if removal_rate_s is None:
+                raise ValueError("removal_rate_s must be provided when activity_representation='inventory_bq'")
+            activity_df = _inventory_to_release_rate(activity_df, removal_rate_s)
+        elif activity_representation != 'release_rate_bq_s':
+            raise ValueError("activity_representation must be 'inventory_bq' or 'release_rate_bq_s'")
+        pd_dose = compute_dose_timeseries(activity_df, dcf_inhal, chi_q_schedule,
+                                          breathing_rate_m3_s, dcf_imm)
+        fname = _out_name(out_prefix, 'leaky_boxes_dose', '.csv')
+        pd_dose.to_csv(fname, index=False)
+        plot_dose_timeseries(pd_dose, out_prefix)
     return pd_dose
 
 def plot_total_activity(pd_B_act: pd.DataFrame, pd_C_act: pd.DataFrame,
@@ -1078,18 +1151,23 @@ def compute_inhalation_dose_from_box(box_json_path: str, case_prefix: str, dcf_c
     This assumes activity columns represent release rates in Bq/s. For Box C, this is a
     conservative bounding assumption if Box C is treated as an instantaneous release.
     """
-    dcf_map = _load_dcf_csv(dcf_csv)
-    activity_df = _activity_timeseries_per_nuclide_from_box_json(box_json_path, case_prefix)
-    if activity_representation == 'inventory_bq':
-        if removal_rate_s is None:
-            raise ValueError("removal_rate_s must be provided when activity_representation='inventory_bq'")
-        activity_df = _inventory_to_release_rate(activity_df, removal_rate_s)
-    elif activity_representation != 'release_rate_bq_s':
-        raise ValueError("activity_representation must be 'inventory_bq' or 'release_rate_bq_s'")
-    pd_dose = compute_inhalation_dose_timeseries(activity_df, dcf_map, chi_q_s_m3, breathing_rate_m3_s)
-    fname = _out_name(out_prefix, 'leaky_boxes_dose', '.csv')
-    pd_dose.to_csv(fname, index=False)
-    plot_dose_timeseries(pd_dose, out_prefix)
+    box_json_path = _resolve_run_artifact(box_json_path)
+    if not os.path.isfile(box_json_path):
+        raise FileNotFoundError(f"Box JSON not found: {box_json_path}")
+    dcf_csv = _resolve_input_file(dcf_csv, LEAKY_BOX_DATA_DIR)
+    with _in_directory(os.path.dirname(os.path.abspath(box_json_path))):
+        dcf_map = _load_dcf_csv(dcf_csv)
+        activity_df = _activity_timeseries_per_nuclide_from_box_json(box_json_path, case_prefix)
+        if activity_representation == 'inventory_bq':
+            if removal_rate_s is None:
+                raise ValueError("removal_rate_s must be provided when activity_representation='inventory_bq'")
+            activity_df = _inventory_to_release_rate(activity_df, removal_rate_s)
+        elif activity_representation != 'release_rate_bq_s':
+            raise ValueError("activity_representation must be 'inventory_bq' or 'release_rate_bq_s'")
+        pd_dose = compute_inhalation_dose_timeseries(activity_df, dcf_map, chi_q_s_m3, breathing_rate_m3_s)
+        fname = _out_name(out_prefix, 'leaky_boxes_dose', '.csv')
+        pd_dose.to_csv(fname, index=False)
+        plot_dose_timeseries(pd_dose, out_prefix)
     return pd_dose
 
 def _get_case_max_time(index: dict, case: str) -> float:
@@ -1241,29 +1319,33 @@ def run_test(isotope: str, lambda_decay: float | None, apply_volume_scaling: boo
              f71_path: str = DEFAULT_F71_PATH, f71_case: str = DEFAULT_F71_CASE,
              f71_time_seconds: float | None = None,
              sample_mass_g: float = 1200e3, decay_days: float = 12.0,
-             steps_per_day: float = 2.0) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+             steps_per_day: float = 2.0,
+             run_dir: str | None = None, run_date: str | None = None
+             ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run a single isotope test and return dataframes."""
     # Baseline decay calculation setup (forces a single-isotope inventory).
-    origen_triton_box_A = _setup_box_a(
-        f71_path, f71_case, f71_time_seconds, sample_mass_g, do_skip_calcs, decay_days, steps_per_day
-    )
-    origen_triton_box_A.atom_dens = {isotope: 1.0}
-    pd_A, pd_B, pd_C, volume, box_A_leak_rate, box_B_leak_rate = _run_simulation(
-        origen_triton_box_A, apply_volume_scaling, do_skip_calcs, out_prefix
-    )
+    f71_path = os.path.abspath(os.path.expanduser(f71_path))
+    with _in_directory(_resolve_run_dir(run_dir=run_dir, run_date=run_date)):
+        origen_triton_box_A = _setup_box_a(
+            f71_path, f71_case, f71_time_seconds, sample_mass_g, do_skip_calcs, decay_days, steps_per_day
+        )
+        origen_triton_box_A.atom_dens = {isotope: 1.0}
+        pd_A, pd_B, pd_C, volume, box_A_leak_rate, box_B_leak_rate = _run_simulation(
+            origen_triton_box_A, apply_volume_scaling, do_skip_calcs, out_prefix
+        )
 
-    pd_B['total'] = pd_B[isotope] * volume
-    pd_C['total'] = pd_C[isotope] * volume
+        pd_B['total'] = pd_B[isotope] * volume
+        pd_C['total'] = pd_C[isotope] * volume
 
-    n0_density = float(origen_triton_box_A.atom_dens.get(isotope, 0.0))
-    n0_total = n0_density * (origen_triton_box_A.volume if apply_volume_scaling else volume)
+        n0_density = float(origen_triton_box_A.atom_dens.get(isotope, 0.0))
+        n0_total = n0_density * (origen_triton_box_A.volume if apply_volume_scaling else volume)
 
-    _add_analytic_columns(pd_A, pd_B, pd_C, isotope, n0_density, n0_total,
-                          box_A_leak_rate, box_B_leak_rate, lambda_decay)
+        _add_analytic_columns(pd_A, pd_B, pd_C, isotope, n0_density, n0_total,
+                              box_A_leak_rate, box_B_leak_rate, lambda_decay)
 
-    _write_excel(pd_A, pd_B, pd_C, out_prefix)
-    _write_dataframes_json(pd_A, pd_B, pd_C, out_prefix)
-    plot_results(pd_A, pd_B, pd_C, isotope, out_prefix)
+        _write_excel(pd_A, pd_B, pd_C, out_prefix)
+        _write_dataframes_json(pd_A, pd_B, pd_C, out_prefix)
+        plot_results(pd_A, pd_B, pd_C, isotope, out_prefix)
     return pd_A, pd_B, pd_C
 
 
@@ -1271,39 +1353,43 @@ def run_from_f71(apply_volume_scaling: bool, do_skip_calcs: bool, out_prefix: st
                  f71_path: str = DEFAULT_F71_PATH, f71_case: str = DEFAULT_F71_CASE,
                  f71_time_seconds: float | None = None, sample_mass_g: float = 1200e3,
                  plot_isotopes: list[str] | None = None, decay_days: float = 12.0,
-                 steps_per_day: float = 2.0) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+                 steps_per_day: float = 2.0, run_dir: str | None = None,
+                 run_date: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run a simulation using the actual F71 nuclide composition (no analytic comparison)."""
     # Uses full F71 composition; analytic columns are not added.
-    origen_triton_box_A = _setup_box_a(
-        f71_path, f71_case, f71_time_seconds, sample_mass_g, do_skip_calcs, decay_days, steps_per_day
-    )
-    pd_A, pd_B, pd_C, volume, _, _ = _run_simulation(
-        origen_triton_box_A, apply_volume_scaling, do_skip_calcs, out_prefix
-    )
+    f71_path = os.path.abspath(os.path.expanduser(f71_path))
+    with _in_directory(_resolve_run_dir(run_dir=run_dir, run_date=run_date)):
+        origen_triton_box_A = _setup_box_a(
+            f71_path, f71_case, f71_time_seconds, sample_mass_g, do_skip_calcs, decay_days, steps_per_day
+        )
+        pd_A, pd_B, pd_C, volume, _, _ = _run_simulation(
+            origen_triton_box_A, apply_volume_scaling, do_skip_calcs, out_prefix
+        )
 
-    _write_excel(pd_A, pd_B, pd_C, out_prefix)
-    _write_dataframes_json(pd_A, pd_B, pd_C, out_prefix)
-    _write_box_c_timeseries_json(pd_C, volume, out_prefix, source_volume_cm3=origen_triton_box_A.volume)
+        _write_excel(pd_A, pd_B, pd_C, out_prefix)
+        _write_dataframes_json(pd_A, pd_B, pd_C, out_prefix)
+        _write_box_c_timeseries_json(pd_C, volume, out_prefix, source_volume_cm3=origen_triton_box_A.volume)
 
-    # Total activity (Bq) for Box B and Box C from per-case F71 outputs.
-    try:
-        boxB_json = _out_name(out_prefix, 'boxB', '.json5')
-        boxC_json = _out_name(out_prefix, 'boxC', '.json5')
-        pd_B_act = _activity_timeseries_from_box_json(boxB_json, 'box_B')
-        pd_C_act = _activity_timeseries_from_box_json(boxC_json, 'box_C')
-        _write_activity_csv(pd_B_act, pd_C_act, out_prefix)
-        plot_total_activity(pd_B_act, pd_C_act, out_prefix)
-    except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
-        print(f"Warning: activity plot generation failed: {exc}")
+        # Total activity (Bq) for Box B and Box C from per-case F71 outputs.
+        try:
+            boxB_json = _out_name(out_prefix, 'boxB', '.json5')
+            boxC_json = _out_name(out_prefix, 'boxC', '.json5')
+            pd_B_act = _activity_timeseries_from_box_json(boxB_json, 'box_B')
+            pd_C_act = _activity_timeseries_from_box_json(boxC_json, 'box_C')
+            _write_activity_csv(pd_B_act, pd_C_act, out_prefix)
+            plot_total_activity(pd_B_act, pd_C_act, out_prefix)
+        except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+            print(f"Warning: activity plot generation failed: {exc}")
 
-    if plot_isotopes:
-        _plot_isotopes(pd_A, pd_B, pd_C, plot_isotopes, volume, out_prefix)
+        if plot_isotopes:
+            _plot_isotopes(pd_A, pd_B, pd_C, plot_isotopes, volume, out_prefix)
 
     return pd_A, pd_B, pd_C
 
 
 def run_all_tests(apply_volume_scaling: bool, do_skip_calcs: bool,
-                  decay_days: float = 12.0, steps_per_day: float = 2.0):
+                  decay_days: float = 12.0, steps_per_day: float = 2.0,
+                  run_dir: str | None = None, run_date: str | None = None):
     # Convenience wrapper for Xe-136 and Xe-135 test cases.
     tests = {
         'xe-136': None,
@@ -1312,7 +1398,8 @@ def run_all_tests(apply_volume_scaling: bool, do_skip_calcs: bool,
     for iso, lam in tests.items():
         prefix = iso.replace('-', '')
         run_test(iso, lam, apply_volume_scaling, do_skip_calcs, out_prefix=prefix,
-                 decay_days=decay_days, steps_per_day=steps_per_day)
+                 decay_days=decay_days, steps_per_day=steps_per_day,
+                 run_dir=run_dir, run_date=run_date)
 
 
 def main():

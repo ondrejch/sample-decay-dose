@@ -9,11 +9,13 @@ F71-based leakage simulations live.
 - `AnalysisRerun.py` rebuilds spreadsheets from saved JSON outputs.
 
 **Outputs**
-- Runs create `_box_*` working directories under this folder.
-- JSON, Excel, and plots are written to the current working directory.
+- Runs write all artifacts under `leaky_box_origen/run_YYYY-MM-DD/`.
+- ORIGEN working directories (`_box_*`), JSON, Excel, CSV, and plots are all written to that run directory.
 
 **Notes**
 - Defaults (F71 path, case/time selection, leak elements) are set in `LeakyBox.py`.
 - Override F71 defaults with environment variables:
   - `LEAKYBOX_F71_PATH`
   - `LEAKYBOX_F71_CASE`
+- Source PDFs used for DCF extraction live under `PDF/`.
+- Script data CSV files (DCF tables) live under `leaky_box_origen/data/`.
