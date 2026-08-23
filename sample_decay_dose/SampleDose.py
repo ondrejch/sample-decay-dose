@@ -10,7 +10,6 @@ from datetime import datetime
 import numpy as np
 from bisect import bisect_left
 from sample_decay_dose.read_opus import integrate_opus
-from sample_decay_dose.constants import SCALE_bin_path, ATOM_DENS_MINIMUM
 from sample_decay_dose.utils import nicely_print_atom_dens, get_rho_from_atom_density, scale_adens, \
     get_f71_positions_index, get_last_position_for_case, get_burned_nuclide_atom_dens, get_burned_nuclide_data, \
     get_burned_material_total_mass_dens, get_F33_num_sets, get_cyl_r, get_cyl_r_4_1, get_fill_height_4_1, get_cyl_h, \
@@ -19,6 +18,13 @@ from sample_decay_dose.utils import nicely_print_atom_dens, get_rho_from_atom_de
 NOW: str = datetime.now().replace(microsecond=0).isoformat()
 MAVRIC_NG_XSLIB: str = 'v7.1-28n19g'
 DAY_IN_SECONDS: float = 24.0 * 60.0 * 60.0
+
+
+def run_scale_or_raise(deck_file: str, nmpi: int = 1, context_dir: str = ''):
+    """ Run a SCALE deck via utils.run_scale() and raise RuntimeError on failure """
+    if not run_scale(deck_file, nmpi):
+        out_file: str = os.path.join(context_dir, deck_file.replace('.inp', '.out'))
+        raise RuntimeError(f"SCALE run failed for '{context_dir}/{deck_file}', see output file: {out_file}")
 
 # Predefined lists of atom densities for convenience. Check and make yours :)
 # https://www.sandmeyersteel.com/316H.html
@@ -170,7 +176,7 @@ class OrigenFromTriton(Origen):
             if self.debug > 0:
                 print(f'ORIGEN: decaying sample for {self.SAMPLE_DECAY_days} days')
                 print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
-            run_scale(self.ORIGEN_input_file_name)
+            run_scale_or_raise(self.ORIGEN_input_file_name, context_dir=self.case_dir)
 
             self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
         finally:
@@ -406,7 +412,7 @@ class OrigenIrradiation(Origen):
                 print(f'ORIGEN: burning sample for {self.irradiate_days} days at {self.irradiate_flux} n/cm2/s, '
                       f'then decaying for {self.SAMPLE_DECAY_days} days')
                 print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
-            run_scale(self.ORIGEN_input_file_name)
+            run_scale_or_raise(self.ORIGEN_input_file_name, context_dir=self.case_dir)
 
             self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
         finally:
@@ -563,7 +569,7 @@ class OrigenDecayBox(Origen):
             if self.debug > 0:
                 print(f'ORIGEN: decaying for {self.SAMPLE_DECAY_days} days')
                 print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
-            run_scale(self.ORIGEN_input_file_name)
+            run_scale_or_raise(self.ORIGEN_input_file_name, context_dir=self.case_dir)
 
             print(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
             self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
@@ -715,7 +721,7 @@ class DoseEstimator:
 
             if self.debug > 0:
                 print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
-            run_scale(self.MAVRIC_input_file_name)
+            run_scale_or_raise(self.MAVRIC_input_file_name, context_dir=self.case_dir)
         finally:
             os.chdir(self.cwd)
 
@@ -780,34 +786,150 @@ class DoseEstimator:
         d['stdev'] = d['value'] * np.sqrt(relsig)
         return d
 
+    def _deck_head(self, title_line: str, comp_pre: str = '', comp_extra: str = '') -> str:
+        """ Common deck preamble: shell copies, header, parameters, composition """
+        adjoint_flux_file: str = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
+        return (f'\n'
+                f'=shell\n'
+                f'cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_F71_file_name} .\n'
+                f'cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .\n'
+                f"'cp -r ${{INPDIR}}/{adjoint_flux_file} .\n"
+                f'end\n'
+                f'\n'
+                f'=mavric parm=(   )\n'
+                f'{NOW} {title_line}\n'
+                f'{MAVRIC_NG_XSLIB}\n'
+                f'\n'
+                f'read parameters\n'
+                f'    randomSeed=0000000100000001\n'
+                f'    ceLibrary="ce_v7.1_endf.xml"\n'
+                f'    neutrons  photons\n'
+                f'    fissionMult=1  secondaryMult=1\n'
+                f'    perBatch={self.histories_per_batch} batches={self.batches}\n'
+                f'end parameters\n'
+                f'\n'
+                f'read comp\n'
+                f'{comp_pre}'
+                f'<{self.SAMPLE_ATOM_DENS_file_name_MAVRIC}\n'
+                f'{comp_extra}'
+                f'end comp\n')
+
+    def _deck_distributions(self) -> str:
+        """ ORIGEN spectral distributions; neutron distribution only when neutron intensity is positive """
+        out: str = ''
+        if self.neutron_intensity > 0.0:
+            out += (f'\n'
+                    f'    distribution 1\n'
+                    f'        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"\n'
+                    f'        special="origensBinaryConcentrationFile"\n'
+                    f'        parameters {self.DECAYED_SAMPLE_F71_position} 1 end\n'
+                    f'        filename="{self.DECAYED_SAMPLE_F71_file_name}"\n'
+                    f'    end distribution')
+        out += (f'\n'
+                f'    distribution 2\n'
+                f'        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, photons"\n'
+                f'        special="origensBinaryConcentrationFile"\n'
+                f'        parameters {self.DECAYED_SAMPLE_F71_position} 5 end\n'
+                f'        filename="{self.DECAYED_SAMPLE_F71_file_name}"\n'
+                f'    end distribution\n')
+        return out
+
+    def _deck_tail(self, neutron_source_cylinder: str, photon_source_cylinder: str,
+                   multiplier: float | None = None, handling_detector: bool = False) -> str:
+        """ Common deck tail: sources, importance map, tallies, closing """
+        neutron_src: str = ''
+        if self.neutron_intensity > 0.0:
+            mult_n: str = f'\n        multiplier={multiplier}' if multiplier is not None else ''
+            neutron_src = (f'\n'
+                           f'    src 1\n'
+                           f'        title="Sample neutrons"\n'
+                           f'        neutron\n'
+                           f'        useNormConst\n'
+                           f'        cylinder {neutron_source_cylinder}\n'
+                           f'        eDistributionID=1'
+                           f'{mult_n}\n'
+                           f'    end src')
+        mult_p: str = f'\n        multiplier={multiplier}        ' if multiplier is not None else ''
+        out: str = (f'\nread sources'
+                    f'{neutron_src}'
+                    f'\n'
+                    f'    src 2\n'
+                    f'        title="Sample photons"\n'
+                    f'        photon\n'
+                    f'        useNormConst\n'
+                    f'        cylinder {photon_source_cylinder}\n'
+                    f'        eDistributionID=2'
+                    f'{mult_p}\n'
+                    f'    end src\n'
+                    f'end sources\n'
+                    f'\n'
+                    f'read importanceMap\n'
+                    f'   gridGeometryID=1\n'
+                    f"'   adjointFluxes=\"{self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')}\"\n"
+                    f'   adjointSource 1\n'
+                    f'        locationID=1\n'
+                    f'        responseID=1\n'
+                    f'   end adjointSource\n'
+                    f'   adjointSource 2\n'
+                    f'        locationID=1\n'
+                    f'        responseID=2\n'
+                    f'   end adjointSource\n')
+        if handling_detector:
+            out += (f'   adjointSource 5\n'
+                    f'        locationID=2\n'
+                    f'        responseID=1\n'
+                    f'   end adjointSource\n'
+                    f'   adjointSource 6\n'
+                    f'        locationID=2\n'
+                    f'        responseID=2\n'
+                    f'   end adjointSource\n')
+        out += (f'end importanceMap\n'
+                f'\n'
+                f'read tallies\n'
+                f'    pointDetector 1\n'
+                f'        title="neutron detector"\n'
+                f'        neutron\n'
+                f'        locationID=1\n'
+                f'        responseID=1\n'
+                f'    end pointDetector\n'
+                f'    pointDetector 2\n'
+                f'        title="photon detector"\n'
+                f'        photon\n'
+                f'        locationID=1\n'
+                f'        responseID=2\n'
+                f'    end pointDetector\n')
+        if handling_detector:
+            out += (f'    pointDetector 5\n'
+                    f'        title="neutron detector"\n'
+                    f'        neutron\n'
+                    f'        locationID=2\n'
+                    f'        responseID=1\n'
+                    f'    end pointDetector\n'
+                    f'    pointDetector 6\n'
+                    f'        title="photon detector"\n'
+                    f'        photon\n'
+                    f'        locationID=2\n'
+                    f'        responseID=2\n'
+                    f'    end pointDetector\n'
+                    f'\n'
+                    f'end tallies\n'
+                    f'\n'
+                    f'end data\n'
+                    f'end\n')
+        else:
+            out += (f'end tallies\n'
+                    f'\n'
+                    f'end data\n'
+                    f'end\n')
+        return out
+
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
         self.cyl_r = get_cyl_r(self.sample_volume)
         self.box_a: float = self.det_x + 10.0  # Problem box distance [cm]
-        adjoint_flux_file = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
-        mavric_output: str = f'''
-=shell
-cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_F71_file_name} .
-cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
-'cp -r ${{INPDIR}}/{adjoint_flux_file} .
-end
-
-=mavric parm=(   )
-{NOW} Sample dose, {self.sample_weight} g, at x={self.det_x} cm
-{MAVRIC_NG_XSLIB}
-
-read parameters
-    randomSeed=0000000100000001
-    ceLibrary="ce_v7.1_endf.xml"
-    neutrons  photons
-    fissionMult=1  secondaryMult=1
-    perBatch={self.histories_per_batch} batches={self.batches}
-end parameters
-
-read comp
-<{self.SAMPLE_ATOM_DENS_file_name_MAVRIC}
-end comp
-
+        mavric_output: str = self._deck_head(
+            title_line=f'Sample dose, {self.sample_weight} g, at x={self.det_x} cm')
+        mavric_output += f'''
 read geometry
 global unit 1
     cylinder 1 {self.cyl_r} 2p {self.cyl_r}
@@ -831,23 +953,8 @@ read definitions
     end response 
 '''
 
-        if self.neutron_intensity > 0.0:
-            mavric_output += f'''
-    distribution 1
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"
-        special="origensBinaryConcentrationFile"
-        parameters {self.DECAYED_SAMPLE_F71_position} 1 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
-    end distribution'''
-
+        mavric_output += self._deck_distributions()
         mavric_output += f'''
-    distribution 2
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, photons"
-        special="origensBinaryConcentrationFile"
-        parameters {self.DECAYED_SAMPLE_F71_position} 5 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
-    end distribution
-
     gridGeometry 1
         title="Grid over the problem"
         xLinear {self.N_planes_box} -{self.box_a} {self.box_a}
@@ -858,59 +965,10 @@ read definitions
         zLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
     end gridGeometry
 end definitions
-
-read sources'''
-        if self.neutron_intensity > 0.0:
-            mavric_output += f'''
-    src 1
-        title="Sample neutrons"
-        neutron
-        useNormConst
-        cylinder {self.cyl_r} {self.cyl_r} -{self.cyl_r}
-        eDistributionID=1
-    end src'''
-
-        mavric_output += f'''
-    src 2
-        title="Sample photons"
-        photon
-        useNormConst
-        cylinder {self.cyl_r} {self.cyl_r} -{self.cyl_r}
-        eDistributionID=2
-    end src
-end sources
-
-read importanceMap
-   gridGeometryID=1
-'   adjointFluxes="{adjoint_flux_file}"
-   adjointSource 1
-        locationID=1
-        responseID=1
-   end adjointSource
-   adjointSource 2
-        locationID=1
-        responseID=2
-   end adjointSource
-end importanceMap
-
-read tallies
-    pointDetector 1
-        title="neutron detector"
-        neutron
-        locationID=1
-        responseID=1
-    end pointDetector
-    pointDetector 2
-        title="photon detector"
-        photon
-        locationID=1
-        responseID=2
-    end pointDetector
-end tallies
-
-end data
-end
 '''
+        mavric_output += self._deck_tail(
+            neutron_source_cylinder=f'{self.cyl_r} {self.cyl_r} -{self.cyl_r}',
+            photon_source_cylinder=f'{self.cyl_r} {self.cyl_r} -{self.cyl_r}')
         return mavric_output
 
 
@@ -954,7 +1012,7 @@ class DoseEstimatorSquareTank(DoseEstimator):
 
             if self.debug > 0:
                 print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
-            run_scale(self.MAVRIC_input_file_name, nmpi)
+            run_scale_or_raise(self.MAVRIC_input_file_name, nmpi, context_dir=self.case_dir)
         finally:
             os.chdir(self.cwd)
 
@@ -962,30 +1020,9 @@ class DoseEstimatorSquareTank(DoseEstimator):
         """ MAVRIC dose calculation input file """
         self.cyl_r = get_cyl_r(self.sample_volume)
         tank_r: float = self.cyl_r  # current outer layer [cm]
-        adjoint_flux_file = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
-        mavric_output: str = f'''
-=shell
-cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_F71_file_name} .
-cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
-'cp -r ${{INPDIR}}/{adjoint_flux_file} .
-end
-
-=mavric parm=(   )
-{NOW} DoseEstimatorSquareTank, {self.sample_weight} g, layers {self.layers_thicknesses}
-{MAVRIC_NG_XSLIB}
-
-read parameters
-    randomSeed=0000000100000001
-    ceLibrary="ce_v7.1_endf.xml"
-    neutrons  photons
-    fissionMult=1  secondaryMult=1
-    perBatch={self.histories_per_batch} batches={self.batches}
-end parameters
-
-read comp
-<{self.SAMPLE_ATOM_DENS_file_name_MAVRIC}
-end comp
-
+        mavric_output: str = self._deck_head(
+            title_line=f'DoseEstimatorSquareTank, {self.sample_weight} g, layers {self.layers_thicknesses}')
+        mavric_output += f'''
 read geometry
 global unit 1
     cylinder 1 {self.cyl_r} 2p {self.cyl_r}
@@ -1023,23 +1060,8 @@ read definitions
     end response 
 '''
 
-        if self.neutron_intensity > 0.0:
-            mavric_output += f'''
-    distribution 1
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"
-        special="origensBinaryConcentrationFile"
-        parameters {self.DECAYED_SAMPLE_F71_position} 1 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
-    end distribution'''
-
+        mavric_output += self._deck_distributions()
         mavric_output += f'''
-    distribution 2
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, photons"
-        special="origensBinaryConcentrationFile"
-        parameters {self.DECAYED_SAMPLE_F71_position} 5 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
-    end distribution
-
     gridGeometry 1
         title="Grid over the problem, location at +x"
         xLinear {self.N_planes_box} {self.cyl_r} {self.box_a}
@@ -1053,59 +1075,10 @@ read definitions
         zPlanes {x_planes_str} -{self.box_a} {self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
     end gridGeometry
 end definitions
-
-read sources'''
-        if self.neutron_intensity > 0.0:
-            mavric_output += f'''
-    src 1
-        title="Sample neutrons"
-        neutron
-        useNormConst
-        cylinder {self.cyl_r} {self.cyl_r} -{self.cyl_r}
-        eDistributionID=1
-    end src'''
-
-        mavric_output += f'''
-    src 2
-        title="Sample photons"
-        photon
-        useNormConst
-        cylinder {self.cyl_r} {self.cyl_r} -{self.cyl_r}
-        eDistributionID=2
-    end src
-end sources
-
-read importanceMap
-   gridGeometryID=1
-'   adjointFluxes="{adjoint_flux_file}"
-   adjointSource 1
-        locationID=1
-        responseID=1
-   end adjointSource
-   adjointSource 2
-        locationID=1
-        responseID=2
-   end adjointSource
-end importanceMap
-
-read tallies
-    pointDetector 1
-        title="neutron detector"
-        neutron
-        locationID=1
-        responseID=1
-    end pointDetector
-    pointDetector 2
-        title="photon detector"
-        photon
-        locationID=1
-        responseID=2
-    end pointDetector
-end tallies
-
-end data
-end
 '''
+        mavric_output += self._deck_tail(
+            neutron_source_cylinder=f'{self.cyl_r} {self.cyl_r} -{self.cyl_r}',
+            photon_source_cylinder=f'{self.cyl_r} {self.cyl_r} -{self.cyl_r}')
         return mavric_output
 
 
@@ -1128,7 +1101,6 @@ class DoseEstimatorStorageTank(DoseEstimatorSquareTank):
         """ MAVRIC dose calculation input file """
         tank_inner_volume: float = self.sample_volume + self.sample_volume * self.plenum_volume_fraction
         self.cyl_r = get_cyl_r_4_1(tank_inner_volume)
-        adjoint_flux_file = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
         tank_r: float = self.cyl_r  # current outer layer radius [cm]
         tank_h2: float = 2.0 * self.cyl_r  # current outer layer half-height [cm]
         self.sample_h2 = get_fill_height_4_1(self.sample_volume, tank_inner_volume) / 2.0
@@ -1136,34 +1108,15 @@ class DoseEstimatorStorageTank(DoseEstimatorSquareTank):
         sample_z_max: float = tank_h2 - self.sample_offset_z
         sample_z_min: float = -tank_h2
 
-        mavric_output: str = f'''
-=shell
-cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_F71_file_name} .
-cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
-'cp -r ${{INPDIR}}/{adjoint_flux_file} .
-end
-
-=mavric parm=(   )
-{NOW} DoseEstimatorStorageTank, {self.sample_weight} g, layers {self.layers_thicknesses}, plenum fraction {self.plenum_volume_fraction}
-{MAVRIC_NG_XSLIB}
-
-read parameters
-    randomSeed=0000000100000001
-    ceLibrary="ce_v7.1_endf.xml"
-    neutrons  photons
-    fissionMult=1  secondaryMult=1
-    perBatch={self.histories_per_batch} batches={self.batches}
-end parameters
-
-read comp
-<{self.SAMPLE_ATOM_DENS_file_name_MAVRIC}
-helium 2 end
-end comp
-
+        mavric_output: str = self._deck_head(
+            title_line=f'DoseEstimatorStorageTank, {self.sample_weight} g, '
+                       f'layers {self.layers_thicknesses}, plenum fraction {self.plenum_volume_fraction}',
+            comp_extra='helium 2 end\n')
+        mavric_output += f'''
 read geometry
 global unit 1
     cylinder 1 {tank_r} {sample_z_max} {sample_z_min}
-    cylinder 2 {tank_r} {tank_h2} {sample_z_max} 
+    cylinder 2 {tank_r} {tank_h2} {sample_z_max}
     media 1 1 1
     media 2 1 2
 '''
@@ -1207,23 +1160,8 @@ read definitions
     end response 
 '''
 
-        if self.neutron_intensity > 0.0:
-            mavric_output += f'''
-    distribution 1
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"
-        special="origensBinaryConcentrationFile"
-        parameters {self.DECAYED_SAMPLE_F71_position} 1 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
-    end distribution'''
-
+        mavric_output += self._deck_distributions()
         mavric_output += f'''
-    distribution 2
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, photons"
-        special="origensBinaryConcentrationFile"
-        parameters {self.DECAYED_SAMPLE_F71_position} 5 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
-    end distribution
-
     gridGeometry 1
         title="Grid over the problem, location at +x"
         xLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a}
@@ -1237,59 +1175,10 @@ read definitions
         zPlanes {z_planes_str} {tank_h2 + self.box_a} {-tank_h2 - self.box_a} end
     end gridGeometry
 end definitions
-
-read sources'''
-        if self.neutron_intensity > 0.0:
-            mavric_output += f'''
-    src 1
-        title="Sample neutrons"
-        neutron
-        useNormConst
-        cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
-        eDistributionID=1
-    end src'''
-
-        mavric_output += f'''
-    src 2
-        title="Sample photons"
-        photon
-        useNormConst
-        cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
-        eDistributionID=2
-    end src
-end sources
-
-read importanceMap
-   gridGeometryID=1
-'   adjointFluxes="{adjoint_flux_file}"
-   adjointSource 1
-        locationID=1
-        responseID=1
-   end adjointSource
-   adjointSource 2
-        locationID=1
-        responseID=2
-   end adjointSource
-end importanceMap
-
-read tallies
-    pointDetector 1
-        title="neutron detector"
-        neutron
-        locationID=1
-        responseID=1
-    end pointDetector
-    pointDetector 2
-        title="photon detector"
-        photon
-        locationID=1
-        responseID=2
-    end pointDetector
-end tallies
-
-end data
-end
 '''
+        mavric_output += self._deck_tail(
+            neutron_source_cylinder=f'{self.cyl_r} {sample_z_max} {sample_z_min}',
+            photon_source_cylinder=f'{self.cyl_r} {sample_z_max} {sample_z_min}')
         return mavric_output
 
 
@@ -1307,37 +1196,16 @@ class DoseEstimatorGenericTank(DoseEstimatorSquareTank):
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
-        adjoint_flux_file: str = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
         self.sample_h2 = get_cyl_h(self.sample_volume, self.cyl_r) / 2.0
         tank_r: float = self.cyl_r
         tank_h2: float = self.sample_h2
         sample_z_max: float = self.sample_h2
         sample_z_min: float = - self.sample_h2
 
-        mavric_output = f'''
-=shell
-cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_F71_file_name} .
-cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
-'cp -r ${{INPDIR}}/{adjoint_flux_file} .
-end
-
-=mavric parm=(   )
-{NOW} DoseEstimatorGenericTank, {self.sample_weight} g, layers {self.layers_thicknesses}
-{MAVRIC_NG_XSLIB}
-
-read parameters
-    randomSeed=0000000100000001
-    ceLibrary="ce_v7.1_endf.xml"
-    neutrons  photons
-    fissionMult=1  secondaryMult=1
-    perBatch={self.histories_per_batch} batches={self.batches}
-end parameters
-
-read comp
-<{self.SAMPLE_ATOM_DENS_file_name_MAVRIC}
-' helium 2 end
-end comp
-
+        mavric_output: str = self._deck_head(
+            title_line=f'DoseEstimatorGenericTank, {self.sample_weight} g, layers {self.layers_thicknesses}',
+            comp_extra="' helium 2 end\n")
+        mavric_output += f'''
 read geometry
 global unit 1
     cylinder 1 {tank_r} 2p {tank_h2}
@@ -1381,23 +1249,8 @@ read definitions
     end response 
 '''
 
-        if self.neutron_intensity > 0.0:
-            mavric_output += f'''
-    distribution 1
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"
-        special="origensBinaryConcentrationFile"
-        parameters {self.DECAYED_SAMPLE_F71_position} 1 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
-    end distribution'''
-
+        mavric_output += self._deck_distributions()
         mavric_output += f'''
-    distribution 2
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, photons"
-        special="origensBinaryConcentrationFile"
-        parameters {self.DECAYED_SAMPLE_F71_position} 5 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
-    end distribution
-
     gridGeometry 1
         title="Grid over the problem, location at +x"
         xLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a}
@@ -1411,59 +1264,10 @@ read definitions
         zPlanes {z_planes_str} {tank_h2 + self.box_a} {-tank_h2 - self.box_a} end
     end gridGeometry
 end definitions
-
-read sources'''
-        if self.neutron_intensity > 0.0:
-            mavric_output += f'''
-    src 1
-        title="Sample neutrons"
-        neutron
-        useNormConst
-        cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
-        eDistributionID=1
-    end src'''
-
-        mavric_output += f'''
-    src 2
-        title="Sample photons"
-        photon
-        useNormConst
-        cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
-        eDistributionID=2
-    end src
-end sources
-
-read importanceMap
-   gridGeometryID=1
-'   adjointFluxes="{adjoint_flux_file}"
-   adjointSource 1
-        locationID=1
-        responseID=1
-   end adjointSource
-   adjointSource 2
-        locationID=1
-        responseID=2
-   end adjointSource
-end importanceMap
-
-read tallies
-    pointDetector 1
-        title="neutron detector"
-        neutron
-        locationID=1
-        responseID=1
-    end pointDetector
-    pointDetector 2
-        title="photon detector"
-        photon
-        locationID=1
-        responseID=2
-    end pointDetector
-end tallies
-
-end data
-end
 '''
+        mavric_output += self._deck_tail(
+            neutron_source_cylinder=f'{self.cyl_r} {sample_z_max} {sample_z_min}',
+            photon_source_cylinder=f'{self.cyl_r} {sample_z_max} {sample_z_min}')
         return mavric_output
 
 
@@ -1485,37 +1289,16 @@ class HandlingContactDoseEstimatorGenericTank(DoseEstimatorSquareTank):
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
-        adjoint_flux_file: str = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
         self.sample_h2 = get_cyl_h(self.sample_volume, self.cyl_r) / 2.0
         tank_r: float = self.cyl_r
         tank_h2: float = self.sample_h2
         sample_z_max: float = self.sample_h2
         sample_z_min: float = - self.sample_h2
 
-        mavric_output = f'''
-=shell
-cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_F71_file_name} .
-cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
-'cp -r ${{INPDIR}}/{adjoint_flux_file} .
-end
-
-=mavric parm=(   )
-{NOW} DoseEstimatorGenericTank, {self.sample_weight} g, layers {self.layers_thicknesses}
-{MAVRIC_NG_XSLIB}
-
-read parameters
-    randomSeed=0000000100000001
-    ceLibrary="ce_v7.1_endf.xml"
-    neutrons  photons
-    fissionMult=1  secondaryMult=1
-    perBatch={self.histories_per_batch} batches={self.batches}
-end parameters
-
-read comp
-<{self.SAMPLE_ATOM_DENS_file_name_MAVRIC}
-' helium 2 end
-end comp
-
+        mavric_output: str = self._deck_head(
+            title_line=f'DoseEstimatorGenericTank, {self.sample_weight} g, layers {self.layers_thicknesses}',
+            comp_extra="' helium 2 end\n")
+        mavric_output += f'''
 read geometry
 global unit 1
     cylinder 1 {tank_r} 2p {tank_h2}
@@ -1565,23 +1348,8 @@ read definitions
     end response 
 '''
 
-        if self.neutron_intensity > 0.0:
-            mavric_output += f'''
-    distribution 1
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"
-        special="origensBinaryConcentrationFile"
-        parameters {self.DECAYED_SAMPLE_F71_position} 1 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
-    end distribution'''
-
+        mavric_output += self._deck_distributions()
         mavric_output += f'''
-    distribution 2
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, photons"
-        special="origensBinaryConcentrationFile"
-        parameters {self.DECAYED_SAMPLE_F71_position} 5 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
-    end distribution
-
     gridGeometry 1
         title="Grid over the problem, location at +x"
         xLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a}
@@ -1596,80 +1364,11 @@ read definitions
         zPlanes {z_planes_str} {tank_h2 + self.box_a} {-tank_h2 - self.box_a} end
     end gridGeometry
 end definitions
-
-read sources'''
-        if self.neutron_intensity > 0.0:
-            mavric_output += f'''
-    src 1
-        title="Sample neutrons"
-        neutron
-        useNormConst
-        cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
-        eDistributionID=1
-    end src'''
-
-        mavric_output += f'''
-    src 2
-        title="Sample photons"
-        photon
-        useNormConst
-        cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
-        eDistributionID=2
-    end src
-end sources
-
-read importanceMap
-   gridGeometryID=1
-'   adjointFluxes="{adjoint_flux_file}"
-   adjointSource 1
-        locationID=1
-        responseID=1
-   end adjointSource
-   adjointSource 2
-        locationID=1
-        responseID=2
-   end adjointSource
-   adjointSource 5
-        locationID=2
-        responseID=1
-   end adjointSource
-   adjointSource 6
-        locationID=2
-        responseID=2
-   end adjointSource
-end importanceMap
-
-read tallies
-    pointDetector 1
-        title="neutron detector"
-        neutron
-        locationID=1
-        responseID=1
-    end pointDetector
-    pointDetector 2
-        title="photon detector"
-        photon
-        locationID=1
-        responseID=2
-    end pointDetector
-    pointDetector 5
-        title="neutron detector"
-        neutron
-        locationID=2
-        responseID=1
-    end pointDetector
-    pointDetector 6
-        title="photon detector"
-        photon
-        locationID=2
-        responseID=2
-    end pointDetector
-
-end tallies
-
-end data
-end
 '''
+        mavric_output += self._deck_tail(
+            neutron_source_cylinder=f'{self.cyl_r} {sample_z_max} {sample_z_min}',
+            photon_source_cylinder=f'{self.cyl_r} {sample_z_max} {sample_z_min}',
+            handling_detector=True)
         return mavric_output
 
     def get_responses(self):
@@ -1752,37 +1451,16 @@ class MHATank(HandlingContactDoseEstimatorGenericTank):
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
-        adjoint_flux_file: str = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
         tank_r: float = self.cyl_r
         tank_h2: float = self.sample_h2
         sample_z_max: float = self.sample_h2
         sample_z_min: float = - self.sample_h2
 
-        mavric_output = f'''
-=shell
-cp -r ${{INPDIR}}/{self.DECAYED_SAMPLE_F71_file_name} .
-cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
-'cp -r ${{INPDIR}}/{adjoint_flux_file} .
-end
-
-=mavric parm=(   )
-{NOW} DoseEstimatorGenericTank, {self.sample_weight} g, layers {self.layers_thicknesses}
-{MAVRIC_NG_XSLIB}
-
-read parameters
-    randomSeed=0000000100000001
-    ceLibrary="ce_v7.1_endf.xml"
-    neutrons  photons
-    fissionMult=1  secondaryMult=1
-    perBatch={self.histories_per_batch} batches={self.batches}
-end parameters
-
-read comp
-' THIS IS BASICALLY MEANINGLESS, SINCE THIS IS A GAS AND WE ARE USING A SOURCE FROM F71 FILE 
-<{self.SAMPLE_ATOM_DENS_file_name_MAVRIC}
-' helium 2 end
-end comp
-
+        mavric_output: str = self._deck_head(
+            title_line=f'DoseEstimatorGenericTank, {self.sample_weight} g, layers {self.layers_thicknesses}',
+            comp_pre="' THIS IS BASICALLY MEANINGLESS, SINCE THIS IS A GAS AND WE ARE USING A SOURCE FROM F71 FILE \n",
+            comp_extra="' helium 2 end\n")
+        mavric_output += f'''
 read geometry
 global unit 1
     cylinder 1 {tank_r} 2p {tank_h2}
@@ -1830,23 +1508,8 @@ read definitions
     end response 
 '''
 
-        if self.neutron_intensity > 0.0:
-            mavric_output += f'''
-    distribution 1
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"
-        special="origensBinaryConcentrationFile"
-        parameters {self.DECAYED_SAMPLE_F71_position} 1 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
-    end distribution'''
-
+        mavric_output += self._deck_distributions()
         mavric_output += f'''
-    distribution 2
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, photons"
-        special="origensBinaryConcentrationFile"
-        parameters {self.DECAYED_SAMPLE_F71_position} 5 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
-    end distribution
-
     gridGeometry 1
         title="Grid over the problem, location at +x"
         xLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a}
@@ -1861,82 +1524,12 @@ read definitions
         zPlanes {z_planes_str} {tank_h2 + self.box_a} {-tank_h2 - self.box_a} end
     end gridGeometry
 end definitions
-
-read sources'''
-        if self.neutron_intensity > 0.0:
-            mavric_output += f'''
-    src 1
-        title="Sample neutrons"
-        neutron
-        useNormConst
-        cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
-        eDistributionID=1
-        multiplier={self.source_multiplier}
-    end src'''
-
-        mavric_output += f'''
-    src 2
-        title="Sample photons"
-        photon
-        useNormConst
-        cylinder {self.cyl_r} {sample_z_max} {sample_z_min}
-        eDistributionID=2
-        multiplier={self.source_multiplier}        
-    end src
-end sources
-
-read importanceMap
-   gridGeometryID=1
-'   adjointFluxes="{adjoint_flux_file}"
-   adjointSource 1
-        locationID=1
-        responseID=1
-   end adjointSource
-   adjointSource 2
-        locationID=1
-        responseID=2
-   end adjointSource
-   adjointSource 5
-        locationID=2
-        responseID=1
-   end adjointSource
-   adjointSource 6
-        locationID=2
-        responseID=2
-   end adjointSource
-end importanceMap
-
-read tallies
-    pointDetector 1
-        title="neutron detector"
-        neutron
-        locationID=1
-        responseID=1
-    end pointDetector
-    pointDetector 2
-        title="photon detector"
-        photon
-        locationID=1
-        responseID=2
-    end pointDetector
-    pointDetector 5
-        title="neutron detector"
-        neutron
-        locationID=2
-        responseID=1
-    end pointDetector
-    pointDetector 6
-        title="photon detector"
-        photon
-        locationID=2
-        responseID=2
-    end pointDetector
-
-end tallies
-
-end data
-end
 '''
+        mavric_output += self._deck_tail(
+            neutron_source_cylinder=f'{self.cyl_r} {sample_z_max} {sample_z_min}',
+            photon_source_cylinder=f'{self.cyl_r} {sample_z_max} {sample_z_min}',
+            multiplier=self.source_multiplier,
+            handling_detector=True)
         return mavric_output
 
 
