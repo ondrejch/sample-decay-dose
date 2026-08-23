@@ -35,7 +35,8 @@ Homepage = "https://github.com/ondrejch/sample-decay-dose"
 "Bug Tracker" = "https://github.com/ondrejch/sample-decay-dose/issues"
 
 [tool.setuptools.packages.find]
-include = ["sample_decay_dose*"]
+include = ["sample_decay_dose*", "leaky_box_origen*"]
 
 [tool.setuptools.package-data]
 sample_decay_dose = ["data/*.json", "data/*.html"]
+leaky_box_origen = ["data/*.csv"]

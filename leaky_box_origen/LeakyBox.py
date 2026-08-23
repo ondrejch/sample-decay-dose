@@ -111,27 +111,28 @@ class DecayBoxA(Origen):
         if not os.path.exists(self.case_dir):
             os.mkdir(self.case_dir)
         os.chdir(self.case_dir)
+        try:
+            if not self.skip_calculation:
+                with open(self.ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
+                    f.write(atom_dens_for_origen(self.atom_dens))
 
-        if not self.skip_calculation:
-            with open(self.ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
-                f.write(atom_dens_for_origen(self.atom_dens))
+                with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
+                    f.write(self.origen_deck())
 
-            with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
-                f.write(self.origen_deck())
+                if self.debug > 0:
+                    print(f'ORIGEN: decaying sample for {self.DECAY_days} days')
+                    print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
+                if not run_scale(self.ORIGEN_input_file_name):
+                    raise RuntimeError(f"SCALE run failed for {self.case_dir}/{self.ORIGEN_input_file_name}")
+            else:
+                if not os.path.isfile(self.F71_file_name):
+                    error_text: str = f'Skip SCALE flag set, output file {self.case_dir}/{self.F71_file_name} is not found!'
+                    raise ValueError(error_text)
 
-            if self.debug > 0:
-                print(f'ORIGEN: decaying sample for {self.DECAY_days} days')
-                print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
-            if not run_scale(self.ORIGEN_input_file_name):
-                raise RuntimeError(f"SCALE run failed for {self.case_dir}/{self.ORIGEN_input_file_name}")
-        else:
-            if not os.path.isfile(self.F71_file_name):
-                error_text: str = f'Skip SCALE flag set, output file {self.case_dir}/{self.F71_file_name} is not found!'
-                raise ValueError(error_text)
-
-        self.final_atom_dens = get_burned_nuclide_atom_dens(self.F71_file_name,
-                                                            self.DECAY_steps)
-        os.chdir(self.cwd)
+            self.final_atom_dens = get_burned_nuclide_atom_dens(self.F71_file_name,
+                                                                self.DECAY_steps)
+        finally:
+            os.chdir(self.cwd)
         if self.debug > 2:
             # print(list(self.decayed_atom_dens.items())[:25])
             nicely_print_atom_dens(self.final_atom_dens)
@@ -243,31 +244,32 @@ class DecayBoxB(Origen):
         if not os.path.exists(self.case_dir):
             os.mkdir(self.case_dir)
         os.chdir(self.case_dir)
+        try:
+            if not self.skip_calculation:
+                if len(self.atom_dens) > 0:
+                    with open(self.ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
+                        f.write(atom_dens_for_origen(self.atom_dens))
+                else:
+                    # Ensure the file exists; the ORIGEN deck always copies it in the shell preamble.
+                    open(self.ATOM_DENS_file_name_Origen, 'w').close()
 
-        if not self.skip_calculation:
-            if len(self.atom_dens) > 0:
-                with open(self.ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
-                    f.write(atom_dens_for_origen(self.atom_dens))
+                with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
+                    f.write(self.origen_deck())
+
+                if self.debug > 0:
+                    print(f'ORIGEN: decaying sample for {self.DECAY_end_seconds - self.DECAY_start_seconds} seconds')
+                    print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
+                if not run_scale(self.ORIGEN_input_file_name):
+                    raise RuntimeError(f"SCALE run failed for {self.case_dir}/{self.ORIGEN_input_file_name}")
             else:
-                # Ensure the file exists; the ORIGEN deck always copies it in the shell preamble.
-                open(self.ATOM_DENS_file_name_Origen, 'w').close()
+                if not os.path.isfile(self.F71_file_name):
+                    error_text: str = f'Skip SCALE flag set, output file {self.case_dir}/{self.F71_file_name} is not found!'
+                    raise ValueError(error_text)
 
-            with open(self.ORIGEN_input_file_name, 'w') as f:  # write ORIGEN input deck
-                f.write(self.origen_deck())
-
-            if self.debug > 0:
-                print(f'ORIGEN: decaying sample for {self.DECAY_end_seconds - self.DECAY_start_seconds} seconds')
-                print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
-            if not run_scale(self.ORIGEN_input_file_name):
-                raise RuntimeError(f"SCALE run failed for {self.case_dir}/{self.ORIGEN_input_file_name}")
-        else:
-            if not os.path.isfile(self.F71_file_name):
-                error_text: str = f'Skip SCALE flag set, output file {self.case_dir}/{self.F71_file_name} is not found!'
-                raise ValueError(error_text)
-
-        self.final_atom_dens = get_burned_nuclide_atom_dens(self.F71_file_name,
-                                                            self.DECAY_steps)
-        os.chdir(self.cwd)
+            self.final_atom_dens = get_burned_nuclide_atom_dens(self.F71_file_name,
+                                                                self.DECAY_steps)
+        finally:
+            os.chdir(self.cwd)
         if self.debug > 2:
             # print(list(self.decayed_atom_dens.items())[:25])
             nicely_print_atom_dens(self.final_atom_dens)
@@ -788,14 +790,21 @@ def _activity_timeseries_per_nuclide_from_box_json(box_json_path: str, case_pref
     return pd.DataFrame(rows)
 
 
+def _dcf_missing_hint(resolved: Path) -> str:
+    # Recovery hint for a missing DCF table.
+    if 'fgr11' in resolved.name:
+        return (f"DCF CSV not found: {resolved}. Generate the FGR-11 tables with "
+                f"'python -m leaky_box_origen.extract_fgr11_dcf' (requires pdftoppm and tesseract, "
+                f"source PDF under PDF/).")
+    return (f"DCF CSV not found: {resolved}. Expected under {LEAKY_BOX_DATA_DIR}/; "
+            f"restore it from version control (git checkout -- {LEAKY_BOX_DATA_DIR.name}/).")
+
+
 def _load_dcf_csv(path: str) -> dict[str, float]:
     # Load dose coefficients (DCF) from CSV with columns: nuclide, dcf_sv_bq or dcf_rem_bq.
     resolved = Path(_resolve_input_file(path, LEAKY_BOX_DATA_DIR))
     if not resolved.is_file():
-        raise FileNotFoundError(
-            f"DCF CSV not found: {resolved}. Generate it with "
-            f"'python -m leaky_box_origen.extract_fgr11_dcf' (requires pdftoppm and tesseract)."
-        )
+        raise FileNotFoundError(_dcf_missing_hint(resolved))
     df = pd.read_csv(resolved)
     cols = {c.lower(): c for c in df.columns}
     if 'nuclide' not in cols:
@@ -827,10 +836,7 @@ def _load_dcf_immersion_csv(path: str) -> dict[str, float]:
     # nuclide, dcf_sv_per_bq_m3_day (Sv/day per Bq/m^3).
     resolved = Path(_resolve_input_file(path, LEAKY_BOX_DATA_DIR))
     if not resolved.is_file():
-        raise FileNotFoundError(
-            f"Immersion DCF CSV not found: {resolved}. Generate it with "
-            f"'python -m leaky_box_origen.extract_fgr11_dcf' (requires pdftoppm and tesseract)."
-        )
+        raise FileNotFoundError(_dcf_missing_hint(resolved))
     df = pd.read_csv(resolved)
     cols = {c.lower(): c for c in df.columns}
     if 'nuclide' not in cols or 'dcf_sv_per_bq_m3_day' not in cols:

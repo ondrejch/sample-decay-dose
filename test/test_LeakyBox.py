@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -119,3 +120,45 @@ class TestLeakyBoxHelpers(unittest.TestCase):
                 self.assertTrue(os.path.isfile(out))
             finally:
                 os.chdir(cwd)
+
+
+class TestRunDecaySampleCwdRestore(unittest.TestCase):
+    """ A failed SCALE run inside run_decay_sample must not leak the case directory as cwd """
+
+    def _make_box(self):
+        from leaky_box_origen.LeakyBox import DecayBoxA
+        with patch('leaky_box_origen.LeakyBox.get_f71_positions_index',
+                   return_value={16: {'case': '20', 'time': '1.0e8'}}):
+            return DecayBoxA('dummy.f71', 500e3)
+
+    def test_cwd_restored_on_scale_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            start_cwd = os.getcwd()
+            try:
+                os.chdir(tmpdir)
+                box = self._make_box()  # constructed inside tmpdir so box.cwd == tmpdir
+                box.atom_dens = {'xe-136': 1.0}
+                box.debug = 0
+                with patch('leaky_box_origen.LeakyBox.run_scale', return_value=False):
+                    with self.assertRaises(RuntimeError):
+                        box.run_decay_sample()
+                self.assertEqual(os.getcwd(), tmpdir)
+            finally:
+                os.chdir(start_cwd)
+
+    def test_cwd_restored_on_success(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            start_cwd = os.getcwd()
+            try:
+                os.chdir(tmpdir)
+                box = self._make_box()
+                box.atom_dens = {'xe-136': 1.0}
+                box.debug = 0
+                with patch('leaky_box_origen.LeakyBox.run_scale', return_value=True), \
+                     patch('leaky_box_origen.LeakyBox.get_burned_nuclide_atom_dens',
+                           return_value={'xe-136': 0.5}):
+                    box.run_decay_sample()
+                self.assertEqual(os.getcwd(), tmpdir)
+                self.assertEqual(box.final_atom_dens, {'xe-136': 0.5})
+            finally:
+                os.chdir(start_cwd)

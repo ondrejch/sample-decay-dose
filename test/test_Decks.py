@@ -119,3 +119,20 @@ class TestSampleDoseDecks(unittest.TestCase, DeckTestMixin):
         deck = box.mavric_deck()
         self.check_common(deck)
         self.assertIn('array', deck)
+
+    def test_hot_cell(self):
+        class DummyOrigenTriton(DummyOrigen):
+            def __init__(self):
+                super().__init__()
+                self.BURNED_MATERIAL_F71_file_name = 'burned.f71'
+                self.BURNED_MATERIAL_F71_position = 16
+                self.burned_atom_dens = {'fe-56': 0.08}
+
+        cell = hc.HotCellDoses(DummyOrigenTriton())
+        deck = cell.mavric_deck()
+        self.check_common(deck)
+        self.assertIn('HotCellDoses', deck)
+        self.assertIn('cuboid 2', deck)  # square-cuboid shielding layers
+        self.assertIn("' helium 2 end", deck)
+        self.assertIn('pointDetector 5', deck)
+        self.assertIn('pointDetector 6', deck)

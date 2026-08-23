@@ -7,4 +7,5 @@ Example case under `examples/`.
 - `shielded_sample_dose.py` — Example use case of SampleDose.DoseEstimatorSquareTank
 
 **Run**
-- From repo root: `python examples/shielded_sample/<script>.py`
+- Requires a `SCALE_FILE.f71` TRITON inventory in the repository root.
+- From the `examples/` directory: `python shielded_sample/shielded_sample_dose.py`
