@@ -12,4 +12,6 @@ Example case under `examples/`.
 - `responses.json` — input or output data file
 
 **Run**
-- From repo root: `python examples/pipe_gas/<script>.py`
+- From this directory: `python <script>.py`
+- Needs a user-supplied `msrr.f71` in `examples/` (read as `'../msrr.f71'`).
+- SCALE inventory files (`*.f71` / `*.f33`) are user-supplied and gitignored.

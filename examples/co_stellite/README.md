@@ -14,4 +14,6 @@ Example case under `examples/`.
 - `stell_irr_plot_gamma.py` — Plotting script for calc_doses_mass
 
 **Run**
-- From repo root: `python examples/co_stellite/<script>.py`
+- From this directory: `python <script>.py`
+- Needs a user-supplied `steel.f33` in `examples/` (read as `'../steel.f33'`).
+- SCALE inventory files (`*.f71` / `*.f33`) are user-supplied and gitignored.

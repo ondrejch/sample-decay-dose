@@ -6,4 +6,6 @@ Example case under `examples/`.
 - `lif_coa2.py` — Example use case of SampleDose - irradiation of FLi7Be
 
 **Run**
-- From repo root: `python examples/Nash_flibe/<script>.py`
+- From this directory: `python <script>.py`
+- Needs a user-supplied `B.f33` next to the script.
+- SCALE inventory files (`*.f71` / `*.f33`) are user-supplied and gitignored.

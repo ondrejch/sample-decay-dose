@@ -35,9 +35,11 @@ repository root (`SCALE_FILE.f71` from a TRITON sequence, or
 `SCALE_FILE.mix0007.f33` from an ORIGEN irradiation) while being launched from
 `examples/`. These input files are not distributed with the repository —
 generate them with your own SCALE model first (`*.f71` / `*.f33` are
-gitignored). This includes `examples/msrr.f71`, used by the
-`OrigenFromTritonMHA` workflow (default `'../msrr.f71'` relative to the run
-directory): it is a user-supplied file, not part of the repository.
+gitignored). This includes the MSRR inventory conventionally kept at
+`examples/msrr.f71`, used by the `OrigenFromTritonMHA` workflow whose default
+path is `'../msrr.f71'`, i.e. resolved against the launch directory — for
+example, launching `pipe_gas/pipe_doses.py` from `examples/pipe_gas/` reads
+`examples/msrr.f71`. It is a user-supplied file, not part of the repository.
 
 | Script | Input required (in repo root, launched from `examples/`) |
 | --- | --- |

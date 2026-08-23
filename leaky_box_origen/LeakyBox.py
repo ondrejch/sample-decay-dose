@@ -796,8 +796,11 @@ def _dcf_missing_hint(resolved: Path) -> str:
         return (f"DCF CSV not found: {resolved}. Generate the FGR-11 tables with "
                 f"'python -m leaky_box_origen.extract_fgr11_dcf' (requires pdftoppm and tesseract, "
                 f"source PDF under PDF/).")
+    if 'site-packages' in str(LEAKY_BOX_DATA_DIR):
+        return (f"DCF CSV not found: {resolved}. Expected under {LEAKY_BOX_DATA_DIR}/; "
+                f"reinstall the sample_decay_dose package to restore bundled data.")
     return (f"DCF CSV not found: {resolved}. Expected under {LEAKY_BOX_DATA_DIR}/; "
-            f"restore it from version control (git checkout -- {LEAKY_BOX_DATA_DIR.name}/).")
+            f"restore it from version control (git checkout -- leaky_box_origen/data/).")
 
 
 def _load_dcf_csv(path: str) -> dict[str, float]:

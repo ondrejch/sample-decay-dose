@@ -9,4 +9,6 @@ Example case under `examples/`.
 - `origen.f71` — input or output data file
 
 **Run**
-- From repo root: `python examples/radiator/<script>.py`
+- From this directory: `python <script>.py`
+- Needs a user-supplied `origen.f71` next to the script.
+- SCALE inventory files (`*.f71` / `*.f33`) are user-supplied and gitignored.
