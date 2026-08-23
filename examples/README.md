@@ -25,3 +25,28 @@ Each case folder includes its own `README.md`.
 **How to run**
 - Run from the repo root, e.g. `python examples/calc_f71_doses.py`.
 - Some scripts expect SCALE/ORIGEN and MAVRIC outputs to exist.
+
+**Top-level scripts and required inputs**
+
+Most top-level scripts read a user-supplied SCALE output file placed in the
+repo root (`SCALE_FILE.f71` from a TRITON sequence, or `SCALE_FILE.mix0007.f33`
+from an ORIGEN irradiation). These input files are not distributed with the
+repository — generate them with your own SCALE model first. The one exception
+is `examples/msrr.f71`, which is used by the `OrigenFromTritonMHA` workflow
+(default `'../msrr.f71'` relative to the run directory).
+
+| Script | Input required |
+| --- | --- |
+| `calc_f71_doses.py`, `calc_f71_doses_mass.py` | `../SCALE_FILE.f71` |
+| `calc_f71_doses_decaytime.py` | `../SCALE_FILE.f71`, `../SCALE_FILE_60days.f71` |
+| `calc_f71_storage_tank_doses.py`, `calc_f71_tank_doses.py` | `../SCALE_FILE.f71` |
+| `calc_irradiation_doses.py`, `calc_irradiation_doses_decaytime.py` | `../SCALE_FILE.mix0007.f33` (F33 + atom densities) |
+| `fuelsalt_doseplot.py`, `fuelsalt_doses_decaytime.py` | previously generated dose CSVs / F71 files |
+| `storage_tank_doses_scan.py`, `storage_tank_doses_scan_parallel*.py` | `../SCALE_FILE.f71` |
+| `decay_atoms_cvs.py` | nuclide/atoms CSV file |
+| `decay_atoms_noshield.py` | none (atom densities defined in script) |
+| `plot_doses.py`, `storage_tank_plots.py` | previously generated dose JSON/CSV outputs |
+
+Scenario folders (`Nash_flibe`, `irradiator`, ...) are self-contained; see
+their individual READMEs.
+

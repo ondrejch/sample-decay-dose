@@ -1,4 +1,4 @@
-# AGENS.md
+# AGENTS.md
 
 Project agent guidance for `sample-decay-dose`.
 
