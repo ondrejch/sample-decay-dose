@@ -43,7 +43,7 @@ This repository computes dose rates from decaying samples using SCALE/ORIGEN/MAV
 
 ## Scientific Writing Style
 
-Applies to the paper drafts, `_knowledge/` summaries, and any prose written
+Applies to the paper drafts, summaries, and any prose written
 for readers outside a single session.
 
 1. **Sentences over dashes.** Write parenthetical material as its own sentence
@@ -66,7 +66,7 @@ for readers outside a single session.
    reader can picture.
 6. **Professional register.** No colloquial competitive language ("win",
    "lose", "beat", "champion"). State the metric outcome directly: "has the
-   lowest WRRMSE in five of six species", "is ranked first by log-pull RMS",
+   lowest figure of merrit in five of six runs", "is ranked first by log-pull RMS",
    "agreement improves under the corrected convention". Model comparisons are
    reported as measurements, not contests.
 
