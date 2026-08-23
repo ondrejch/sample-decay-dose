@@ -122,7 +122,8 @@ class DecayBoxA(Origen):
             if self.debug > 0:
                 print(f'ORIGEN: decaying sample for {self.DECAY_days} days')
                 print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
-            run_scale(self.ORIGEN_input_file_name)
+            if not run_scale(self.ORIGEN_input_file_name):
+                raise RuntimeError(f"SCALE run failed for {self.case_dir}/{self.ORIGEN_input_file_name}")
         else:
             if not os.path.isfile(self.F71_file_name):
                 error_text: str = f'Skip SCALE flag set, output file {self.case_dir}/{self.F71_file_name} is not found!'
@@ -257,7 +258,8 @@ class DecayBoxB(Origen):
             if self.debug > 0:
                 print(f'ORIGEN: decaying sample for {self.DECAY_end_seconds - self.DECAY_start_seconds} seconds')
                 print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
-            run_scale(self.ORIGEN_input_file_name)
+            if not run_scale(self.ORIGEN_input_file_name):
+                raise RuntimeError(f"SCALE run failed for {self.case_dir}/{self.ORIGEN_input_file_name}")
         else:
             if not os.path.isfile(self.F71_file_name):
                 error_text: str = f'Skip SCALE flag set, output file {self.case_dir}/{self.F71_file_name} is not found!'
@@ -365,8 +367,6 @@ class LeakyBox:
             'kr': self.removal_rate,
             'xe': self.removal_rate,
         }
-        # self.nuclide_removal_rates = {'Kr': self.removal_rate,
-        #                               'Xe': self.removal_rate}
         self.decay_leaks = origen_case
         self.decay_leaks.case_dir += '_leak'
         self.decay_leaks.nuclide_removal_rates = self.nuclide_removal_rates
@@ -396,25 +396,6 @@ class LeakyBox:
             (i, t, adens_tot, step_leak_rate) = res
             self.leak_rates[i]: dict = {}
             self.leak_rates[i]['time'] = t
-            self.leak_rates[i]['rate'] = step_leak_rate
-            self.adens[i]: dict = {}
-            self.adens[i]['time'] = t
-            self.adens[i]['adens'] = adens_tot
-
-    def get_leak_rate(self):
-        """ Calculate Box B ingress rate = Box A leak rate"""
-        # nuc_leak: list = [s.lower() for s in self.nuclide_removal_rates.keys()]
-        f71_leak_file: str = self.decay_leaks.case_dir + '/' + self.decay_leaks.F71_file_name
-        times: dict = get_f71_positions_index(f71_leak_file)
-        for i, vals in times.items():  # Time-dependent difference between sealed and leaky box
-            t = float(vals['time'])
-            self.leak_rates[i]: dict = {}
-            self.leak_rates[i]['time'] = t
-            adens_tot: dict = get_burned_nuclide_atom_dens(f71_leak_file, i)  # All nuclides
-            step_leak_rate: dict = {k: adens_tot[k] for k in adens_tot.keys() if re.sub('-.*', '', k) in self.nuc_leak}
-            for k in step_leak_rate.keys():
-                step_leak_rate[k] *= self.nuclide_removal_rates[re.sub('-.*', '', k)]  # * self.decay_leaks.volume
-                print("LEAK_RATE: ", k, step_leak_rate[k], adens_tot[k])
             self.leak_rates[i]['rate'] = step_leak_rate
             self.adens[i]: dict = {}
             self.adens[i]['time'] = t
@@ -809,7 +790,13 @@ def _activity_timeseries_per_nuclide_from_box_json(box_json_path: str, case_pref
 
 def _load_dcf_csv(path: str) -> dict[str, float]:
     # Load dose coefficients (DCF) from CSV with columns: nuclide, dcf_sv_bq or dcf_rem_bq.
-    df = pd.read_csv(_resolve_input_file(path, LEAKY_BOX_DATA_DIR))
+    resolved = Path(_resolve_input_file(path, LEAKY_BOX_DATA_DIR))
+    if not resolved.is_file():
+        raise FileNotFoundError(
+            f"DCF CSV not found: {resolved}. Generate it with "
+            f"'python -m leaky_box_origen.extract_fgr11_dcf' (requires pdftoppm and tesseract)."
+        )
+    df = pd.read_csv(resolved)
     cols = {c.lower(): c for c in df.columns}
     if 'nuclide' not in cols:
         raise ValueError("DCF CSV must include 'nuclide' column")
@@ -838,7 +825,13 @@ def _load_dcf_csv(path: str) -> dict[str, float]:
 def _load_dcf_immersion_csv(path: str) -> dict[str, float]:
     # Load immersion (cloudshine) dose coefficients from CSV with columns:
     # nuclide, dcf_sv_per_bq_m3_day (Sv/day per Bq/m^3).
-    df = pd.read_csv(_resolve_input_file(path, LEAKY_BOX_DATA_DIR))
+    resolved = Path(_resolve_input_file(path, LEAKY_BOX_DATA_DIR))
+    if not resolved.is_file():
+        raise FileNotFoundError(
+            f"Immersion DCF CSV not found: {resolved}. Generate it with "
+            f"'python -m leaky_box_origen.extract_fgr11_dcf' (requires pdftoppm and tesseract)."
+        )
+    df = pd.read_csv(resolved)
     cols = {c.lower(): c for c in df.columns}
     if 'nuclide' not in cols or 'dcf_sv_per_bq_m3_day' not in cols:
         raise ValueError("Immersion DCF CSV must include 'nuclide' and 'dcf_sv_per_bq_m3_day' columns")
@@ -886,42 +879,6 @@ def chi_q_schedule_rg145_400m() -> list[tuple[float, float]]:
         (30.0 * 24.0 * 3600.0, chi_4_30d),
         (365.0 * 24.0 * 3600.0, chi_annual),
     ]
-
-
-def compute_inhalation_dose_timeseries(activity_df: pd.DataFrame, dcf_map: dict[str, float],
-                                       chi_q_s_m3: float, breathing_rate_m3_s: float) -> pd.DataFrame:
-    """Compute inhalation dose from a nuclide activity time series.
-
-    Assumes activity_df columns (excluding time) represent release rates in Bq/s for each nuclide.
-    Dose rate (Sv/s) = chi/Q [s/m^3] * breathing_rate [m^3/s] * sum_i( Q_i * DCF_i [Sv/Bq] ).
-    """
-    if 'time [s]' not in activity_df.columns:
-        raise ValueError("activity_df must include 'time [s]' column")
-    nuclide_cols = [c for c in activity_df.columns if c not in ('time [s]', 'time [d]')]
-    dose_rate = []
-    for _, row in activity_df.iterrows():
-        total = 0.0
-        for nuclide in nuclide_cols:
-            if nuclide in dcf_map:
-                try:
-                    total += float(row[nuclide]) * dcf_map[nuclide]
-                except (TypeError, ValueError):
-                    continue
-        dose_rate.append(chi_q_s_m3 * breathing_rate_m3_s * total)
-    out = pd.DataFrame({
-        'time [s]': activity_df['time [s]'],
-        'time [d]': activity_df['time [s]'] / float(24 * 60 * 60),
-        'dose_rate [Sv/s]': dose_rate,
-    })
-    # Integrate cumulative dose (Sv) using trapezoidal rule.
-    dose = [0.0]
-    for i in range(1, len(out)):
-        dt = float(out.loc[i, 'time [s]'] - out.loc[i - 1, 'time [s]'])
-        avg_rate = 0.5 * (out.loc[i, 'dose_rate [Sv/s]'] + out.loc[i - 1, 'dose_rate [Sv/s]'])
-        dose.append(dose[-1] + avg_rate * dt)
-    out['dose [Sv]'] = dose
-    out['dose [rem]'] = out['dose [Sv]'] * 100.0
-    return out
 
 
 def compute_dose_timeseries(activity_df: pd.DataFrame, dcf_inhal_map: dict[str, float],
@@ -1140,35 +1097,6 @@ def plot_total_activity(pd_B_act: pd.DataFrame, pd_C_act: pd.DataFrame,
     plt.close(fig)
     return fname
 
-
-def compute_inhalation_dose_from_box(box_json_path: str, case_prefix: str, dcf_csv: str,
-                                     chi_q_s_m3: float, breathing_rate_m3_s: float,
-                                     out_prefix: str | None = None,
-                                     activity_representation: str = 'inventory_bq',
-                                     removal_rate_s: float | None = None) -> pd.DataFrame:
-    """Compute and save inhalation dose from per-case F71 activities.
-
-    This assumes activity columns represent release rates in Bq/s. For Box C, this is a
-    conservative bounding assumption if Box C is treated as an instantaneous release.
-    """
-    box_json_path = _resolve_run_artifact(box_json_path)
-    if not os.path.isfile(box_json_path):
-        raise FileNotFoundError(f"Box JSON not found: {box_json_path}")
-    dcf_csv = _resolve_input_file(dcf_csv, LEAKY_BOX_DATA_DIR)
-    with _in_directory(os.path.dirname(os.path.abspath(box_json_path))):
-        dcf_map = _load_dcf_csv(dcf_csv)
-        activity_df = _activity_timeseries_per_nuclide_from_box_json(box_json_path, case_prefix)
-        if activity_representation == 'inventory_bq':
-            if removal_rate_s is None:
-                raise ValueError("removal_rate_s must be provided when activity_representation='inventory_bq'")
-            activity_df = _inventory_to_release_rate(activity_df, removal_rate_s)
-        elif activity_representation != 'release_rate_bq_s':
-            raise ValueError("activity_representation must be 'inventory_bq' or 'release_rate_bq_s'")
-        pd_dose = compute_inhalation_dose_timeseries(activity_df, dcf_map, chi_q_s_m3, breathing_rate_m3_s)
-        fname = _out_name(out_prefix, 'leaky_boxes_dose', '.csv')
-        pd_dose.to_csv(fname, index=False)
-        plot_dose_timeseries(pd_dose, out_prefix)
-    return pd_dose
 
 def _get_case_max_time(index: dict, case: str) -> float:
     # Max time for a given case in an F71 index.
@@ -1408,5 +1336,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # pass
     main()

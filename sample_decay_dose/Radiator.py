@@ -1,8 +1,8 @@
 import os
 import numpy as np
 
-from sample_decay_dose.SampleDose import NOW, MAVRIC_NG_XSLIB, Origen, OrigenFromTriton
-from sample_decay_dose.utils import get_f71_positions_index, run_scale, atom_dens_for_mavric
+from sample_decay_dose.SampleDose import NOW, MAVRIC_NG_XSLIB, Origen, OrigenFromTriton, run_scale_or_raise
+from sample_decay_dose.utils import get_f71_positions_index, atom_dens_for_mavric
 from sample_decay_dose.HotCell import HotCellDoses
 from typing import TypedDict
 
@@ -99,7 +99,7 @@ class RadiatorBox(HotCellDoses):
             if self.debug > 0:
                 print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
 
-            run_scale(self.MAVRIC_input_file_name, nmpi)
+            run_scale_or_raise(self.MAVRIC_input_file_name, nmpi, context_dir=self.case_dir)
         finally:
             os.chdir(self.cwd)
 

@@ -117,7 +117,8 @@ def read_and_decay():
         with open(os.path.join(my_path, decay_inp_file_name), 'w') as f:    # write ORIGEN decay deck
             f.write(decay_Pa_origen_deck(last_Pa_pos))
         os.chdir(my_path)
-        utils.run_scale(decay_inp_file_name)       # run ORIGEN decay in the correct directory
+        if not utils.run_scale(decay_inp_file_name):   # run ORIGEN decay in the correct directory
+            raise RuntimeError(f"SCALE run failed for {my_path}/{decay_inp_file_name}")
         df = utils.get_f71_nuclide_case(decay_f71_file_name, 'becq', [1])
         # print(df, os.getcwd(), os.path.exists(decay_f71_file_name), decay_f71_file_name)
         os.chdir(cwd)

@@ -5,11 +5,12 @@ F71-based leakage simulations live.
 
 **Primary entrypoints**
 - `LeakyBox.py` is the maintained implementation.
-- `BoxF71.py` is a legacy variant kept in sync for reference.
 - `AnalysisRerun.py` rebuilds spreadsheets from saved JSON outputs.
 - `Case1F71DecaySeries.py` runs a per-timestep decay scan from an F71 file
   (for each case-1 step: 6.5 L sample decayed for 2 days by default), and writes
   `case_decay_activity.csv` + `case_decay_activity.png`.
+- `extract_fgr11_dcf.py` regenerates the DCF CSVs in `data/` from the EPA FGR-11
+  PDF (requires `pdftoppm` and `tesseract`).
 
 **Outputs**
 - Runs write all artifacts under `leaky_box_origen/run_YYYY-MM-DD/`.

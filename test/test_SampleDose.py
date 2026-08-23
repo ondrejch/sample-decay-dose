@@ -1,11 +1,13 @@
 import unittest
 from unittest.mock import patch, MagicMock, mock_open
 import numpy as np
+import os
 import sys
 import types
 
 import sample_decay_dose.SampleDose as sd
 from sample_decay_dose import utils
+from sample_decay_dose.read_opus import integrate_opus
 
 
 def ensure_dummy_isotopes():
@@ -182,8 +184,20 @@ class TestOrigenFromTritonMHA(unittest.TestCase):
         self.o.burned_atom_dens = {'u-238': 0.1}
         self.o.run_decay_sample()
         mock_mkdir.assert_called_with(self.o.case_dir)
-        mock_run.assert_called_with(self.o.ORIGEN_input_file_name)
+        mock_run.assert_called_with(self.o.ORIGEN_input_file_name, 1)
         self.assertIn('u-235', self.o.decayed_atom_dens)
+
+    @patch('os.path.exists', return_value=False)
+    @patch('os.mkdir')
+    @patch('os.chdir')
+    @patch('builtins.open', new_callable=mock_open)
+    @patch('sample_decay_dose.SampleDose.get_burned_nuclide_atom_dens', return_value={'u-235': 1e-3})
+    def test_run_decay_sample_raises_on_scale_failure(self, mock_get, mock_file, mock_chdir,
+                                                      mock_mkdir, mock_exists):
+        self.o.burned_atom_dens = {'u-238': 0.1}
+        with patch('sample_decay_dose.SampleDose.run_scale', return_value=False):
+            with self.assertRaises(RuntimeError):
+                self.o.run_decay_sample()
 
 
 class TestF71PositionSelection(unittest.TestCase):
@@ -233,7 +247,7 @@ class TestDoseEstimator(unittest.TestCase):
     def test_run_mavric(self, mock_run, mock_file, mock_copy, mock_chdir, mock_mkdir, mock_exists, mock_isfile):
         self.d.run_mavric()
         mock_mkdir.assert_called_with(self.d.case_dir)
-        mock_run.assert_called_with(self.d.MAVRIC_input_file_name)
+        mock_run.assert_called_with(self.d.MAVRIC_input_file_name, 1)
 
     @patch('os.path.isfile', return_value=True)
     @patch('os.chdir')
@@ -261,6 +275,38 @@ class TestDoseEstimator(unittest.TestCase):
         self.assertAlmostEqual(total['value'], 6.0)
         expected_sd = 6.0 * np.sqrt((0.1 / 1.0) ** 2 + (0.2 / 2.0) ** 2 + (0.3 / 3.0) ** 2)
         self.assertAlmostEqual(total['stdev'], expected_sd)
+
+
+class TestReadOpus(unittest.TestCase):
+
+    def _write_plt(self, tmpdir, lines):
+        fname = os.path.join(tmpdir, 'spectrum.plt')
+        with open(fname, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+        return fname
+
+    def test_integrate_opus(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            # OPUS format: 6 header lines, then (energy, intensity) pairs;
+            # a bin is terminated when the next line repeats the previous intensity.
+            lines = [
+                'OPUS plot', 'title', '1', '2', '3', '4',
+                '    1.0 5.0',   # bin 1 starts
+                '    2.0 5.0',   # same y -> integral += 5 * (2 - 1)
+                '    2.0 3.0',   # y changes -> bin 2 starts
+                '    4.0 3.0',   # same y -> integral += 3 * (4 - 2)
+                'tail line without two numbers stops parsing',
+            ]
+            fname = self._write_plt(tmp, lines)
+            self.assertAlmostEqual(integrate_opus(fname), 5.0 * 1.0 + 3.0 * 2.0)
+
+    def test_integrate_opus_single_bin_is_zero(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            lines = ['h'] * 6 + ['1.0 7.0']
+            fname = self._write_plt(tmp, lines)
+            self.assertEqual(integrate_opus(fname), 0.0)
 
 
 if __name__ == '__main__':

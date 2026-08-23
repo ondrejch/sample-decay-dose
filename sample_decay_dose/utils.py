@@ -292,7 +292,7 @@ def get_F33_num_sets(f33file: str) -> int:
             continue
         if data[0] == f33_base or data[0] in f33file:
             return int(data[2])
-    return -1
+    raise RuntimeError(f"Failed to find numSets in F33 info of {f33file}")
 
 
 def read_cvs_atom_dens(csv_file: str, volume: float = 1.0) -> dict:

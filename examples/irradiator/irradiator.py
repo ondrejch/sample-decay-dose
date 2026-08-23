@@ -102,7 +102,9 @@ class IrradiatorDose(SampleDose.Origen):
 
             if self.debug > 0:
                 print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
-            utils.run_scale(self.MAVRIC_input_file_name)
+            if not utils.run_scale(self.MAVRIC_input_file_name):
+                raise RuntimeError(
+                    f"SCALE run failed for {self.case_dir}/{self.MAVRIC_input_file_name}")
         finally:
             os.chdir(self.cwd)
 
