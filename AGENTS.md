@@ -41,3 +41,32 @@ This repository computes dose rates from decaying samples using SCALE/ORIGEN/MAV
 - Leaky-box runs: `boxA*.json5`, `boxB*.json5`, `boxC*.json5`, `leaky_boxes*.json/.xlsx/.png`
 - Dose post-processing: `leaky_boxes_dose*.csv/.png`
 
+## Scientific Writing Style
+
+Applies to the paper drafts, `_knowledge/` summaries, and any prose written
+for readers outside a single session.
+
+1. **Sentences over dashes.** Write parenthetical material as its own sentence
+   instead of an em-dash aside. En-dashes are allowed for numeric ranges only
+   (`5--10\%`). If a sentence needs three or more commas to hold together,
+   split it.
+2. **Positive first.** Say what a quantity, model, or result *is* and what it
+   *does*, with the concrete object named (observable, number, mechanism).
+   Put any boundary in a short follow-up sentence. A stack of "is not / does
+   not / rather than" clauses is a signal to restructure.
+3. **No contrast slogans.** Avoid "X is this. Not that." shapes and their
+   inline cousins ("A, not B"). Use one declarative sentence, or two
+   sentences: claim first, limitation second.
+4. **Negation has a job.** Keep "not/never" for genuine exclusions and scope
+   limits: falsifier boundaries, applied cuts ("p+A is excluded from the
+   quantitative tables"), refused claims. Do not use negation as the default
+   way to define or praise something.
+5. **Concrete beats abstract.** Name the observable, the value, and the
+   mechanism before the interpretation. When editing, prefer the version a
+   reader can picture.
+6. **Professional register.** No colloquial competitive language ("win",
+   "lose", "beat", "champion"). State the metric outcome directly: "has the
+   lowest WRRMSE in five of six species", "is ranked first by log-pull RMS",
+   "agreement improves under the corrected convention". Model comparisons are
+   reported as measurements, not contests.
+
