@@ -175,3 +175,6 @@ run_*/
 build.log
 responses.json
 journal_paper/
+
+# Local, untracked agent skills (copied from scale-deck-debug-agent)
+.opencode/

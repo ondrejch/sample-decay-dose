@@ -11,6 +11,7 @@ This repository computes dose rates from decaying samples using SCALE/ORIGEN/MAV
 - `sample_decay_dose/`: core Python library (`SampleDose.py`, helpers, constants, data).
 - `examples/`: runnable scripts for common workflows and plotting.
 - `leaky_box_origen/`: leaky-box ORIGEN utilities and related scripts.
+- `concrete_irrad/`: concrete-lid activation + MAVRIC dose how-to and the concrete/rebar mixed-layer homogenizer (`concrete_rebar_mixer.py`).
 - `test/`: unit tests.
 - Root `*.json5`, `*.csv`, `*.png`, `*.xlsx`: generated artifacts from sample runs.
 
