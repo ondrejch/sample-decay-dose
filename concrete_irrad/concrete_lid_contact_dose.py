@@ -23,8 +23,8 @@ from sample_decay_dose.SampleDose import NOW, MAVRIC_NG_XSLIB, run_scale_or_rais
 from sample_decay_dose.utils import atom_dens_for_mavric, atom_dens_for_origen, \
     get_burned_nuclide_atom_dens, get_burned_nuclide_data
 
-from concrete_irrad.concrete_rebar_mixer import ConcreteRebarMixer, CONCRETE_WT_FRACTIONS, \
-    CONCRETE_DENSITY, expand_to_nuclides, wt_fractions_to_atom_densities
+from concrete_irrad.concrete_rebar_mixer import ConcreteRebarMixer, expand_to_nuclides, \
+    wt_fractions_to_atom_densities
 
 
 class ConcreteLidContactDose:

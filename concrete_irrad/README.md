@@ -15,6 +15,32 @@ gamma rays from the activated concrete and rebar.
    Monaco/MAVRIC model of the lid and compute the gamma dose rate at the point
    of interest, for example at the lid surface or in a hot-cell above it.
 
+## Start here
+
+1. Export the SCALE installation: `export SCALE_BIN=/opt/scale6.3.2-mpi/bin` (adjust to your site).
+2. Edit the `EDIT ME` block in `run_contact_dose.py`: lid span, bottom slab
+   thickness, rebar diameter and grid spacings, cavity flux, and irradiation
+   duration.
+3. Obtain the cavity neutron spectrum as an ORIGEN alpha-library F33 and pass
+   it with `--lib`.
+4. Run one cooling time:
+   `PYTHONPATH=. python concrete_irrad/run_contact_dose.py --lib cavity_spectrum.f33 --decay-days 30`
+5. Read the contact photon dose [rem/h] from stdout, or scan several cooling
+   times with `--scan 1,30,90,365`, which writes `lid_contact_doses.csv`.
+
+Case directories `run_*/` hold the ORIGEN decks, outputs, F71 files, and the
+MAVRIC deck and output for inspection.
+
+## Getting the spectrum library (F33)
+
+ORIGEN irradiation needs a transition-matrix library weighted by the neutron
+spectrum at the lid. Two standard routes exist. COUPLE builds an alpha library
+from a group spectrum extracted from the cavity shielding model; see the SCALE
+manual chapter on material specification and cross-section processing for the
+COUPLE input format. A TRITON or Polaris F33 is reusable only when its
+spectrum represents the cavity environment. Check any candidate file with
+`obiwan info <file>.f33` before use.
+
 ## Geometry
 
 The lid is a rectangular brick. The model splits the brick into three
@@ -84,12 +110,11 @@ precursors of Eu-152 and Eu-154.
   that chains the whole workflow. It builds a four-case ORIGEN deck
   (irradiation and decay for each of the two modeled regions), reads back the
   decayed inventories from the F71 files, and builds a MAVRIC photon deck with
-  point-detector contact dose at the lid top center. Preview both decks with
-  `PYTHONPATH=. python concrete_irrad/concrete_lid_contact_dose.py`; execute
-  the chain with `--run --lib <alpha_library.f33>`. The irradiation requires an
-  alpha-library F33 carrying the cavity neutron spectrum. The deck structure
+  point-detector contact dose at the lid top center. The deck structure
   follows the SampleDose conventions but has not yet been exercised against a
   real SCALE installation; verify on first run.
+- `run_contact_dose.py`: driver for daily use. Edit the parameter block, then
+  run single doses or cooling-time scans; see "Start here" above.
 
 ## Usage
 
