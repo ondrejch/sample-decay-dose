@@ -7,6 +7,7 @@ mat of reinforcement bars. The slice thickness equals the bar diameter, so the
 mat fits inside a single homogenized layer.
 """
 import math
+import warnings
 from collections import defaultdict
 
 from sample_decay_dose.data import ISOTOPIC_DATA
@@ -18,21 +19,34 @@ BARN_CM_CONVERSION: float = 1e24  # cm^2/barn
 REBAR_STEEL_WT_FRACTIONS: dict = {'fe': 0.98, 'mn': 0.012, 'si': 0.005, 'c': 0.003}
 REBAR_STEEL_DENSITY: float = 7.85  # g/cm^3
 
-# Co-59 impurity of the rebar drives the Co-60 source term. Design band is
-# 0.1--0.4 wt%; measured carbon steels are typically lower (93--151 ppm,
-# ORNL/SPR-2020/1586), so values in this band are conservative.
+# Co-59 impurity of the rebar drives the Co-60 source term. The design band of
+# 0.1--0.4 wt% documents the conservative default of 0.25 wt%. Measured carbon
+# steels contain less cobalt (93--151 ppm, ORNL/SPR-2020/1586). The constructor
+# accepts any value within the physical limits and prints a note for values
+# outside the design band.
 STEEL_CO59_WT_FRACTION_DEFAULT: float = 0.0025
-STEEL_CO59_WT_FRACTION_RANGE: tuple = (0.001, 0.004)
+STEEL_CO59_WT_FRACTION_RANGE: tuple = (0.001, 0.004)  # design band
+STEEL_CO59_WT_FRACTION_LIMITS: tuple = (0.0, 0.01)  # accepted range
 
-# Ordinary concrete per ANSI/ANS-6.4.3, elemental weight fractions.
-CONCRETE_WT_FRACTIONS: dict = {'h': 0.0056, 'o': 0.4985, 'na': 0.0152, 'mg': 0.0012,
-    'al': 0.0636, 'si': 0.3041, 'ca': 0.0811, 'k': 0.0193, 's': 0.0009, 'fe': 0.0105}
+# Ordinary concrete, PNNL-15870 Rev. 1 (McConn et al. 2011, Compendium of
+# Material Composition Data for Radiation Transport Modeling), material #96
+# "Concrete, Ordinary (NBS 04)", elemental weight fractions. The tabulated
+# fractions sum to 0.999993. They are normalized here because
+# _normalize_composition accepts a deviation from unity of 1e-6 only.
+_PNNL_15870_CONCRETE_96_WT: dict = {'h': 0.005558, 'o': 0.498457, 'na': 0.017125, 'mg': 0.002565,
+    'al': 0.045746, 'si': 0.315092, 's': 0.001283, 'k': 0.019231, 'ca': 0.082705, 'fe': 0.012231}
+_PNNL_15870_CONCRETE_96_TOTAL: float = sum(_PNNL_15870_CONCRETE_96_WT.values())
+CONCRETE_WT_FRACTIONS: dict = {symbol: fraction / _PNNL_15870_CONCRETE_96_TOTAL
+                               for symbol, fraction in _PNNL_15870_CONCRETE_96_WT.items()}
+# Density of ANSI/ANS-6.4.3 ordinary concrete. PNNL-15870 lists 2.35 g/cm^3
+# for material #96.
 CONCRETE_DENSITY: float = 2.30  # g/cm^3
 
 # Trace impurities in concrete that dominate long-lived activation (Co-60 from
 # Co-59; Eu-152/154 from natural Eu-151/153). Surveyed ordinary concretes span
 # roughly Co 0.16-21.9 ppm and Eu 0.05-1.08 ppm (Alhajali et al. 2016, citing
-# Suzuki et al. 2001); defaults sit mid-range and are overridable.
+# Suzuki et al. 2001). The default Co of 10 ppm lies inside that range. The
+# default Eu of 1.0 ppm lies near its top. Both are overridable.
 CONCRETE_IMPURITIES_WT_DEFAULT: dict = {'co': 10e-6, 'eu': 1e-6}
 
 
@@ -71,14 +85,18 @@ class ConcreteRebarMixer:
     The layer contains bars running along x on a grid with spacing `spacing_x_cm`
     and bars running along y with spacing `spacing_y_cm`, both within a slice of
     height equal to the bar diameter `rebar_diameter_cm`. Steel volume fraction
-    follows from the unit cell of area spacing_x * spacing_y and height d:
+    follows from the unit cell of area spacing_x * spacing_y and height d. The
+    cell holds one x-running and one y-running bar segment, which cross once.
+    The crossing is a Steinmetz bicylinder of volume 2 d^3 / 3, counted once:
 
-        f_steel = pi * d * (spacing_x + spacing_y) / (4 * spacing_x * spacing_y)
+        V_steel = pi * d^2 * (spacing_x + spacing_y) / 4 - 2 * d^3 / 3
+        f_steel = V_steel / (spacing_x * spacing_y * d)
 
     Activation-relevant trace impurities are folded into both constituents: the
-    rebar carries Co-59 within a configurable design band, and the concrete
-    carries Co and Eu at surveyed trace levels. Outputs are nuclide-level atom
-    densities in atoms/barn-cm suitable for ORIGEN/MAVRIC material input.
+    rebar carries Co-59 (default inside the conservative design band), and the
+    concrete carries Co and Eu at surveyed trace levels. Outputs are
+    nuclide-level atom densities in atoms/barn-cm suitable for ORIGEN/MAVRIC
+    material input.
     """
 
     ISOTOPIC_DATA: dict = ISOTOPIC_DATA
@@ -100,7 +118,9 @@ class ConcreteRebarMixer:
             steel_density_g_cc: Rebar mass density in g/cm^3.
             steel_wt_fractions: Element -> weight fraction; defaults to REBAR_STEEL_WT_FRACTIONS.
             steel_co59_wt_fraction: Co-59 impurity as weight fraction of the steel; must lie
-                                    within STEEL_CO59_WT_FRACTION_RANGE.
+                                    within STEEL_CO59_WT_FRACTION_LIMITS. A note is printed
+                                    for values outside the design band
+                                    STEEL_CO59_WT_FRACTION_RANGE.
             concrete_density_g_cc: Concrete mass density in g/cm^3.
             concrete_wt_fractions: Element -> weight fraction; defaults to CONCRETE_WT_FRACTIONS.
             concrete_impurities_wt: Element -> weight fraction of the total concrete; defaults
@@ -117,11 +137,16 @@ class ConcreteRebarMixer:
             raise ValueError("Densities must be positive")
         self.steel_density_g_cc: float = float(steel_density_g_cc)
         self.concrete_density_g_cc: float = float(concrete_density_g_cc)
-        lo, hi = STEEL_CO59_WT_FRACTION_RANGE
+        lo, hi = STEEL_CO59_WT_FRACTION_LIMITS
         if not lo <= steel_co59_wt_fraction <= hi:
             raise ValueError(
-                f"steel_co59_wt_fraction must be within {STEEL_CO59_WT_FRACTION_RANGE}, "
+                f"steel_co59_wt_fraction must be within {STEEL_CO59_WT_FRACTION_LIMITS}, "
                 f"got {steel_co59_wt_fraction}")
+        band_lo, band_hi = STEEL_CO59_WT_FRACTION_RANGE
+        if not band_lo <= steel_co59_wt_fraction <= band_hi:
+            warnings.warn(f"steel_co59_wt_fraction {steel_co59_wt_fraction:.3e} lies outside the "
+                          f"conservative design band {STEEL_CO59_WT_FRACTION_RANGE}",
+                          stacklevel=2)
         self.steel_co59_wt_fraction: float = float(steel_co59_wt_fraction)
         self.concrete_impurities_wt: dict = {
             str(symbol).strip().lower(): float(fraction) for symbol, fraction in
@@ -137,13 +162,21 @@ class ConcreteRebarMixer:
         self.concrete_wt_fractions: dict = _normalize_composition(concrete_composition)
 
     def steel_volume_fraction(self) -> float:
-        """ Steel volume fraction of the mixed layer from the unit-cell geometry """
-        f_steel: float = math.pi * self.rebar_diameter_cm * (self.spacing_x_cm + self.spacing_y_cm) \
-            / (4.0 * self.spacing_x_cm * self.spacing_y_cm)
-        if f_steel >= 1.0:
-            raise ValueError(f"Rebar volume fraction {f_steel:.4f} >= 1; spacings too small "
-                             f"for diameter {self.rebar_diameter_cm} cm")
-        return f_steel
+        """ Steel volume fraction of the mixed layer from the unit-cell geometry
+
+        Each cell of spacing_x * spacing_y * d holds one bar segment of each
+        family. The two perpendicular bars of equal diameter d cross once per
+        cell, and their shared volume is the Steinmetz bicylinder 2 d^3 / 3.
+        Subtracting it once counts the crossing volume a single time.
+        """
+        d: float = self.rebar_diameter_cm
+        if d > min(self.spacing_x_cm, self.spacing_y_cm):
+            raise ValueError(f"Rebar diameter {d} cm exceeds the bar spacing "
+                             f"({self.spacing_x_cm}, {self.spacing_y_cm}) cm; parallel bars overlap")
+        cell_volume: float = self.spacing_x_cm * self.spacing_y_cm * d
+        steel_volume: float = math.pi * d ** 2 * (self.spacing_x_cm + self.spacing_y_cm) / 4.0 \
+            - 2.0 * d ** 3 / 3.0
+        return steel_volume / cell_volume
 
     def mixture_density(self) -> float:
         """ Mass density of the homogenized layer in g/cm^3 """

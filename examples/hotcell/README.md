@@ -10,3 +10,6 @@ Example case under `examples/`.
 - From this directory: `python <script>.py`
 - Needs a user-supplied `msrr.f71` next to the script.
 - SCALE inventory files (`*.f71` / `*.f33`) are user-supplied and gitignored.
+- `leadcell.py` computes the MAVRIC adjoint flux for every case (`reuse_adjoint_flux = False`).
+  Enable the reuse only when an adjoint flux file from a run with the same geometry and detectors exists.
+- Outputs: `responses.json` with the contact and handling responses per decay day, read by `leadcell-plots.py`.

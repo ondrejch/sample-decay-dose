@@ -1,10 +1,20 @@
 #!/bin/env python3
 """
-Example use case of SampleDose -- calculate decay doses of sample as a function of decay times
+Example use case of SampleDose -- gamma dose from an offgas tank as a function of steel and concrete
+shield thicknesses. The nuclide inventory is read from a CSV file of <nuclide>, <number of atoms> rows.
+
+Usage:
+    python decay_atoms_cvs.py --run-analysis --decay-days 2 --atoms-csv /tmp/atoms.csv
+        runs the ORIGEN decay and the parallel MAVRIC scan, and writes doses_decay_atoms_cvs.json
+    python decay_atoms_cvs.py --run-2y-decay-only --atoms-csv /tmp/atoms.csv
+        runs only a 2-year ORIGEN decay of the inventory
+    python decay_atoms_cvs.py
+        plots the scans stored in the per-decay-time result folders listed in plot()
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
 from sample_decay_dose import SampleDose, utils
+import argparse
 import numpy as np
 import pandas as pd
 import json5
@@ -17,10 +27,11 @@ cm2_to_barn: float = 1e24  # 1 cm^2 = 1e24 barn
 my_inner_r: float = 37.7825  # IR of 30" schedule 40 pipe
 my_thick: float = 0.635  # Thickness of 30" schedule 40 pipe
 my_volume: float = 600e3  # 600 liters
-my_atoms_file: str = '/tmp/atoms.csv'
+my_atoms_file: str = '/tmp/atoms.csv'  # Default nuclide CSV file, override with --atoms-csv
+my_doses_file: str = 'doses_decay_atoms_cvs.json'  # Written by run_analysis(), read by make_plot()
 
 
-def print_atoms():
+def print_atoms(my_atom_density: dict):
     """ Debugging """
     tot_atoms: float = 0.0
     tot_atom_density: float = 0.0
@@ -30,15 +41,21 @@ def print_atoms():
     print(f'Total atoms: {tot_atoms}, total atom density {tot_atom_density} atoms / barn-cm')
 
 
-def mavric_process(case: tuple[float, float]) -> dict:
+def load_origen_decay(atoms_file: str = my_atoms_file) -> SampleDose.OrigenDecayBox:
+    """ Reads the nuclide CSV file and returns the ORIGEN decay box of the sample """
+    my_atom_density: dict = utils.read_cvs_atom_dens(atoms_file, my_volume)
+    print_atoms(my_atom_density)
+    return SampleDose.OrigenDecayBox(my_atom_density, my_volume)
+
+
+def mavric_process(_origen_decay: SampleDose.OrigenDecayBox, case: tuple[float, float]) -> dict:
     """ Separating the MAVRIC part into a function for parallel execution """
     steel_cm: float
     concrete_cm: float
     (steel_cm, concrete_cm) = case
     # Calculate dose next to the tank
-    mavric = SampleDose.DoseEstimatorGenericTank(origen_decay)
-    mavric.cyl_r = my_inner_r
-    mavric.sample_h2 = utils.get_cyl_h(my_volume, my_inner_r)
+    mavric = SampleDose.DoseEstimatorGenericTank(_origen_decay)
+    mavric.cyl_r = my_inner_r  # mavric_deck() sets the sample half-height from sample_volume and cyl_r
     # Material composition of additional layers, in dictionaries of atom densities
     mavric.layers_mats = [SampleDose.ADENS_SS316H_HOT, SampleDose.ADENS_KAOWOOL_COLD, SampleDose.ADENS_SS316H_COLD,
                           SampleDose.ADENS_CONCRETE_COLD]
@@ -63,20 +80,17 @@ def mavric_process(case: tuple[float, float]) -> dict:
     return _res
 
 
-my_atom_density: dict = utils.read_cvs_atom_dens(my_atoms_file, my_volume)
-print_atoms()
-origen_decay = SampleDose.OrigenDecayBox(my_atom_density, my_volume)  # This needs to be global scope
-
-
-def run_2y_decay_only():
+def run_2y_decay_only(atoms_file: str = my_atoms_file):
+    origen_decay = load_origen_decay(atoms_file)
     origen_decay.set_decay_days(2.0 * 365.24)
     origen_decay.SAMPLE_F71_position = 900  # sample decay steps
     origen_decay.write_atom_dens()
     origen_decay.run_decay_sample()
 
 
-def run_analysis():
-    origen_decay.set_decay_days(decay_days)
+def run_analysis(atoms_file: str = my_atoms_file, my_decay_days: float = decay_days):
+    origen_decay = load_origen_decay(atoms_file)
+    origen_decay.set_decay_days(my_decay_days)
     origen_decay.SAMPLE_F71_position = 30  # sample decay steps
     origen_decay.write_atom_dens()
     origen_decay.run_decay_sample()
@@ -92,10 +106,10 @@ def run_analysis():
             case_inputs.append((s_cm, c_cm))
 
     # Parallel MAVRIC jobs
-    results = Parallel(n_jobs=n_jobs)(delayed(mavric_process)(case) for case in case_inputs)
+    results = Parallel(n_jobs=n_jobs)(delayed(mavric_process)(origen_decay, case) for case in case_inputs)
     print(results)
 
-    with open('doses.json', 'w') as file_out:
+    with open(my_doses_file, 'w') as file_out:
         json5.dump(results, file_out, indent=4)
 
 
@@ -103,7 +117,7 @@ def make_plot(title: str, my_dir: str):
     import matplotlib.pyplot as plt
     from matplotlib import colors, cm, ticker
 
-    with open(f'{my_dir}/doses.json') as fin:
+    with open(f'{my_dir}/{my_doses_file}') as fin:
         r = json5.load(fin)
 
     _steel_cm_list = []
@@ -156,8 +170,11 @@ def make_plot(title: str, my_dir: str):
 
     steel_cm = [f'{float(x):.2f}' for x in _steel_cm_list]
     concrete_cm = [f'{float(x):.2f}' for x in _concrete_cm_list]
-    pd_mrem_dose = pd.DataFrame(g_mrem_dose, columns=steel_cm, index=concrete_cm)
-    pd_mrem_stdev = pd.DataFrame(g_mrem_stdev, columns=steel_cm, index=concrete_cm)
+    # Rows of g_mrem_* follow _steel_cm_list (index i), columns follow _concrete_cm_list (index j)
+    pd_mrem_dose = pd.DataFrame(g_mrem_dose, index=pd.Index(steel_cm, name='steel [cm]'),
+                                columns=pd.Index(concrete_cm, name='concrete [cm]'))
+    pd_mrem_stdev = pd.DataFrame(g_mrem_stdev, index=pd.Index(steel_cm, name='steel [cm]'),
+                                 columns=pd.Index(concrete_cm, name='concrete [cm]'))
     return pd_mrem_dose, pd_mrem_stdev
 
 
@@ -184,6 +201,25 @@ def plot(base_dir='.'):
 
 
 if __name__ == "__main__":
-    # run_2y_decay_only()
-    # run_analysis()
-    plot()
+    parser = argparse.ArgumentParser(
+        description='Offgas tank dose scan over steel and concrete shield thicknesses, and plotting. '
+                    'Without --run-analysis or --run-2y-decay-only, only the plots are made.'
+    )
+    parser.add_argument('--run-analysis', action='store_true',
+                        help=f'Run the ORIGEN decay and the MAVRIC scan in the current directory, write {my_doses_file}.')
+    parser.add_argument('--run-2y-decay-only', action='store_true',
+                        help='Run only a 2-year ORIGEN decay of the inventory.')
+    parser.add_argument('--atoms-csv', default=my_atoms_file,
+                        help='Nuclide CSV file (<nuclide>, <number of atoms> per row) for the ORIGEN runs.')
+    parser.add_argument('--decay-days', default=decay_days, type=float,
+                        help='Decay time [days] for --run-analysis.')
+    parser.add_argument('--base-dir', default='.',
+                        help='Directory that holds the per-decay-time result folders listed in plot().')
+    args = parser.parse_args()
+
+    if args.run_2y_decay_only:
+        run_2y_decay_only(args.atoms_csv)
+    if args.run_analysis:
+        run_analysis(args.atoms_csv, args.decay_days)
+    if not (args.run_analysis or args.run_2y_decay_only):
+        plot(args.base_dir)

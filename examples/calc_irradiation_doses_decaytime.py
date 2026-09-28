@@ -31,8 +31,8 @@ for decay_days in np.geomspace(1./24., 360, 60):
 print(r)
 print(d)
 
-with open('responses.json', 'w') as fout:
+with open('responses_irr_decaytime.json', 'w') as fout:
     json5.dump(r, fout, indent=4)
 
-with open('doses.json', 'w') as fout:
+with open('doses_irr_decaytime.json', 'w') as fout:
     json5.dump(d, fout, indent=4)

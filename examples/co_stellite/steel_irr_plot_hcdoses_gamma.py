@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Plotting script for calc_doses_mass
+Plots the gamma contact and handling doses versus decay time from co_steel_irr_hcdoses_shield.py
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
@@ -11,7 +11,9 @@ import json5
 import matplotlib.pyplot as plt
 from sample_decay_dose.utils import extract_flux_values
 
-scale_out: str = os.path.expanduser(os.getenv('STELLITE_SCALE_OUT', '~/0.02/80-upper-encl-stellite/01-triton/msrr.out'))
+# TRITON output that holds the mixture fluxes, see README.md. The default is msrr.out next to the case directory.
+# Use the same STELLITE_SCALE_OUT for a calculation script and its plot script, since the plot titles quote the flux.
+scale_out: str = os.path.expanduser(os.getenv('STELLITE_SCALE_OUT', '../msrr.out'))
 if not os.path.isfile(scale_out):
     raise FileNotFoundError(
         f"Could not find SCALE output file at '{scale_out}'. "

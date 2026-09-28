@@ -9,7 +9,7 @@ import subprocess
 import json5
 import numpy as np
 from datetime import datetime
-from sample_decay_dose import SampleDose, utils
+from sample_decay_dose import SampleDose, constants, utils
 
 f71_file_name: str = 'ThEIRENE.f71'
 f71_position: int = 1
@@ -20,5 +20,5 @@ MTiHM: dict = {' 5.00': 10.4159200656709, '19.75': 10.2647529843048}
 fuel_type: dict = {' 5.00': 'LEU+Th', '19.75': 'HALEU+Th'}
 flux_per_MW: dict = {' 5.00': 1.3070e+11, '19.75': 1.2441e+11}
 
-SampleDose.ATOM_DENS_MINIMUM = 1e-20
+constants.ATOM_DENS_MINIMUM = 1e-20  # utils reads the threshold from constants
 fuel_salt_at_dens_BOC: dict = utils.get_burned_nuclide_atom_dens(f71_file_name, 1)

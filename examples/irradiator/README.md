@@ -3,14 +3,15 @@
 Example case under `examples/`.
 
 **Scripts**
-- `irradiator.py` — Wastewater irradiator using SampleDose - irradiation of SS316
+- `irradiator.py`: wastewater irradiator using SampleDose, with an irradiated SS-316 plate as the source.
 
-**Data / inputs**
-- `run_*` — run directories with SCALE/MAVRIC outputs
-- `irradiator/` — case data or helper files
-- `EIRENE.mix0002.f33` — input or output data file
+**Inputs**
+- `EIRENE.mix0002.f33`: user-supplied ORIGEN library next to the script.
+- SCALE inventory files (`*.f71` / `*.f33`) are gitignored.
+
+**Outputs**
+- `run_irradiator_1m/`: ORIGEN irradiation and decay of the plate, created by the run.
+- `run_irradiator_1m_MAVRIC/`: MAVRIC dose calculation, created by the run.
 
 **Run**
-- From this directory: `python <script>.py`
-- Needs a user-supplied `EIRENE.mix0002.f33` next to the script.
-- SCALE inventory files (`*.f71` / `*.f33`) are user-supplied and gitignored.
+- From this directory: `python irradiator.py`

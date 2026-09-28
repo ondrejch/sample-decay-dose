@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Plotting gamma doses
+Plotting gamma doses from fuelsalt_doses_decaytime.py
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
@@ -8,7 +8,10 @@ import numpy as np
 import json5
 import matplotlib.pyplot as plt
 
-with open('responses.json') as fin:
+# Data from fuelsalt_doses_decaytime.py: 500 kg salt, F71 position 30 days into the burn,
+# detector 100 cm from the sample centre.
+# The title and file names assume a 1 MW TRITON model behind SCALE_FILE_60days.f71. Edit them to match your model.
+with open('responses_fuelsalt_decaytime.json') as fin:
     r = json5.load(fin)
 
 colors = {'1': 'sandybrown', '2': 'slategrey', '3': 'cornflowerblue'}
@@ -23,18 +26,18 @@ plt.xscale('linear')
 plt.yscale('linear')
 plt.grid()
 plt.title('Fuel salt, 500 kg\nirradiated for 30 days at 1 MW')
-plt.xlabel(f'Salt decay time [days]')
+plt.xlabel('Salt decay time [days]')
 plt.ylabel('Dose at 100 cm [rem/h]')
 plt.errorbar(x, dose, errd, ls='none', color=f'{colors["2"]}', capsize=1.2)
-plt.scatter(x, dose, color=f'{colors["2"]}', s=5, label=f'gamma')
+plt.scatter(x, dose, color=f'{colors["2"]}', s=5, label='gamma')
 
 plt.legend()
 plt.tight_layout()
-plt.savefig(f'dose_g_fuelsalt_8MW.png', dpi=1000)
+plt.savefig('dose_g_fuelsalt_1MW.png', dpi=1000)
 
 plt.xscale('log')
 plt.yscale('log')
-plt.savefig(f'dose_g_fuelsalt_8MW-loglog.png', dpi=1000)
+plt.savefig('dose_g_fuelsalt_1MW-loglog.png', dpi=1000)
 
 # neutrons
 # dose = np.array([v["1"]['value'] for k, v in r.items()], float)
@@ -45,7 +48,7 @@ plt.savefig(f'dose_g_fuelsalt_8MW-loglog.png', dpi=1000)
 # plt.xscale('linear')
 # plt.yscale('linear')
 # plt.grid()
-# plt.title('Fuel salt, 500 kg\nirradiated for 8 days at 1 MW')
+# plt.title('Fuel salt, 500 kg\nirradiated for 30 days at 1 MW')
 # plt.xlabel(f'Salt decay time [days]')
 # plt.ylabel('Dose at 100 cm [rem/h]')
 # plt.errorbar(x, dose, errd, ls='none', color=f'{colors["1"]}', capsize=1.2)
@@ -53,9 +56,9 @@ plt.savefig(f'dose_g_fuelsalt_8MW-loglog.png', dpi=1000)
 #
 # plt.legend()
 # plt.tight_layout()
-# plt.savefig(f'dose_n_fuelsalt_8MW.png', dpi=1000)
+# plt.savefig('dose_n_fuelsalt_1MW.png', dpi=1000)
 #
 # plt.xscale('log')
 # plt.yscale('log')
-# plt.savefig(f'dose_n_fuelsalt_8MWe-loglog.png', dpi=1000)
+# plt.savefig('dose_n_fuelsalt_1MW-loglog.png', dpi=1000)
 # plt.close()

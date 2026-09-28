@@ -22,7 +22,9 @@ d = {}
 
 def single_run() -> dict:
     burned_salt = OrigenFromTriton('./origen.f71', sample_mass)
-    burned_salt.set_f71_pos(5.0 * 365.0 * DAY_IN_SECONDS, '1')
+    # Case 2 starts at the end of the 5-year burn. Its F71 positions carry the photon and neutron spectra
+    # that MAVRIC reads; the case-1 position at the same time stores concentrations only.
+    burned_salt.set_f71_pos(5.0 * 365.0 * DAY_IN_SECONDS, '2')
     burned_salt.read_burned_material()       # No decay
 
     radiator = RadiatorBox(burned_salt)

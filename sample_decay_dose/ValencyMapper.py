@@ -112,6 +112,12 @@ class ValencyMapper:
             '32': 0, '33': 0, '34': 0, '40': 4, '30': 2, '92': 4, '94': 3,
             '39': 3, '52': 0, '91': 4, '90': 4, '93': 3, '95': 3, '96': 3, '97': 3
         })
+        # These maps give the cation charge in a fluoride melt, which FluorideSalt.from_atom_densities uses to
+        # form XF_v. The group defaults above give Pb +4 (carbon group) and Bi -3 (pnictide anion). In fluoride
+        # salts lead is Pb2+ (PbF2) and bismuth is Bi3+ (BiF3), so both are set explicitly here.
+        z_map.update({'82': 2, '83': 3})
+        # Ac, Cf and Es appear in thorium decay chains and high-burnup actinide inventories. All form trifluorides.
+        z_map.update({'89': 3, '98': 3, '99': 3})
         return z_map
 
     def _get_valency_map_upper_estimate(self):

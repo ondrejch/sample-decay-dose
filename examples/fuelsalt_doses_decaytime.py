@@ -16,7 +16,7 @@ d = {}
 for decay_days in np.geomspace(1./24., 360, 60):
     print(f'***--> Sample decay time {decay_days} days <--***')
     origen_triton = SampleDose.OrigenFromTriton(F71_60day_burn_file_name, 500e3)
-    origen_triton.set_f71_pos(30.0 * 24.0 * 60.0 * 60.0)  # 7 days
+    origen_triton.set_f71_pos(30.0 * 24.0 * 60.0 * 60.0)  # 30 days
     origen_triton.read_burned_material()
     origen_triton.set_decay_days(decay_days)
     origen_triton.run_decay_sample()
@@ -34,8 +34,8 @@ for decay_days in np.geomspace(1./24., 360, 60):
 print(r)
 print(d)
 
-with open('responses.json', 'w') as fout:
+with open('responses_fuelsalt_decaytime.json', 'w') as fout:
     json5.dump(r, fout, indent=4)
 
-with open('doses.json', 'w') as fout:
+with open('doses_fuelsalt_decaytime.json', 'w') as fout:
     json5.dump(d, fout, indent=4)

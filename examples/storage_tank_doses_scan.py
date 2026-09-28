@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Example use case of SampleDose.DoseEstimatorTank - simple decay doses of F71 sample.
+Example use case of SampleDose.DoseEstimatorStorageTank - simple decay doses of F71 sample.
 Note that the beta dose is zero if the sample has additional shielding.
 Ondrej Chvala <ochvala@utexas.edu>
 """
@@ -65,5 +65,5 @@ for steel_shield_thick_in in np.geomspace(2, 15, 5):
 
         d[s_cm][c_cm] = mavric.responses
 
-with open('doses.json', 'w') as file_out:
+with open('doses_storage_tank_scan.json', 'w') as file_out:
     json5.dump(d, file_out, indent=4)

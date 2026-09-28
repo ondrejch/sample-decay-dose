@@ -8,8 +8,11 @@ For each time step (position) belonging to case 1 in the source F71:
 - read final activities from the generated ORIGEN F71
 
 Outputs:
-- CSV with total activity and F-19 activity vs source time
-- PNG plot with total and F-19 activity curves
+- CSV with total activity and the activity of one tracked nuclide vs source time
+- PNG plot with total and tracked-nuclide activity curves
+
+The tracked nuclide defaults to F-18 (T1/2 = 109.8 min), the fluorine activation product in
+fluoride salts. F-19 is stable, so its activity is always zero.
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ DEFAULT_F71_PATH: str = os.getenv(
     os.path.expanduser("~/0.03/20-burn-MHA/mha-4.5-a4/msrr.f71"),
 )
 DEFAULT_CASE: int = 1
+DEFAULT_TRACK_NUCLIDE: str = "f-18"
 MODULE_DIR: Path = Path(__file__).resolve().parent
 
 
@@ -48,7 +52,8 @@ class StepActivity:
     source_time_d: float
     run_dir: str
     total_activity_bq: float
-    f19_activity_bq: float
+    tracked_nuclide: str
+    tracked_activity_bq: float
 
 
 @contextmanager
@@ -139,6 +144,7 @@ def _run_single_step(
     decay_days: float,
     decay_steps: int,
     skip_scale: bool,
+    track_nuclide: str = DEFAULT_TRACK_NUCLIDE,
 ) -> StepActivity:
     run_dir_name = f"case{case}_pos{source_position:04d}_t{source_time_s:012.1f}s"
     run_dir = out_root / run_dir_name
@@ -175,28 +181,43 @@ def _run_single_step(
         activity_bq = get_burned_nuclide_data(out_f71, -1, f71units="becq")
 
     total_bq = float(sum(activity_bq.values()))
-    f19_bq = float(activity_bq.get("f-19", 0.0))
+    track_nuclide = track_nuclide.strip().lower()
+    tracked_bq = float(activity_bq.get(track_nuclide, 0.0))
     return StepActivity(
         source_position=source_position,
         source_time_s=source_time_s,
         source_time_d=source_time_s / float(24 * 60 * 60),
         run_dir=str(run_dir),
         total_activity_bq=total_bq,
-        f19_activity_bq=f19_bq,
+        tracked_nuclide=track_nuclide,
+        tracked_activity_bq=tracked_bq,
     )
 
 
-def _plot_activity(df: pd.DataFrame, png_path: Path, *, logy: bool = True) -> None:
+def _nuclide_label(nuclide: str) -> str:
+    # 'f-18' -> 'F-18', 'kr-85m' -> 'Kr-85m'
+    elem, _, mass = nuclide.partition("-")
+    return f"{elem.capitalize()}-{mass}" if mass else nuclide
+
+
+def _plot_title(*, decay_days: float, volume_liters: float, case: int) -> str:
+    return f"{decay_days:g}-day decay of {volume_liters:g} L sample from each case-{case} timestep"
+
+
+def _plot_activity(df: pd.DataFrame, png_path: Path, *, logy: bool = True, title: str | None = None,
+                   track_nuclide: str = DEFAULT_TRACK_NUCLIDE) -> None:
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(1, 1, figsize=(8, 5))
     ax.plot(df["source_time_d"], df["total_activity_bq"], label="Total activity", color="tab:blue", marker="o")
-    ax.plot(df["source_time_d"], df["f19_activity_bq"], label="F-19 activity", color="tab:orange", marker="s")
+    ax.plot(df["source_time_d"], df["tracked_activity_bq"], label=f"{_nuclide_label(track_nuclide)} activity",
+            color="tab:orange", marker="s")
     if logy:
         ax.set_yscale("log")
     ax.set_xlabel("Source case time [days]")
     ax.set_ylabel("Activity [Bq]")
-    ax.set_title("2-day decay of 6.5 L sample from each case-1 timestep")
+    if title:
+        ax.set_title(title)
     ax.grid(True, which="both", linestyle=":", alpha=0.5)
     ax.legend()
     fig.tight_layout()
@@ -214,6 +235,7 @@ def run_case1_decay_series(
     out_root: str | None = None,
     skip_scale: bool = False,
     logy: bool = True,
+    track_nuclide: str = DEFAULT_TRACK_NUCLIDE,
 ) -> tuple[pd.DataFrame, Path, Path]:
     out_dir = _resolve_output_root(out_root)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -236,6 +258,7 @@ def run_case1_decay_series(
             decay_days=decay_days,
             decay_steps=decay_steps,
             skip_scale=skip_scale,
+            track_nuclide=track_nuclide,
         )
         rows.append(row)
 
@@ -243,15 +266,17 @@ def run_case1_decay_series(
     csv_path = out_dir / "case_decay_activity.csv"
     png_path = out_dir / "case_decay_activity.png"
     df.to_csv(csv_path, index=False)
-    _plot_activity(df, png_path, logy=logy)
+    _plot_activity(df, png_path, logy=logy,
+                   title=_plot_title(decay_days=decay_days, volume_liters=volume_liters, case=case),
+                   track_nuclide=track_nuclide)
     return df, csv_path, png_path
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "For each timestep in F71 case 1, run a 2-day ORIGEN decay of a 6.5-liter sample "
-            "and plot total/F-19 activity."
+            "For each timestep in an F71 case, run an ORIGEN decay of a fixed-volume sample "
+            "(default: case 1, 2 days, 6.5 liters) and plot total and tracked-nuclide activity."
         )
     )
     parser.add_argument("--f71", default=DEFAULT_F71_PATH, help="Input F71 path.")
@@ -260,6 +285,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--decay-days", type=float, default=2.0, help="ORIGEN decay time in days.")
     parser.add_argument("--decay-steps", type=int, default=30, help="ORIGEN time steps.")
     parser.add_argument("--out-root", default=None, help="Output root directory.")
+    parser.add_argument("--track-nuclide", default=DEFAULT_TRACK_NUCLIDE,
+                        help="Nuclide whose activity is tracked next to the total (default: f-18).")
     parser.add_argument(
         "--skip-scale",
         action="store_true",
@@ -284,6 +311,7 @@ def main() -> int:
         out_root=args.out_root,
         skip_scale=args.skip_scale,
         logy=not args.linear_y,
+        track_nuclide=args.track_nuclide,
     )
     print(f"Wrote {len(df)} rows")
     print(f"CSV: {csv_path}")

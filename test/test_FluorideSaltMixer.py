@@ -153,7 +153,9 @@ def test_flibeuf4salt_impurity_conversion():
     m_lif_per_mole = (1.0 - 0.22) * (2.0 / 3.0) * (li7_enrichment * 7.016 + (1.0 - li7_enrichment) * 6.015 + 18.998)
     m_bef2_per_mole = (1.0 - 0.22) * (1.0 / 3.0) * (9.012 + 2.0 * 18.998)
     m_f_in_uf4_per_mole = 0.22 * 4.0 * 18.998
-    pure_salt_mass = m_u_per_mole + m_lif_per_mole + m_bef2_per_mole + m_f_in_uf4_per_mole
+    # The default UF3/UF4 ratio of 0.05 removes one F per U3+ from the salt mass.
+    m_f_removed_by_uf3 = 0.22 * (0.05 / 1.05) * 18.998
+    pure_salt_mass = m_u_per_mole + m_lif_per_mole + m_bef2_per_mole + m_f_in_uf4_per_mole - m_f_removed_by_uf3
 
     # 4. Absolute mass of impurity
     m_al_impurity = 275e-6 * m_u_per_mole
@@ -209,3 +211,176 @@ def test_admixturesalt_densities(admixture_salt):
     assert 'U-235' in densities
     assert 'Ni-58' in densities
     assert densities['Ni-58'] > 0
+
+
+# --- Review 2026-09-27 (A11, E) regression tests ---
+
+N_A = 6.02214076e23
+
+
+def _mass_density_from_atoms(atom_densities: dict) -> float:
+    """Mass density [g/cm3] implied by atom densities [atoms/barn-cm]; isomers use the ground-state mass."""
+    total = 0.0
+    for name, dens in atom_densities.items():
+        symbol, mass = name.split('-')
+        total += dens * FluorideSalt.ISOTOPIC_DATA[symbol.lower()][int(mass.rstrip('m'))]['mass']
+    return total * 1e24 / N_A
+
+
+def _decayed_fuel_salt_densities() -> dict:
+    salt = FlibeUF4Salt("f", 950, {'u-235': 0.1975, 'u-238': 0.8025}, {'Al': 275e-6}, 0.22,
+                        UF3_to_UF4=0.08, Li7_enr=0.9999)
+    return salt.get_atom_densities()
+
+
+def test_lanthanide_density_independent_of_call_order():
+    salt = FluorideSalt("90%LiF-10%CeF3")
+    salt.density(900)
+    assert salt.density(1200) == pytest.approx(FluorideSalt("90%LiF-10%CeF3").density(1200), rel=1e-12)
+    assert salt.density(900) > salt.density(1200)
+
+
+def test_admixture_single_letter_cation_enrichment():
+    """'KF' used to become cation 'Kf' through re.IGNORECASE."""
+    salt = FlibeUF4Salt("K", 950, None, None, 0.2, admixtures={'KF': {'mol_frac': 0.05, 'enrichment': {39: 0.5, 41: 0.5}}})
+    assert salt.enrichments['K'] == {39: 0.5, 41: 0.5}
+    densities = salt.get_atom_densities()
+    assert densities['K-41'] == pytest.approx(densities['K-39'])
+    assert 'K-40' not in densities
+
+
+def test_zero_abundance_cation_requires_enrichment():
+    with pytest.raises(ValueError, match="no natural isotopic abundance"):
+        FluorideSalt("95%LiF-5%PmF3")
+    salt = FluorideSalt("95%LiF-5%PmF3", enrichments={'Pm': {147: 1.0}})
+    assert salt.molar_masses['PmF3'] > 200
+
+
+def test_enrichment_mole_fraction_form():
+    salt = FluorideSalt("78%LiF-22%UF4", enrichments={'U': {235: 0.05, 238: 0.95}})
+    assert salt.enrichments['U'] == {235: 0.05, 238: 0.95}
+    with pytest.raises(ValueError, match="List every isotope"):
+        FluorideSalt("78%LiF-22%UF4", enrichments={'U': {235: 0.05}})
+
+
+def test_uf3_ratio_is_mass_consistent():
+    salt = FluorideSalt("78%LiF-22%UF4", uf3_to_uf4_ratio=0.08)
+    densities = salt.get_atom_densities(950)
+    assert _mass_density_from_atoms(densities) == pytest.approx(salt.density(950), rel=1e-12)
+    # Constant molar volume: the removed fluorine lowers the mass density.
+    assert salt.density(950) < FluorideSalt("78%LiF-22%UF4").density(950)
+    with pytest.raises(ValueError, match="uf3_to_uf4_ratio"):
+        FluorideSalt("78%LiF-22%UF4", uf3_to_uf4_ratio=-0.1)
+
+
+def test_from_atom_densities_impurity_keeps_uf3_ratio_and_round_trips():
+    densities = _decayed_fuel_salt_densities()
+    salt = FluorideSalt.from_atom_densities(densities)
+    assert salt.uf3_to_uf4_ratio == pytest.approx(0.08, rel=1e-12)
+    assert set(salt.components) == {'LiF', 'BeF2', 'UF4'}
+    assert 'Al-27' in salt.impurities_wt
+    rebuilt = salt.get_atom_densities(950)
+    assert set(rebuilt) == set(densities)
+    for name, dens in densities.items():
+        assert rebuilt[name] == pytest.approx(dens, rel=1e-12)
+    assert salt.excluded_species == {}
+
+
+def test_from_atom_densities_drops_zero_valence_with_report():
+    densities = _decayed_fuel_salt_densities()
+    densities.update({'xe-135': 1e-6, 'Mo-99': 2e-6})
+    with pytest.warns(UserWarning, match="Xe"):
+        salt = FluorideSalt.from_atom_densities(densities)
+    assert not any(formula.startswith(('Xe', 'Mo')) for formula in salt.components)
+    assert not any(key.startswith(('Xe', 'Mo')) for key in salt.impurities_wt)
+    total = sum(densities.values())
+    assert salt.excluded_species['Xe']['atom_fraction'] == pytest.approx(1e-6 / total)
+    assert salt.excluded_species['Mo']['nuclides'] == {'Mo-99': pytest.approx(2e-6 / total)}
+    assert salt.uf3_to_uf4_ratio == pytest.approx(0.08, rel=1e-9)
+    kept = FluorideSalt.from_atom_densities(densities, drop_zero_valence=False)
+    assert 'Mo-99' in kept.impurities_wt and kept.excluded_species == {}
+
+
+def test_from_atom_densities_trace_anions_kept_major_anion_raises():
+    densities = _decayed_fuel_salt_densities()
+    densities['I-131'] = 1e-7
+    salt = FluorideSalt.from_atom_densities(densities)
+    assert 'I-131' in salt.impurities_wt
+    assert salt.get_atom_densities(950)['I-131'] == pytest.approx(1e-7, rel=1e-9)
+    densities['Cl-35'] = 0.2 * densities['Li-7']
+    with pytest.raises(ValueError, match="anion"):
+        FluorideSalt.from_atom_densities(densities)
+
+
+def test_from_atom_densities_keeps_isomers_distinct():
+    densities = _decayed_fuel_salt_densities()
+    densities.update({'am-242': 2e-9, 'am-242m': 1e-9})
+    salt = FluorideSalt.from_atom_densities(densities)
+    rebuilt = salt.get_atom_densities(950)
+    assert rebuilt['Am-242'] == pytest.approx(2e-9, rel=1e-9)
+    assert rebuilt['Am-242m'] == pytest.approx(1e-9, rel=1e-9)
+    # As a salt component, the isomer gets its own enrichment key.
+    major = FluorideSalt.from_atom_densities(densities, impurity_cutoff=0.0)
+    assert major.enrichments['Am'] == {242: pytest.approx(2 / 3), '242m': pytest.approx(1 / 3)}
+    assert 'AmF3' in major.components
+
+
+def test_from_atom_densities_random_salts_sum_to_100():
+    """Six-decimal rounding failed the 1e-6 sum check for some random salts."""
+    import random
+    rng = random.Random(20260927)
+    formulas = ['LiF', 'BeF2', 'NaF', 'KF', 'ZrF4', 'ThF4', 'UF4']
+    for _ in range(300):
+        chosen = rng.sample(formulas, rng.randint(2, len(formulas)))
+        weights = [rng.random() for _ in chosen]
+        total = sum(weights)
+        composition = "-".join(f"{100 * w / total!r}%{f}" for f, w in zip(chosen, weights))
+        ratio = rng.uniform(0.0, 0.2) if 'UF4' in chosen else None
+        original = FluorideSalt(composition, uf3_to_uf4_ratio=ratio)
+        salt = FluorideSalt.from_atom_densities(original.get_atom_densities(900), impurity_cutoff=0.0)
+        assert sum(salt.components.values()) == pytest.approx(100.0, abs=1e-9)
+        for formula, pct in original.components.items():
+            assert salt.components[formula] == pytest.approx(pct, rel=1e-9)
+        if ratio:
+            assert salt.uf3_to_uf4_ratio == pytest.approx(ratio, rel=1e-6, abs=1e-12)
+
+
+def test_from_atom_densities_excess_fluorine_kept_as_impurity():
+    densities = FluorideSalt("78%LiF-22%UF4").get_atom_densities(950)
+    # Remove 1% of the uranium, as fission does; its fluorine stays in the salt.
+    for name in [n for n in densities if n.startswith('U-')]:
+        densities[name] *= 0.99
+    salt = FluorideSalt.from_atom_densities(densities)
+    assert salt.uf3_to_uf4_ratio is None
+    assert salt.excess_fluorine_atom_fraction > 0
+    assert 'F-19' in salt.impurities_wt
+    rebuilt = salt.get_atom_densities(950)
+    assert rebuilt['F-19'] / rebuilt['Li-7'] == pytest.approx(densities['F-19'] / densities['Li-7'], rel=1e-12)
+
+
+def test_from_atom_densities_actionable_errors():
+    densities = FluorideSalt("78%LiF-22%UF4").get_atom_densities(950)
+    with pytest.raises(ValueError, match="Could not parse nuclide"):
+        FluorideSalt.from_atom_densities({**densities, 'bogus': 1.0})
+    with pytest.raises(ValueError, match="No fluorine"):
+        FluorideSalt.from_atom_densities({k: v for k, v in densities.items() if not k.startswith('F-')})
+    # Hf has no valence in the maps; above the cutoff it needs an override.
+    with_hf = {**densities, 'Hf-180': 0.01 * densities['Li-7']}
+    with pytest.raises(ValueError, match="valence_overrides"):
+        FluorideSalt.from_atom_densities(with_hf)
+    with_hf['F-19'] += 4 * with_hf['Hf-180']
+    assert 'HfF4' in FluorideSalt.from_atom_densities(with_hf, valence_overrides={'Hf': 4}).components
+    # A fluorine deficit without uranium cannot be expressed as UF3.
+    flibe = FluorideSalt("67%LiF-33%BeF2").get_atom_densities(900)
+    flibe['F-19'] *= 0.99
+    with pytest.raises(ValueError, match="no UF4 component"):
+        FluorideSalt.from_atom_densities(flibe)
+
+
+def test_isomer_impurity_key_is_preserved():
+    salt = FluorideSalt("100%LiF", impurities_wt={'am-242m': 1e-6, 'Ac-227': 1e-9})
+    assert set(salt.impurities_wt) == {'Am-242m', 'Ac-227'}
+    densities = salt.get_atom_densities(900)
+    assert densities['Am-242m'] > 0 and 'Am-242' not in densities
+    with pytest.raises(ValueError, match="by nuclide"):
+        FluorideSalt("100%LiF", impurities_wt={'Pm': 1e-6}).get_atom_densities(900)

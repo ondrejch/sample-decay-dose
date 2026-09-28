@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Prints dose at t=0
+Prints the contact and handling doses from pipe_doses.py as LaTeX table rows, one block per decay time
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 my_mass: float = 2.24222E-06 * 453.5924
 
 cwd: str = os.getcwd()
-particles = {'1': 'Gamma, contact dose', '5': 'Gamma, 30cm handling dose',
+particles = {'1': 'Neutron, contact dose', '5': 'Neutron, 30cm handling dose',
     '2': 'Gamma, contact dose', '6': 'Gamma, 30cm handling dose'}
 
 dose = {}  # doses [rem/h]
@@ -29,12 +29,12 @@ for time in r.keys():
     sep: str = '&'
     print(f'time [minutes]  {sep} \\multicolumn{{2}}{{c|}}{{contact dose}} {sep} \\multicolumn{{2}}{{c}}{{handling dose}} \\\\')
     print(f'{minutes:.1f}    {sep} value {sep} error {sep} value {sep} error \\\\ \\hline')
-    print(f'neutron: ', end='')
+    print('neutron: ', end='')
     for particle in ['1', '5']:
-        print(f' {sep} {d0[particle]['value']:.3f} {sep} {d0[particle]['stdev']:.3f} ', end='')
-        # print(f' {sep} {d0[particle]['value'] * 1e3:.5f} {sep} {d0[particle]['stdev'] * 1e3:.5f} ', end='')
+        print(f' {sep} {d0[particle]["value"]:.3f} {sep} {d0[particle]["stdev"]:.3f} ', end='')
+        # print(f' {sep} {d0[particle]["value"] * 1e3:.5f} {sep} {d0[particle]["stdev"] * 1e3:.5f} ', end='')
     print('\\\\')
-    print(f'gamma:   ', end='')
+    print('gamma:   ', end='')
     for particle in ['2', '6']:
-        print(f' {sep} {d0[particle]['value']:.3f} {sep} {d0[particle]['stdev']:.3f} ', end='')
+        print(f' {sep} {d0[particle]["value"]:.3f} {sep} {d0[particle]["stdev"]:.3f} ', end='')
     print('\\\\ \\hline \\hline')

@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Example use case of SampleDose.DoseEstimatorTank - simple decay doses of F71 sample,
+Example use case of SampleDose.DoseEstimatorStorageTank - simple decay doses of F71 sample,
 using parallel execution of the MAVRIC cases.
 Note that the beta dose is zero if the sample has additional shielding.
 Ondrej Chvala <ochvala@utexas.edu>
@@ -59,11 +59,11 @@ def run_analysis():
     decay_timeline = np.linspace(1.0, max_decay_time_years * 365.24, decay_steps)
     results = Parallel(n_jobs=n_jobs)(delayed(my_process)(decay_day) for decay_day in decay_timeline)
     print(results)
-    with open('doses.json', 'w') as file_out:
+    with open('doses_storage_tank_noshield.json', 'w') as file_out:
         json5.dump(results, file_out, indent=4)
 
 
-def plot(datafile='doses.json'):
+def plot(datafile='doses_storage_tank_noshield.json'):
     import matplotlib.pyplot as plt
     do_plots: bool = False
     with open(datafile) as f:
@@ -97,7 +97,7 @@ def plot(datafile='doses.json'):
         plt.yscale('linear')
         plt.grid()
         plt.title("Gamma dose from unshielded container, 2 EFPY at 1 MWt")
-        plt.xlabel(f'decay time [days]')
+        plt.xlabel('decay time [days]')
         plt.ylabel('Dose at 1 cm [rem/h]')
         plt.errorbar(x, y, yerr, ls='none', color='slategrey', capsize=1.2)
         plt.scatter(x, y, color='slategrey', s=5, label='Gamma')
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         '--datafile',
-        default='doses.json',
+        default='doses_storage_tank_noshield.json',
         help='Path to a JSON file with dose data for plotting.'
     )
     args = parser.parse_args()

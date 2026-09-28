@@ -10,10 +10,13 @@ This repository computes dose rates from decaying samples using SCALE/ORIGEN/MAV
 
 - `sample_decay_dose/`: core Python library (`SampleDose.py`, helpers, constants, data).
 - `examples/`: runnable scripts for common workflows and plotting.
-- `leaky_box_origen/`: leaky-box ORIGEN utilities and related scripts.
+- `leaky_box_origen/`: leaky-box ORIGEN utilities and related scripts. `data/` holds the FGR-11 and ICRP-72 DCF
+  tables, regenerated from local PDFs by `extract_fgr11_dcf.py` and `extract_icrp72_dcf.py`.
 - `concrete_irrad/`: concrete-lid activation + MAVRIC dose how-to and the concrete/rebar mixed-layer homogenizer (`concrete_rebar_mixer.py`).
+- `play/`: scratch and experimental scripts outside the stable API.
 - `test/`: unit tests.
-- Root `*.json5`, `*.csv`, `*.png`, `*.xlsx`: generated artifacts from sample runs.
+- Generated artifacts (`*.json5`, `*.json`, `*.csv`, `*.png`, `*.xlsx`) land in run directories and example launch
+  directories, listed under Typical Outputs. They are not tracked.
 
 ## Environment
 
@@ -39,8 +42,11 @@ This repository computes dose rates from decaying samples using SCALE/ORIGEN/MAV
 
 ## Typical Outputs
 
-- Leaky-box runs: `boxA*.json5`, `boxB*.json5`, `boxC*.json5`, `leaky_boxes*.json/.xlsx/.png`
-- Dose post-processing: `leaky_boxes_dose*.csv/.png`
+- Leaky-box runs: `leaky_box_origen/run_YYYY-MM-DD/` holds `_box_*/`, `boxA*.json5`, `boxB*.json5`, `boxC*.json5`,
+  `leaky_boxes*.json/.xlsx/.csv/.png`
+- Dose post-processing: `leaky_box_origen/run_YYYY-MM-DD/leaky_boxes_dose*.csv/.png`
+- Example dose scans: `responses*.json`, `doses*.json` and ORIGEN/MAVRIC case directories (`run_*/`, `_decaybox_*/`)
+  in the directory the script was launched from
 
 ## Scientific Writing Style
 

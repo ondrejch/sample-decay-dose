@@ -9,7 +9,7 @@ volume: float = 12.87  # OD=0.5in, H=4in
 th_metal_at_dens: float = 0.0303653  # atom density of Th metal
 f71_name: str = 'th-wd.f71'
 flux: float = 2e12
-weeks: int = 105
+weeks: int = 104  # 2 years of weekly irradiation cases: week1 in the header, weeks 2..104 below
 
 header: str = f'''=origen
 options{{
@@ -72,6 +72,8 @@ footer: str = '''case(decay) {
     }
     time {
         units=DAYS
+        % No start=0 here: t continues the material clock, which is 728 d
+        % (104 weeks) at shutdown, so this decays from 2.5 d to ~5 y after it.
         t=[70I 730.5 2556.68]
     }
     save {
@@ -82,7 +84,7 @@ end
 '''
 
 deck_str: str = header
-for i in range(weeks-2):
+for i in range(weeks - 1):
     nw: int = i + 2
     deck_str += case(nw)
 deck_str += footer

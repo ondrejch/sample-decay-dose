@@ -1,12 +1,20 @@
 import os
-import re
 
 from sample_decay_dose.SampleDose import NOW, MAVRIC_NG_XSLIB, HandlingContactDoseEstimatorGenericTank, Origen
 from sample_decay_dose.utils import get_cyl_r
 
 
 class HotCellDoses(HandlingContactDoseEstimatorGenericTank):
-    """ MAVRIC calculation of rem/h doses from the decayed sample in a cubical hotcell """
+    """ MAVRIC calculation of rem/h doses from the decayed sample in a cubical hotcell.
+    The sample is a square cylinder at the origin. The layers are nested cuboids centred on the sample.
+    layers_thicknesses[0] is the half-width of the innermost cuboid, i.e., the cell interior measured from the
+    sample centre. It must be at least the sample radius. Each later entry is the thickness of the next cuboid shell.
+    With no layers the sample is bare, and the detectors are measured from the sample surface.
+    Detectors and responses are those of HandlingContactDoseEstimatorGenericTank.
+    reuse_adjoint_flux=True skips the Denovo adjoint calculation and reads the adjoint flux from adjoint_flux_file,
+    by default <case_dir>/my_dose.adjoint.dff written by an earlier run of the same case directory.
+    The file must come from the same geometry, layers, detector positions, and grid.
+    """
     def __init__(self, _o: Origen = None):
         """ This reads decayed sample information from the Origen object """
         self.sample_h2: (None, float) = None  # half-height of the sample
@@ -17,17 +25,34 @@ class HotCellDoses(HandlingContactDoseEstimatorGenericTank):
         self.handling_det_standoff_distance = 30.0  # [cm] handing dose
         self.box_a: float = self.handling_det_standoff_distance + 10.0  # outer bounding box [cm]
         self.reuse_adjoint_flux: bool = False
+        self.adjoint_flux_file: str | None = None  # adjoint flux to reuse; None: the MAVRIC output in case_dir
+
+    def _reused_adjoint_flux_path(self, case_dir: str) -> str:
+        """ Absolute path of the adjoint flux file to reuse. MAVRIC writes <input name>.adjoint.dff next to
+        its output, in case_dir. Raises FileNotFoundError when the file does not exist. """
+        default_file: str = self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff')
+        path: str = os.path.abspath(self.adjoint_flux_file or os.path.join(self.cwd, case_dir, default_file))
+        if not os.path.isfile(path):
+            raise FileNotFoundError(
+                f"reuse_adjoint_flux is set, but the adjoint flux file {path} does not exist. Run the case once with "
+                f"reuse_adjoint_flux=False, or set adjoint_flux_file to the {default_file} of a run with the same "
+                f"geometry, layers, and detector positions.")
+        return path
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
+        self._validate_layers()
         if not self.det_z:
             self.det_z = 0.0
-        adjoint_flux_file: str = os.path.join(self.cwd,
-                                              self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff'))
+        adjoint_flux_file: str = self._reused_adjoint_flux_path(self._layer_case_dir()) \
+            if self.reuse_adjoint_flux else ''
         self.cyl_r = get_cyl_r(self.sample_volume)
         self.sample_h2 = self.cyl_r             # sample is a square cylinder
         sample_r: float = self.cyl_r            # sample outer layer [cm]
         sample_h2: float = self.sample_h2
+        if self.layers_thicknesses and self.layers_thicknesses[0] < max(sample_r, sample_h2):
+            raise ValueError(f"HotCellDoses: layers_thicknesses[0] = {self.layers_thicknesses[0]} cm is the half-width "
+                             f"of the innermost cuboid and must be at least the sample radius {sample_r:.5g} cm")
         box_xy2: float = 0.0                    # XY box around
         box_z2: float = 0.0                     # Z box around
 
@@ -61,7 +86,6 @@ global unit 1
 '''
         xy_planes: list[float] = [-sample_r, sample_r]      # list of XY boundaries for gridgeometry
         z_planes: list[float] = [-sample_h2, sample_h2]     # list of Z boundaries for gridgeometry
-        k: int = 0
         for k in range(len(self.layers_mats)):
             box_xy2 += self.layers_thicknesses[k]
             box_z2 += self.layers_thicknesses[k]
@@ -72,15 +96,18 @@ global unit 1
             xy_planes.append(-box_xy2)
             z_planes.append(box_z2)
             z_planes.append(-box_z2)
-        self.det_x = box_xy2 + self.det_standoff_distance  # Detector is next to the tank, contact dose
-        self.handling_det_x = box_xy2 + self.handling_det_standoff_distance  # Detector is next to the tank, handling dose
+        if not self.layers_mats:  # bare sample: the detectors and the boundary are measured from the sample surface
+            box_xy2 = sample_r
+            box_z2 = sample_h2
+        self._set_computed_detectors(box_xy2 + self.det_standoff_distance,
+                                     box_xy2 + self.handling_det_standoff_distance)  # next to the tank
         xy_planes_str: str = " ".join([f' {x:.5f}' for x in xy_planes])
         z_planes.append(self.det_z + self.planes_xy_around_det)
         z_planes.append(self.det_z - self.planes_xy_around_det)
         z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
         mavric_output += f'''
     cuboid 99999  4p {box_xy2 + self.box_a} 2p {box_z2 + self.box_a}  
-    media 0 1 99999 -{k + 2}
+    media 0 1 99999 -{self.outer_body}
 boundary 99999
 end geometry
 
@@ -101,7 +128,7 @@ read definitions
     end response 
 '''
 
-        if self.neutron_intensity > 0.0:
+        if self._include_neutron_source(note=True):
             mavric_output += f'''
     distribution 1
         title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"
@@ -136,7 +163,7 @@ read definitions
 end definitions
 
 read sources'''
-        if self.neutron_intensity > 0.0:
+        if self._include_neutron_source():
             mavric_output += f'''
     src 1
         title="Sample neutrons"
@@ -218,34 +245,3 @@ end data
 end
 '''
         return mavric_output
-
-    def get_responses(self):
-        """ Reads over the MAVRIC output and returns responses for rem/h doses
-            Note, this version uses different format of self.responses """
-        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name):
-            raise FileNotFoundError(
-                "Expected decayed sample MAVRIC output file: \n" + self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name)
-        os.chdir(self.cwd + '/' + self.case_dir)
-        try:
-            with open(self.MAVRIC_out_file_name, 'r') as f:
-                d: str = f.read()
-            rs: list = re.findall(r'Point Detector (\d).  (\w+) detector\n.*\n.*\n.*\n.*\n.*\s+response (\d)\s+'
-                                  r'([+-]?\d+\.\d+[Ee]?[+-]?\d+)\s+([+-]?\d+\.\d+[Ee]?[+-]?\d+)?'
-                                  r'\s+([+-]?\d+\.\d+[Ee]?[+-]?\d+)?', d)
-            self.responses = {
-                t[0]: {'particle': t[1], 'pid': t[2], 'value': float(t[3]), 'stdev': 0.0 if t[4] == '' else float(t[4])}
-                for t in rs}
-        finally:
-            os.chdir(self.cwd)
-        if self.debug > 3:
-            print(self.responses)
-
-    def print_response(self):
-        """ Prints dose responses """
-        if self.responses:
-            r1: dict = self.responses['1']  # Neutron dose, contact
-            r2: dict = self.responses['2']  # Photon dose, contact
-            r5: dict = self.responses['5']  # Neutron dose, handling (30cm)
-            r6: dict = self.responses['6']  # Photon dose, handling (30cm)
-            print(self.sample_weight, r1['value'], r1['stdev'], r2['value'], r2['stdev'], r5['value'], r5['stdev'],
-                  r6['value'], r6['stdev'])

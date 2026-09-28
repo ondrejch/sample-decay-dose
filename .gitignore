@@ -173,8 +173,12 @@ run_*/
 *.out
 *.synctex.gz
 build.log
-responses.json
 journal_paper/
+# Example outputs (dose results and ORIGEN decay-box case directories)
+responses*.json
+doses*.json
+my_response.json
+_decaybox_*/
 
 # Local, untracked agent skills (copied from scale-deck-debug-agent)
 .opencode/

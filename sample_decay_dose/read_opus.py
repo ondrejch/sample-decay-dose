@@ -3,41 +3,40 @@
 Opus plot reader. Expects one spectrum in the file.
 Ondrej Chvala <ochvala@utexas.edu>
 """
-import re
 
 
 def integrate_opus(plt_file_name: str) -> float:
     """
-    Integrates the first spectrum in an OPUS .plt file
+    Integrates the first spectrum in an OPUS .plt file.
+    After 6 header lines, OPUS writes each histogram bin as two points, (E_low, y) and (E_high, y).
+    The integral is sum(y * (E_high - E_low)), e.g. particles/s for units=intensity [1/(s MeV)] vs E [MeV].
+    Adjacent bins with equal y are separate bins. Reading stops at the first line that is not a pair of numbers,
+    such as the time label of the next spectrum. An unterminated last point adds nothing.
     """
     integral: float = 0
-    match_positive_number = re.compile(' +[0-9]+.?[0-9]*(?:[Ee][+-]? *[0-9]+)?')
-    debug: int = 0
 
     with open(plt_file_name, 'r') as f:
         i_line: int = 0
-        prev_x: float = -1.0
-        prev_y: float = -1.0
-        # is_bin_read: bool = False   # flag if the full bin was read in
+        bin_low: tuple[float, float] | None = None  # (x, y) of the open bin, None between bins
         for line in f.read().splitlines():
             i_line += 1
             if i_line <= 6:
                 continue
-            m = re.findall(match_positive_number, line)
-            if len(m) != 2:  # expecting only two numbers
+            tokens: list[str] = line.split()
+            if len(tokens) != 2:  # expecting only two numbers
                 break
-            x: float = float(m[0])
-            y: float = float(m[1])
-            if y != prev_y:  # read the first line of bin
-                if debug > 1:
-                    print(i_line, line)
-                prev_x = x
-                prev_y = y
-            else:
-                if debug > 1:
-                    print(i_line, line, x, prev_x, y, prev_y, integral)
-                if prev_x >= x:
-                    raise ValueError(f"Bins mis-formatted at line {i_line}")
-                integral += y * (x - prev_x)
+            try:
+                x: float = float(tokens[0])
+                y: float = float(tokens[1])
+            except ValueError:
+                break
+            if bin_low is None:  # the first point of a bin
+                bin_low = (x, y)
+                continue
+            x_low, y_low = bin_low
+            if y != y_low or x < x_low:
+                raise ValueError(f"Bins mis-formatted at line {i_line}")
+            integral += y * (x - x_low)
+            bin_low = None
 
     return integral

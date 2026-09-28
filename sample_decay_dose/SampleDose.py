@@ -6,9 +6,10 @@ Ondrej Chvala <ochvala@utexas.edu>
 import os
 import shutil
 import re
+import hashlib
+import warnings
 from datetime import datetime
 import numpy as np
-from bisect import bisect_left
 from sample_decay_dose.read_opus import integrate_opus
 from sample_decay_dose.utils import nicely_print_atom_dens, get_rho_from_atom_density, scale_adens, \
     get_f71_positions_index, get_last_position_for_case, get_burned_nuclide_atom_dens, get_burned_nuclide_data, \
@@ -18,6 +19,13 @@ from sample_decay_dose.utils import nicely_print_atom_dens, get_rho_from_atom_de
 NOW: str = datetime.now().replace(microsecond=0).isoformat()
 MAVRIC_NG_XSLIB: str = 'v7.1-28n19g'
 DAY_IN_SECONDS: float = 24.0 * 60.0 * 60.0
+# Zero-day decay: ORIGEN needs a positive time step after start=0, so the deck writes one step of this length.
+# The zero-day state is the decay-case start, F71 position 1, which ORIGEN saves with its emission spectra.
+ZERO_DAY_STEP_DAYS: float = 1.0e-6
+MAVRIC_TALLY_SUMMARY: str = 'Final Tally Results Summary'
+_NUMBER: str = r'[+-]?\d+(?:\.\d*)?(?:[Ee][+-]?\d+)?'
+_POINT_DETECTOR_RE = re.compile(r'Point Detector\s+(\d+)\.\s*(.*?)\s*$')
+_RESPONSE_LINE_RE = re.compile(rf'^\s*response\s+(\d+)\s+({_NUMBER})(?:\s+({_NUMBER}))?')
 
 
 def run_scale_or_raise(deck_file: str, nmpi: int = 1, context_dir: str = ''):
@@ -25,6 +33,75 @@ def run_scale_or_raise(deck_file: str, nmpi: int = 1, context_dir: str = ''):
     if not run_scale(deck_file, nmpi):
         out_file: str = os.path.join(context_dir, deck_file.replace('.inp', '.out'))
         raise RuntimeError(f"SCALE run failed for '{context_dir}/{deck_file}', see output file: {out_file}")
+
+
+def decay_time_grid(decay_days: float, n_positions: int, t_first_days: float = 1.0e-4) -> str:
+    """ ORIGEN `t=[...]` list [days] for a decay case with start=0.
+    Position 1 of the saved F71 is the start state. A positive decay time gives n_positions positions:
+    t_first, n_positions - 3 log-spaced points, and decay_days at position n_positions.
+    t_first is capped at decay_days / 1e3, so the grid stays strictly increasing for short decays.
+    A zero decay time writes one ZERO_DAY_STEP_DAYS step, and the zero-day state is read at position 1.
+    """
+    if decay_days < 0.0:
+        raise ValueError(f"Decay time cannot be negative: {decay_days} days")
+    if decay_days == 0.0:
+        return f't=[{ZERO_DAY_STEP_DAYS}]'
+    time_interp_steps: int = n_positions - 3
+    if time_interp_steps < 1:
+        raise ValueError("Too few time steps")
+    t_first: float = min(t_first_days, decay_days / 1e3)
+    if not 0.0 < t_first < decay_days:
+        raise ValueError(f"Decay time {decay_days} days is too short for a log-spaced ORIGEN time grid")
+    return f't=[{time_interp_steps}L {t_first} {decay_days}]'
+
+
+def decayed_f71_position(decay_days: float, n_positions: int) -> int:
+    """ F71 position of the decayed state for a grid from decay_time_grid() """
+    return 1 if decay_days == 0.0 else n_positions
+
+
+def combine_dose_responses(responses: dict, keys: list[str], correlated: tuple[str, ...] = ()) -> dict:
+    """ Sum of dose responses [rem/h] and its 1-sigma uncertainty.
+    The point-detector tallies are independent, so their sigmas add in quadrature.
+    The beta response is beta_over_gamma times the photon response. The (photon, beta) pair listed in
+    `correlated` is therefore fully correlated, and its sigmas add linearly before the quadrature sum.
+    """
+    missing: list[str] = [k for k in keys if k not in responses]
+    if missing:
+        raise RuntimeError(f"Missing dose responses {missing}, run get_responses() first")
+    value: float = sum(responses[k]['value'] for k in keys)
+    correlated_sigma: float = sum(responses[k]['stdev'] for k in keys if k in correlated)
+    variance: float = correlated_sigma ** 2 + sum(responses[k]['stdev'] ** 2 for k in keys if k not in correlated)
+    return {'value': value, 'stdev': float(np.sqrt(variance))}
+
+
+def parse_point_detector_responses(mavric_output: str) -> dict:
+    """ Point-detector results from the MAVRIC 'Final Tally Results Summary' block, keyed by detector ID.
+    Each detector block starts with a line like "Neutron Point Detector 5.  neutron detector" and holds a line
+    "response 1   <value>  <stdev>  <rel. unc.> ..." with the response ID, value, and absolute 1-sigma.
+    Returns {detector_id: {'particle', 'pid', 'value', 'stdev'}}. The particle is the word before "detector"
+    in the tally title.
+    """
+    i_summary: int = mavric_output.find(MAVRIC_TALLY_SUMMARY)
+    text: str = mavric_output[i_summary:] if i_summary >= 0 else mavric_output
+    results: dict = {}
+    detector_id: str | None = None
+    particle: str = ''
+    for line in text.splitlines():
+        m_det = _POINT_DETECTOR_RE.search(line)
+        if m_det:
+            detector_id = m_det.group(1)
+            m_particle = re.search(r'(\w+)\s+detector', m_det.group(2))
+            particle = m_particle.group(1) if m_particle else line.split()[0].lower()
+            continue
+        if detector_id is None:
+            continue
+        m_resp = _RESPONSE_LINE_RE.match(line)
+        if m_resp:
+            results[detector_id] = {'particle': particle, 'pid': m_resp.group(1), 'value': float(m_resp.group(2)),
+                                    'stdev': 0.0 if m_resp.group(3) is None else float(m_resp.group(3))}
+            detector_id = None
+    return results
 
 # Predefined lists of atom densities for convenience. Check and make yours :)
 # https://www.sandmeyersteel.com/316H.html
@@ -72,11 +149,35 @@ class Origen:
         self.case_dir: str = ''
         self.SAMPLE_ATOM_DENS_file_name_Origen: str = 'my_sample_atom_dens_origen.inp'
         self.SAMPLE_F71_file_name: str = self.ORIGEN_input_file_name.replace('inp', 'f71')
-        self.SAMPLE_F71_position: int = 12  # Sample decay steps
+        self.SAMPLE_F71_position: int = 12  # Sample decay steps; the last one holds the decayed state
         self.SAMPLE_DECAY_days: float = 30.0  # Sample decay time [days]
         self.sample_weight: float = np.nan  # Mass of the sample [g]
         self.sample_density: float = np.nan  # Mass density of the sample [g/cm3]
         self.sample_volume: float = np.nan  # Sample volume [cm3]
+
+    @property
+    def decayed_F71_position(self) -> int:
+        """ Position of the decayed sample on the saved F71: SAMPLE_F71_position, or 1 for a zero-day decay """
+        return decayed_f71_position(self.SAMPLE_DECAY_days, self.SAMPLE_F71_position)
+
+    def decay_time_line(self, t_first_days: float = 1.0e-4) -> str:
+        """ ORIGEN decay time list for SAMPLE_DECAY_days, see decay_time_grid() """
+        return decay_time_grid(self.SAMPLE_DECAY_days, self.SAMPLE_F71_position, t_first_days)
+
+    def opus_blocks(self) -> str:
+        """ OPUS neutron, gamma, and beta spectra of the decayed state. The .plt files are numbered in this
+        order (000...000 neutrons, 000...001 gamma, 000...002 beta), as get_neutron_integral() and
+        get_beta_to_gamma() expect. The spectra are selected by F71 position, not by time. """
+        out: str = ''
+        for title, typarams in (('Neutrons', 'nspectrum'), ('Gamma', 'gspectrum'), ('Beta', 'bspectrum')):
+            out += (f"\n=opus\n"
+                    f"data='{self.SAMPLE_F71_file_name}'\n"
+                    f"title='{title}'\n"
+                    f"typarams={typarams}\n"
+                    f"units=intensity\n"
+                    f"npos={self.decayed_F71_position} end\n"
+                    f"end\n")
+        return out
 
     def set_decay_days(self, decay_days: float = 30.0):
         """ Use this to change decay time, as it also updates the case directory """
@@ -136,8 +237,8 @@ class OrigenFromTriton(Origen):
         elif t > t_max:
             print(f"Error: Time {t} seconds is longer than {t_max} s, the maximum time in records.")
             pos_idx: int = len(times) - 1
-        else:
-            pos_idx: int = bisect_left(times, t)
+        else:  # closest time; a tie goes to the earlier time, then to the lower position
+            pos_idx: int = min(range(len(times)), key=lambda i: (abs(times[i] - t), times[i]))
         pos_number: int = pos_times[pos_idx][0]
         print(f'--> Closest F71 position found at slot {pos_number}, {times[pos_idx]} seconds, '
               f'{times[pos_idx] / (60.0 * 60.0 * 24)} days.')
@@ -178,7 +279,7 @@ class OrigenFromTriton(Origen):
                 print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
             run_scale_or_raise(self.ORIGEN_input_file_name, context_dir=self.case_dir)
 
-            self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
+            self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.decayed_F71_position)
         finally:
             os.chdir(self.cwd)
         if self.debug > 2:
@@ -187,10 +288,7 @@ class OrigenFromTriton(Origen):
 
     def origen_deck(self) -> str:
         """ Sample decay Origen deck """
-        time_interp_steps = self.SAMPLE_F71_position - 3
-        if time_interp_steps < 1:
-            raise ValueError("Too few time steps")
-
+        my_line_time: str = self.decay_time_line(1.0e-4)
         origen_output: str = f'''
 =shell
 cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
@@ -222,7 +320,7 @@ case {{
     }}
     time {{
         units=DAYS
-        t=[{time_interp_steps}L 0.0001 {self.SAMPLE_DECAY_days}]
+        {my_line_time}
         start=0
     }}
     save {{
@@ -230,37 +328,8 @@ case {{
     }}
 }}
 end
-
-=opus
-data='{self.SAMPLE_F71_file_name}'
-title='Neutrons'
-typarams=nspectrum
-units=intensity
-time=days
-tmin={self.SAMPLE_DECAY_days}
-tmax={self.SAMPLE_DECAY_days}
-end
-
-=opus
-data='{self.SAMPLE_F71_file_name}'
-title='Gamma'
-typarams=gspectrum
-units=intensity
-time=days
-tmin={self.SAMPLE_DECAY_days}
-tmax={self.SAMPLE_DECAY_days}
-end
-
-=opus
-data='{self.SAMPLE_F71_file_name}'
-title='Beta'
-typarams=bspectrum
-units=intensity
-time=days
-tmin={self.SAMPLE_DECAY_days}
-tmax={self.SAMPLE_DECAY_days}
-end
 '''
+        origen_output += self.opus_blocks()
         return origen_output
 
 
@@ -282,14 +351,9 @@ class OrigenFromTritonMHA(OrigenFromTriton):
         if self.debug > 0:
             print(
                 f'[OrigenFromTritonMHA] Reading {self.BURNED_MATERIAL_F71_file_name} position {self.BURNED_MATERIAL_F71_position}, scaling {self.MTiHM}')
-        time_interp_steps = self.SAMPLE_F71_position - 3
-        my_line_time: str = f'        t=[{time_interp_steps}L 0.0001 {self.SAMPLE_DECAY_days}]'
-        if self.SAMPLE_DECAY_days == 0.0:
-            my_line_time = f'        t=[0.0]'
-            self.SAMPLE_F71_position = 2
-        else:
-            if time_interp_steps < 1:
-                raise ValueError("Too few time steps")
+        # A zero-day deck reads the decay-case start (position 1). ORIGEN saves it after the "retained"
+        # processing, so it holds the retained elements only.
+        my_line_time: str = self.decay_time_line(1.0e-4)
 
         basename_burned_f71: str = os.path.basename(self.BURNED_MATERIAL_F71_file_name)
         origen_output: str = f'''
@@ -332,37 +396,8 @@ case {{
     }}
 }}
 end
-
-=opus
-data='{self.SAMPLE_F71_file_name}'
-title='Neutrons'
-typarams=nspectrum
-units=intensity
-time=days
-tmin={self.SAMPLE_DECAY_days}
-tmax={self.SAMPLE_DECAY_days}
-end
-
-=opus
-data='{self.SAMPLE_F71_file_name}'
-title='Gamma'
-typarams=gspectrum
-units=intensity
-time=days
-tmin={self.SAMPLE_DECAY_days}
-tmax={self.SAMPLE_DECAY_days}
-end
-
-=opus
-data='{self.SAMPLE_F71_file_name}'
-title='Beta'
-typarams=bspectrum
-units=intensity
-time=days
-tmin={self.SAMPLE_DECAY_days}
-tmax={self.SAMPLE_DECAY_days}
-end
 '''
+        origen_output += self.opus_blocks()
         return origen_output
 
 
@@ -414,7 +449,7 @@ class OrigenIrradiation(Origen):
                 print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
             run_scale_or_raise(self.ORIGEN_input_file_name, context_dir=self.case_dir)
 
-            self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
+            self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.decayed_F71_position)
         finally:
             os.chdir(self.cwd)
         if self.debug > 2:
@@ -422,21 +457,26 @@ class OrigenIrradiation(Origen):
             nicely_print_atom_dens(self.decayed_atom_dens)
 
     def read_irradiated_material_density(self):
-        """ Reads rho from irradiated F71 file """
-        self.sample_density = get_burned_material_total_mass_dens(self.irradiate_F71_file_name, 1)
+        """ Reads rho [g/cm3] at the end of irradiation, the last position of the irradiation F71 in case_dir """
+        irr_f71: str = os.path.join(self.cwd, self.case_dir, self.irradiate_F71_file_name)
+        if not os.path.isfile(irr_f71):
+            raise FileNotFoundError(f"Expected irradiation F71 file: {irr_f71}, run run_irradiate_decay_sample() first")
+        last_position: int = max(get_f71_positions_index(irr_f71))
+        self.sample_density = get_burned_material_total_mass_dens(irr_f71, last_position)
         self.sample_volume = self.sample_weight / self.sample_density
 
     def origen_deck(self) -> str:
         """ Sample irradiation and decay Origen deck """
         self.sample_volume = self.sample_weight / self.sample_density
-        time_interp_steps = self.SAMPLE_F71_position - 3
-        if time_interp_steps < 1:
-            raise ValueError("Too few time steps")
+        if not self.irradiate_days > 0.0:
+            raise ValueError(f"Irradiation time must be positive: {self.irradiate_days} days")
+        if self.irradiate_steps < 3:
+            raise ValueError("Too few irradiation steps")
         # The self.F33_file_name potentially includes path to that file.
         # It gets copied to temp directory, where it is just F33_file
         F33_path, F33_file = os.path.split(self.F33_file_name)
         irr_days_min: float = min(0.0001, self.irradiate_days/1e3)
-        decay_days_min: float = min(0.0001, self.SAMPLE_DECAY_days/1e3)
+        my_line_time: str = self.decay_time_line(1.0e-4)
         origen_output: str = f'''
 =shell
 cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
@@ -485,46 +525,15 @@ case(decay) {{
     time {{
         units=DAYS
         start=0
-        t=[{time_interp_steps}L {decay_days_min} {self.SAMPLE_DECAY_days}]
+        {my_line_time}
     }}
     save {{
         file="{self.SAMPLE_F71_file_name}"
     }}
 }}
 end
-
-=opus
-data='{self.SAMPLE_F71_file_name}'
-title='Neutrons'
-typarams=nspectrum
-units=intensity
-'time=days
-'tmin={self.SAMPLE_DECAY_days}
-'tmax={self.SAMPLE_DECAY_days}
-npos={self.SAMPLE_F71_position} end
-end
-
-=opus
-data='{self.SAMPLE_F71_file_name}'
-title='Gamma'
-typarams=gspectrum
-units=intensity
-'time=days
-'tmin={self.SAMPLE_DECAY_days}
-'tmax={self.SAMPLE_DECAY_days}
-npos={self.SAMPLE_F71_position} end
-end
-
-=opus
-data='{self.SAMPLE_F71_file_name}'
-title='Beta'
-typarams=bspectrum
-units=intensity
-'time=days
-'tmin={self.SAMPLE_DECAY_days}
-'tmax={self.SAMPLE_DECAY_days}
-npos={self.SAMPLE_F71_position} end
 '''
+        origen_output += self.opus_blocks()
         return origen_output
 
 
@@ -535,11 +544,18 @@ class OrigenDecayBox(Origen):
         Origen.__init__(self)
         self.SAMPLE_ATOM_DENSITY: (None, dict) = _adens
         self.sample_volume = _vol
-        self.case_dir: str = f'_decaybox_{_vol:.5}_g'  # Directory to run the case
+        self.case_dir: str = self._decaybox_case_dir()  # Directory to run the case
+
+    def _decaybox_case_dir(self) -> str:
+        """ Case directory named by volume [cm3], decay time [days], and a hash of the composition """
+        adens: dict = self.SAMPLE_ATOM_DENSITY or {}
+        composition_hash: str = hashlib.sha1(repr(sorted(adens.items())).encode()).hexdigest()[:8]
+        return f'_decaybox_{self.sample_volume:.5}_cm3-{self.SAMPLE_DECAY_days:.5}_days-{composition_hash}'
 
     def set_decay_days(self, decay_days: float = 30.0):
         """ Use this to change decay time, as it also updates the case directory """
         self.SAMPLE_DECAY_days = decay_days
+        self.case_dir = self._decaybox_case_dir()
 
     def write_atom_dens(self):
         """ Writes atom density of the sample to decay """
@@ -571,8 +587,9 @@ class OrigenDecayBox(Origen):
                 print(f"Running case: {self.case_dir}/{self.ORIGEN_input_file_name}")
             run_scale_or_raise(self.ORIGEN_input_file_name, context_dir=self.case_dir)
 
-            print(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
-            self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.SAMPLE_F71_position)
+            if self.debug > 1:
+                print(self.SAMPLE_F71_file_name, self.decayed_F71_position)
+            self.decayed_atom_dens = get_burned_nuclide_atom_dens(self.SAMPLE_F71_file_name, self.decayed_F71_position)
         finally:
             os.chdir(self.cwd)
         if self.debug > 2:
@@ -580,10 +597,8 @@ class OrigenDecayBox(Origen):
             nicely_print_atom_dens(self.decayed_atom_dens)
 
     def origen_deck(self) -> str:
-        """ Sample irradiation and decay Origen deck """
-        time_interp_steps = self.SAMPLE_F71_position - 3
-        if time_interp_steps < 1:
-            raise ValueError("Too few time steps")
+        """ Sample decay Origen deck """
+        my_line_time: str = self.decay_time_line(1.0e-3)
         origen_output: str = f'''
 =shell
 cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
@@ -616,59 +631,36 @@ case(decay) {{
     time {{
         units=DAYS
         start=0
-        t=[{time_interp_steps}L 0.001 {self.SAMPLE_DECAY_days}]
+        {my_line_time}
     }}
     save {{
         file="{self.SAMPLE_F71_file_name}"
     }}
 }}
 end
-
-=opus
-data='{self.SAMPLE_F71_file_name}'
-title='Neutrons'
-typarams=nspectrum
-units=intensity
-'time=days
-'tmin={self.SAMPLE_DECAY_days}
-'tmax={self.SAMPLE_DECAY_days}
-npos={self.SAMPLE_F71_position} end
-end
-
-=opus
-data='{self.SAMPLE_F71_file_name}'
-title='Gamma'
-typarams=gspectrum
-units=intensity
-'time=days
-'tmin={self.SAMPLE_DECAY_days}
-'tmax={self.SAMPLE_DECAY_days}
-npos={self.SAMPLE_F71_position} end
-end
-
-=opus
-data='{self.SAMPLE_F71_file_name}'
-title='Beta'
-typarams=bspectrum
-units=intensity
-'time=days
-'tmin={self.SAMPLE_DECAY_days}
-'tmax={self.SAMPLE_DECAY_days}
-npos={self.SAMPLE_F71_position} end
 '''
+        origen_output += self.opus_blocks()
         return origen_output
 
 
 class DoseEstimator:
-    """ MAVRIC calculation of rem/h doses from the decayed sample """
+    """ MAVRIC calculation of rem/h doses from the decayed sample.
+    The base geometry is a bare square cylinder of the sample in void. The point detector sits at det_x,
+    measured from the sample centre (30 cm by default), so the distance from the sample surface is det_x - cyl_r.
+    Responses: '1' neutron and '2' photon point-detector doses [rem/h]; '3' beta dose estimate, see get_responses().
+    """
 
     def __init__(self, _o: Origen = None):
         """ This reads decayed sample information from the Origen object """
+        # Manual-detector flags must exist before any det_x assignment is observed.
+        object.__setattr__(self, '_det_x_manual', False)
+        object.__setattr__(self, '_handling_det_x_manual', False)
+        object.__setattr__(self, '_recomputing_detectors', False)
         self.debug: int = 3  # Debugging flag
         self.MAVRIC_input_file_name: str = 'my_dose.inp'
         self.SAMPLE_ATOM_DENS_file_name_MAVRIC: str = 'my_sample_atom_dens_mavric.inp'
         self.responses: dict = {}  # Dose responses 1: neutron, 2: gamma, 3: beta
-        self.det_x: float = 30.0  # Detector distance [cm]
+        self.det_x: float = 30.0  # Detector distance from the sample centre [cm]
         self.N_planes_box: int = 5  # Planes per box
         self.N_planes_cyl: int = 8  # Planes per cylinder
         self.histories_per_batch: int = 100000  # Monaco hist per batch
@@ -677,28 +669,147 @@ class DoseEstimator:
         self.cyl_r: float = np.nan
         self.sample_temperature_K: float = 873.0  # Sample temperature [K]
         self.decayed_atom_dens: dict = {}  # Atom density of the decayed sample
-        self.beta_over_gamma: float = 0  # Beta over gamma spectral ratio
+        self.beta_over_gamma: float | None = None  # Beta over gamma spectral ratio; None if unknown
+        self.neutron_intensity: float | None = None  # Integral of neutron spectra [n/s]; None if unknown
         if _o is not None:
             self.sample_weight: float = _o.sample_weight  # Mass of the sample [g]
             self.sample_density: float = _o.sample_density  # Mass density of the sample [g/cm3]
             self.sample_volume: float = getattr(_o, 'sample_volume', np.nan)  # Sample volume [cm3], if exists
             self.DECAYED_SAMPLE_F71_file_name: str = _o.SAMPLE_F71_file_name
-            self.DECAYED_SAMPLE_F71_position: int = _o.SAMPLE_F71_position
+            self.DECAYED_SAMPLE_F71_position: int = decayed_f71_position(_o.SAMPLE_DECAY_days,
+                                                                         _o.SAMPLE_F71_position)
             self.DECAYED_SAMPLE_days: float = _o.SAMPLE_DECAY_days  # Sample decay time [days]
             self.decayed_atom_dens: dict = _o.decayed_atom_dens  # Atom density of the decayed sample
             if _o.decayed_atom_dens:  # if the ORIGEN case was run...
-                self.beta_over_gamma: float = _o.get_beta_to_gamma()  # Beta over gamma spectral ratio
-                self.neutron_intensity: float = _o.get_neutron_integral()  # Integral of neutron spectra
-            else:
-                self.beta_over_gamma: float = -1.0
-                self.neutron_intensity: float = -1.0
+                self.beta_over_gamma = _o.get_beta_to_gamma()  # Beta over gamma spectral ratio
+                self.neutron_intensity = _o.get_neutron_integral()  # Integral of neutron spectra
+            else:  # the OPUS spectra exist if the ORIGEN case was run earlier; otherwise the values stay unknown
+                self.beta_over_gamma = self._spectral_integral_or_none(_o.get_beta_to_gamma)
+                self.neutron_intensity = self._spectral_integral_or_none(_o.get_neutron_integral)
+                if self.beta_over_gamma is not None or self.neutron_intensity is not None:
+                    if self._opus_spectra_are_stale(_o):
+                        warnings.warn(f"OPUS spectra in {_o.case_dir} predate {_o.SAMPLE_F71_file_name}; "
+                                      f"they may describe a different decay time. Re-run the ORIGEN decay "
+                                      f"before creating the dose estimator, or set beta_over_gamma / "
+                                      f"neutron_intensity explicitly. Treating both as unknown.",
+                                      stacklevel=2)
+                        self.beta_over_gamma = None
+                        self.neutron_intensity = None
+                    else:
+                        warnings.warn(f"OPUS spectra read from {_o.case_dir} on disk; they describe the decay "
+                                      f"stored there. Re-run the ORIGEN decay after changing SAMPLE_DECAY_days.",
+                                      stacklevel=2)
             self.ORIGEN_dir: str = _o.case_dir  # Directory to run the case
             self.case_dir: str = self.ORIGEN_dir + '_MAVRIC'
             self.cwd: str = _o.cwd  # Current running directory
+        # __init__ assignments above are defaults, not manual overrides.
+        object.__setattr__(self, '_det_x_manual', False)
+        object.__setattr__(self, '_handling_det_x_manual', False)
+
+    @staticmethod
+    def _spectral_integral_or_none(read_integral) -> float | None:
+        """ Spectral integral from the ORIGEN case OPUS files, or None when those files do not exist """
+        try:
+            return read_integral()
+        except FileNotFoundError:
+            return None
+
+    @staticmethod
+    def _opus_spectra_are_stale(_o) -> bool:
+        """ True when on-disk OPUS .plt spectra predate the ORIGEN F71, so they may not match
+        the current decay. OPUS runs after ORIGEN in the same deck, so fresh spectra are at
+        least as new as the F71. A 2 s tolerance covers filesystem timestamp granularity. """
+        try:
+            case_dir = os.path.join(_o.cwd, _o.case_dir)
+            f71_path = os.path.join(case_dir, _o.SAMPLE_F71_file_name)
+            base = _o.ORIGEN_input_file_name.replace('.inp', '')
+            plt_names = (base + '.000000000000000000.plt', base + '.000000000000000001.plt',
+                         base + '.000000000000000002.plt')
+            f71_mtime = os.path.getmtime(f71_path)
+            for name in plt_names:
+                path = os.path.join(case_dir, name)
+                if os.path.isfile(path) and os.path.getmtime(path) < f71_mtime - 2.0:
+                    return True
+        except (AttributeError, OSError):
+            return False
+        return False
+
+    def __setattr__(self, name, value):
+        # Track a user-assigned detector position so tank decks can warn instead of
+        # silently discarding it. Internal recomputation sets _recomputing_detectors.
+        if name in ('det_x', 'handling_det_x') and not getattr(self, '_recomputing_detectors', False):
+            if '_det_x_manual' in self.__dict__:
+                flag = '_det_x_manual' if name == 'det_x' else '_handling_det_x_manual'
+                object.__setattr__(self, flag, True)
+        object.__setattr__(self, name, value)
+
+    def _set_computed_detectors(self, det_x: float, handling_det_x: float | None = None):
+        """ Store mavric_deck() detector positions, warning when a manual det_x is discarded.
+
+        Tank estimators place detectors from det_standoff_distance /
+        handling_det_standoff_distance. A direct det_x assignment cannot survive
+        the deck build, so it warns and points at the standoff attribute.
+        """
+        if getattr(self, '_det_x_manual', False):
+            try:
+                differs = abs(float(self.det_x) - float(det_x)) > 1e-9
+            except (TypeError, ValueError):
+                differs = True
+            if differs:
+                warnings.warn(f"det_x={self.det_x} is discarded by mavric_deck(); "
+                              f"set det_standoff_distance instead (computed det_x={det_x:.5g})",
+                              stacklevel=3)
+        if handling_det_x is not None and getattr(self, '_handling_det_x_manual', False):
+            try:
+                h_differs = abs(float(self.handling_det_x) - float(handling_det_x)) > 1e-9
+            except (TypeError, ValueError, AttributeError):
+                h_differs = True
+            if h_differs:
+                warnings.warn(f"handling_det_x={getattr(self, 'handling_det_x', None)} is discarded by "
+                              f"mavric_deck(); set handling_det_standoff_distance instead "
+                              f"(computed handling_det_x={handling_det_x:.5g})",
+                              stacklevel=3)
+        object.__setattr__(self, '_recomputing_detectors', True)
+        try:
+            self.det_x = det_x
+            if handling_det_x is not None:
+                self.handling_det_x = handling_det_x
+        finally:
+            object.__setattr__(self, '_recomputing_detectors', False)
+            object.__setattr__(self, '_det_x_manual', False)
+            object.__setattr__(self, '_handling_det_x_manual', False)
 
     @property
     def MAVRIC_out_file_name(self) -> str:
         return self.MAVRIC_input_file_name.replace('inp', 'out')
+
+    @property
+    def beta_applies(self) -> bool:
+        """ True when the beta estimate (beta_over_gamma times the photon dose) applies to the detector.
+        The estimate holds for a bare sample only. Monaco does not transport electrons, so behind any layer
+        the beta response is reported as zero. The base geometry is a bare sample. """
+        return True
+
+    def _include_neutron_source(self, note: bool = False) -> bool:
+        """ Neutron source and distribution go into the deck unless the ORIGEN neutron spectrum is known to be empty.
+        An unknown intensity (None) includes the source. """
+        if self.neutron_intensity is None:
+            if note and self.debug > 0:
+                print('Note: ORIGEN neutron intensity unknown (no OPUS spectra), including the F71 neutron source')
+            return True
+        return self.neutron_intensity > 0.0
+
+    def _beta_response(self, gamma_response: dict) -> dict:
+        """ Beta dose estimate from the photon response. Zero when the beta estimate does not apply.
+        The value and stdev are beta_over_gamma times the photon values, so beta is fully correlated with gamma. """
+        if not self.beta_applies:
+            return {'value': 0.0, 'stdev': 0.0}
+        if self.beta_over_gamma is None:
+            raise RuntimeError('The beta/gamma ratio is unknown, because the ORIGEN OPUS spectra were not found. '
+                               'Run the ORIGEN decay in this process before creating the dose estimator, '
+                               'or set beta_over_gamma explicitly.')
+        return {'value': self.beta_over_gamma * gamma_response['value'],
+                'stdev': self.beta_over_gamma * gamma_response['stdev']}
 
     def run_mavric(self):
         """ Writes Mavric inputs and runs the case """
@@ -754,13 +865,10 @@ class DoseEstimator:
                     stdev: float = 0.0 if m.group(3) in (None, '') else float(m.group(3))
                     self.responses[rid] = {'value': value, 'stdev': stdev}
 
-            gamma_response: dict | None = self.responses.get('2')
-            if gamma_response is None:
-                raise RuntimeError(f'Failed to parse photon response from {self.MAVRIC_out_file_name}')
-            self.responses['3'] = {
-                'value': self.beta_over_gamma * gamma_response['value'],
-                'stdev': self.beta_over_gamma * gamma_response['stdev']
-            }
+            for rid, particle in (('1', 'neutron'), ('2', 'photon')):
+                if rid not in self.responses:
+                    raise RuntimeError(f'Failed to parse {particle} response {rid} from {self.MAVRIC_out_file_name}')
+            self.responses['3'] = self._beta_response(self.responses['2'])
         finally:
             os.chdir(self.cwd)
         if self.debug > 3:
@@ -776,15 +884,11 @@ class DoseEstimator:
 
     @property
     def total_dose(self) -> dict:
-        """ Return total dose, which is a sum of all responses """
-        d: dict = {'value': 0, 'stdev': -1}
-        relsig: float = 0
-        for k, v in self.responses.items():
-            d['value'] += v['value']
-            if v['value'] > 0:
-                relsig += (v['stdev'] / v['value']) ** 2
-        d['stdev'] = d['value'] * np.sqrt(relsig)
-        return d
+        """ Total dose [rem/h], the sum of all responses, with its 1-sigma uncertainty.
+        Beta '3' is correlated with photon '2', see combine_dose_responses(). """
+        if not self.responses:
+            raise RuntimeError("No dose responses, run get_responses() first")
+        return combine_dose_responses(self.responses, list(self.responses), correlated=('2', '3'))
 
     def _deck_head(self, title_line: str, comp_pre: str = '', comp_extra: str = '') -> str:
         """ Common deck preamble: shell copies, header, parameters, composition """
@@ -815,9 +919,9 @@ class DoseEstimator:
                 f'end comp\n')
 
     def _deck_distributions(self) -> str:
-        """ ORIGEN spectral distributions; neutron distribution only when neutron intensity is positive """
+        """ ORIGEN spectral distributions; neutron distribution unless the neutron intensity is known to be zero """
         out: str = ''
-        if self.neutron_intensity > 0.0:
+        if self._include_neutron_source(note=True):
             out += (f'\n'
                     f'    distribution 1\n'
                     f'        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"\n'
@@ -838,7 +942,7 @@ class DoseEstimator:
                    multiplier: float | None = None, handling_detector: bool = False) -> str:
         """ Common deck tail: sources, importance map, tallies, closing """
         neutron_src: str = ''
-        if self.neutron_intensity > 0.0:
+        if self._include_neutron_source():
             mult_n: str = f'\n        multiplier={multiplier}' if multiplier is not None else ''
             neutron_src = (f'\n'
                            f'    src 1\n'
@@ -924,9 +1028,14 @@ class DoseEstimator:
         return out
 
     def mavric_deck(self) -> str:
-        """ MAVRIC dose calculation input file """
+        """ MAVRIC dose calculation input file. The detector is at det_x from the sample centre. """
         self.cyl_r = get_cyl_r(self.sample_volume)
         self.box_a: float = self.det_x + 10.0  # Problem box distance [cm]
+        if not self.det_x > self.cyl_r:
+            raise ValueError(f'Detector at det_x={self.det_x} cm from the sample centre lies inside the sample '
+                             f'(radius and half-height {self.cyl_r:.5g} cm). Increase det_x.')
+        if not self.box_a > self.cyl_r:
+            raise ValueError(f'Problem boundary at {self.box_a} cm cuts the sample (radius {self.cyl_r:.5g} cm)')
         mavric_output: str = self._deck_head(
             title_line=f'Sample dose, {self.sample_weight} g, at x={self.det_x} cm')
         mavric_output += f'''
@@ -973,7 +1082,11 @@ end definitions
 
 
 class DoseEstimatorSquareTank(DoseEstimator):
-    """ MAVRIC calculation of rem/h doses from the decayed sample in a square tank made of materials """
+    """ MAVRIC calculation of rem/h doses from the decayed sample in a square tank made of materials.
+    layers_thicknesses, layers_mats, and layers_temperature_K describe the shielding layers from the inside out
+    and must have equal lengths. Empty lists give a bare sample. The detector is det_standoff_distance
+    from the outer surface of the last layer; mavric_deck() recomputes det_x from it.
+    """
 
     def __init__(self, _o: Origen = None):
         """ This reads decayed sample information from the Origen object """
@@ -985,12 +1098,43 @@ class DoseEstimatorSquareTank(DoseEstimator):
         self.layers_thicknesses: list[float] = [2.54, 2.0 * 2.54, 3.0 * 2.54]
         self.layers_mats: list[dict] = [ADENS_SS316H_HOT, ADENS_HDPE_COLD, ADENS_SS316H_COLD]
         self.layers_temperature_K: list[float] = [873.0, 300.0, 300.0]
-        if len(self.layers_thicknesses) != len(self.layers_mats):
-            raise ValueError("There needs to be the same amount of layers in both lists.")
+        self._case_dir_suffix: str = ''  # layer suffix that run_mavric() appended to case_dir
+
+    @property
+    def beta_applies(self) -> bool:
+        """ The beta estimate applies to a bare sample only, i.e., when there are no layers """
+        return not self.layers_mats
+
+    @property
+    def outer_body(self) -> int:
+        """ KENO-VI body ID of the outermost cylinder: the sample is body 1, layer k is body k + 2 """
+        return len(self.layers_mats) + 1
+
+    def _validate_layers(self):
+        """ The layer lists are usually assigned after __init__, so they are checked before each deck """
+        n_layers: int = len(self.layers_mats)
+        if len(self.layers_thicknesses) != n_layers or len(self.layers_temperature_K) != n_layers:
+            raise ValueError(f"layers_thicknesses ({len(self.layers_thicknesses)}), layers_mats ({n_layers}), and "
+                             f"layers_temperature_K ({len(self.layers_temperature_K)}) need the same length.")
+        if any(not t > 0.0 for t in self.layers_thicknesses):
+            raise ValueError(f"Layer thicknesses must be positive: {self.layers_thicknesses}")
+
+    def _layer_suffix(self) -> str:
+        """ Layer thicknesses in the case directory name, unique IDs for parallel runs """
+        return "".join([f'_{s:.3f}' for s in self.layers_thicknesses])
+
+    def _layer_case_dir(self) -> str:
+        """ case_dir with the current layer suffix, replacing the suffix of an earlier run_mavric() call """
+        base: str = self.case_dir
+        if self._case_dir_suffix and base.endswith(self._case_dir_suffix):
+            base = base[:-len(self._case_dir_suffix)]
+        return base + self._layer_suffix()
 
     def run_mavric(self, nmpi: int = 1):
         """ Writes Mavric inputs and runs the case """
-        self.case_dir += "".join([f'_{s:.3f}' for s in self.layers_thicknesses])  # unique IDs for parallel run
+        self._validate_layers()
+        self.case_dir = self._layer_case_dir()
+        self._case_dir_suffix = self._layer_suffix()
         if not os.path.isfile(self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
             raise FileNotFoundError(
                 "Expected decayed sample F71 file: \n" + self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name)
@@ -1018,6 +1162,7 @@ class DoseEstimatorSquareTank(DoseEstimator):
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
+        self._validate_layers()
         self.cyl_r = get_cyl_r(self.sample_volume)
         tank_r: float = self.cyl_r  # current outer layer [cm]
         mavric_output: str = self._deck_head(
@@ -1029,20 +1174,19 @@ global unit 1
     media 1 1 1
 '''
         x_planes: list[float] = []  # list of cylinder boundaries for gridgeometry
-        k: int = 0
         for k in range(len(self.layers_mats)):
             tank_r += self.layers_thicknesses[k]
             mavric_output += f'''
     cylinder {k + 2} {tank_r} 2p {tank_r}   
     media {k + 10}  1 -{k + 1} {k + 2}'''
             x_planes.append(tank_r)
-        self.det_x = tank_r + self.det_standoff_distance  # Detector is next to the tank
-        self.box_a += tank_r
+        self._set_computed_detectors(tank_r + self.det_standoff_distance)  # Detector is next to the tank
+        box_a: float = self.box_a + tank_r  # problem half-width; self.box_a stays the offset
         x_planes_str: str = " ".join([f' {x:.5f} -{x:.5f}' for x in x_planes])
 
         mavric_output += f'''
-    cuboid 99999  6p {self.box_a}
-    media 0 1 99999 -{k + 2}
+    cuboid 99999  6p {box_a}
+    media 0 1 99999 -{self.outer_body}
 boundary 99999
 end geometry
 
@@ -1064,15 +1208,15 @@ read definitions
         mavric_output += f'''
     gridGeometry 1
         title="Grid over the problem, location at +x"
-        xLinear {self.N_planes_box} {self.cyl_r} {self.box_a}
-'        yLinear {self.N_planes_box} -{self.box_a} {self.box_a}
-'        zLinear {self.N_planes_box} -{self.box_a} {self.box_a}
+        xLinear {self.N_planes_box} {self.cyl_r} {box_a}
+'        yLinear {self.N_planes_box} -{box_a} {box_a}
+'        zLinear {self.N_planes_box} -{box_a} {box_a}
         xLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         yLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         zLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
-        xPlanes {x_planes_str} -{self.box_a} {self.box_a} {self.det_x + self.planes_xy_around_det} {self.det_x - self.planes_xy_around_det} end
-        yPlanes {x_planes_str} -{self.box_a} {self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
-        zPlanes {x_planes_str} -{self.box_a} {self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
+        xPlanes {x_planes_str} -{box_a} {box_a} {self.det_x + self.planes_xy_around_det} {self.det_x - self.planes_xy_around_det} end
+        yPlanes {x_planes_str} -{box_a} {box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
+        zPlanes {x_planes_str} -{box_a} {box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
     end gridGeometry
 end definitions
 '''
@@ -1099,6 +1243,7 @@ class DoseEstimatorStorageTank(DoseEstimatorSquareTank):
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
+        self._validate_layers()
         tank_inner_volume: float = self.sample_volume + self.sample_volume * self.plenum_volume_fraction
         self.cyl_r = get_cyl_r_4_1(tank_inner_volume)
         tank_r: float = self.cyl_r  # current outer layer radius [cm]
@@ -1122,7 +1267,6 @@ global unit 1
 '''
         xy_planes: list[float] = []  # list of XY cylinder boundaries for gridgeometry
         z_planes: list[float] = [sample_z_max, sample_z_min]  # list of Z cylinder boundaries for gridgeometry
-        k: int = 0
         for k in range(len(self.layers_mats)):
             tank_r += self.layers_thicknesses[k]
             tank_h2 += self.layers_thicknesses[k]
@@ -1134,7 +1278,9 @@ global unit 1
             xy_planes.append(tank_r)
             z_planes.append(tank_h2)
             z_planes.append(-tank_h2)
-        self.det_x = tank_r + self.det_standoff_distance  # Detector is next to the tank
+        # Bodies: sample 1, plenum 2, layer k is body k + 3. Without layers the void is outside sample and plenum.
+        outside_tank: str = f'-{len(self.layers_mats) + 2}' if self.layers_mats else '-1 -2'
+        self._set_computed_detectors(tank_r + self.det_standoff_distance)  # Detector is next to the tank
         xy_planes_str: str = " ".join([f' {x:.5f} -{x:.5f}' for x in xy_planes])
         self.det_z = (sample_z_max + sample_z_min) / 2.0
         z_planes.append(self.det_z + self.planes_xy_around_det)
@@ -1142,7 +1288,7 @@ global unit 1
         z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
         mavric_output += f'''
     cuboid 99999  4p {tank_r + self.box_a} 2p {tank_h2 + self.box_a}  
-    media 0 1 99999 -{k + 3}
+    media 0 1 99999 {outside_tank}
 boundary 99999
 end geometry
 
@@ -1196,6 +1342,7 @@ class DoseEstimatorGenericTank(DoseEstimatorSquareTank):
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
+        self._validate_layers()
         self.sample_h2 = get_cyl_h(self.sample_volume, self.cyl_r) / 2.0
         tank_r: float = self.cyl_r
         tank_h2: float = self.sample_h2
@@ -1213,7 +1360,6 @@ global unit 1
 '''
         xy_planes: list[float] = []  # list of XY cylinder boundaries for gridgeometry
         z_planes: list[float] = [sample_z_max, sample_z_min]  # list of Z cylinder boundaries for gridgeometry
-        k: int = 0
         for k in range(len(self.layers_mats)):
             tank_r += self.layers_thicknesses[k]
             tank_h2 += self.layers_thicknesses[k]
@@ -1223,7 +1369,7 @@ global unit 1
             xy_planes.append(tank_r)
             z_planes.append(tank_h2)
             z_planes.append(-tank_h2)
-        self.det_x = tank_r + self.det_standoff_distance  # Detector is next to the tank
+        self._set_computed_detectors(tank_r + self.det_standoff_distance)  # Detector is next to the tank
         xy_planes_str: str = " ".join([f' {x:.5f} -{x:.5f}' for x in xy_planes])
         self.det_z = (sample_z_max + sample_z_min) / 2.0
         z_planes.append(self.det_z + self.planes_xy_around_det)
@@ -1231,7 +1377,7 @@ global unit 1
         z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
         mavric_output += f'''
     cuboid 99999  4p {tank_r + self.box_a} 2p {tank_h2 + self.box_a}  
-    media 0 1 99999 -{k + 2}
+    media 0 1 99999 -{self.outer_body}
 boundary 99999
 end geometry
 
@@ -1274,6 +1420,14 @@ end definitions
 class HandlingContactDoseEstimatorGenericTank(DoseEstimatorSquareTank):
     """ MAVRIC calculation of rem/h doses from the decayed sample in a storage tank made of materials
     The storage tank is a cylinder, filled with the sample.
+    Two detector locations sit at the tank mid-height, measured from the outer surface of the last layer:
+    location 1 (contact) at det_standoff_distance (0.1 cm) and location 2 (handling) at
+    handling_det_standoff_distance (30 cm).
+    Responses by point-detector ID [rem/h]: '1' neutron and '2' photon at location 1, '5' neutron and '6' photon
+    at location 2. The beta estimates '3' (contact, from '2') and '7' (handling, from '6') are zero unless the
+    sample is bare (no layers).
+    contact_dose and handling_dose hold the totals at the two locations. total_dose returns contact_dose,
+    since location 1 has the same meaning as the single detector of DoseEstimatorGenericTank.
     """
 
     def __init__(self, _o: Origen = None):
@@ -1289,6 +1443,7 @@ class HandlingContactDoseEstimatorGenericTank(DoseEstimatorSquareTank):
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
+        self._validate_layers()
         self.sample_h2 = get_cyl_h(self.sample_volume, self.cyl_r) / 2.0
         tank_r: float = self.cyl_r
         tank_h2: float = self.sample_h2
@@ -1306,7 +1461,6 @@ global unit 1
 '''
         xy_planes: list[float] = []  # list of XY cylinder boundaries for gridgeometry
         z_planes: list[float] = [sample_z_max, sample_z_min]  # list of Z cylinder boundaries for gridgeometry
-        k: int = 0
         for k in range(len(self.layers_mats)):
             tank_r += self.layers_thicknesses[k]
             tank_h2 += self.layers_thicknesses[k]
@@ -1316,18 +1470,16 @@ global unit 1
             xy_planes.append(tank_r)
             z_planes.append(tank_h2)
             z_planes.append(-tank_h2)
-        self.det_x = tank_r + self.det_standoff_distance  # Detector is next to the tank, contact dose
-        self.handling_det_x = tank_r + self.handling_det_standoff_distance  # Detector is next to the tank, handling dose
+        self._set_computed_detectors(tank_r + self.det_standoff_distance,
+                                     tank_r + self.handling_det_standoff_distance)  # next to the tank
         xy_planes_str: str = " ".join([f' {x:.5f} -{x:.5f}' for x in xy_planes])
         self.det_z = (sample_z_max + sample_z_min) / 2.0
         z_planes.append(self.det_z + self.planes_xy_around_det)
         z_planes.append(self.det_z - self.planes_xy_around_det)
         z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
-        if not self.layers_mats:  # Fix for bare sample
-            k = -1
         mavric_output += f'''
     cuboid 99999  4p {tank_r + self.box_a} 2p {tank_h2 + self.box_a}  
-    media 0 1 99999 -{k + 2}
+    media 0 1 99999 -{self.outer_body}
 boundary 99999
 end geometry
 
@@ -1373,24 +1525,40 @@ end definitions
 
     def get_responses(self):
         """ Reads over the MAVRIC output and returns responses for rem/h doses
-            Note, this version uses different format of self.responses """
-        if not os.path.isfile(self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name):
-            raise FileNotFoundError(
-                "Expected decayed sample MAVRIC output file: \n" + self.cwd + '/' + self.case_dir + '/' + self.MAVRIC_out_file_name)
-        os.chdir(self.cwd + '/' + self.case_dir)
-
-        with open(self.MAVRIC_out_file_name, 'r') as f:
+            Note, this version keys self.responses by point-detector ID and adds 'particle' and 'pid' fields.
+            Raises RuntimeError when a detector is missing from the tally summary. """
+        out_path: str = os.path.join(self.cwd, self.case_dir, self.MAVRIC_out_file_name)
+        if not os.path.isfile(out_path):
+            raise FileNotFoundError("Expected decayed sample MAVRIC output file: \n" + out_path)
+        with open(out_path, 'r') as f:
             d: str = f.read()
-        rs: list = re.findall(r'Point Detector (\d).  (\w+) detector\n.*\n.*\n.*\n.*\n.*\s+response (\d)\s+'
-                              r'([+-]?\d+\.\d+[Ee]?[+-]?\d+)\s+([+-]?\d+\.\d+[Ee]?[+-]?\d+)?'
-                              r'\s+([+-]?\d+\.\d+[Ee]?[+-]?\d+)?', d)
+        detectors: dict = parse_point_detector_responses(d)
+        missing: list[str] = [det for det in ('1', '2', '5', '6') if det not in detectors]
+        if missing:
+            raise RuntimeError(f'Failed to parse point detectors {missing} from {out_path}')
+        beta_contact: dict = self._beta_response(detectors['2'])
+        beta_handling: dict = self._beta_response(detectors['6'])
         self.responses = {
-            t[0]: {'particle': t[1], 'pid': t[2], 'value': float(t[3]), 'stdev': 0.0 if t[4] == '' else float(t[4])} for
-            t in rs}
-
-        os.chdir(self.cwd)
+            '1': detectors['1'], '2': detectors['2'], '3': {'particle': 'beta', 'pid': '', **beta_contact},
+            '5': detectors['5'], '6': detectors['6'], '7': {'particle': 'beta', 'pid': '', **beta_handling},
+        }
         if self.debug > 3:
             print(self.responses)
+
+    @property
+    def contact_dose(self) -> dict:
+        """ Contact dose [rem/h] at location 1: neutron '1' + photon '2' + beta '3' (zero unless bare) """
+        return combine_dose_responses(self.responses, ['1', '2', '3'], correlated=('2', '3'))
+
+    @property
+    def handling_dose(self) -> dict:
+        """ Handling dose [rem/h] at location 2: neutron '5' + photon '6' + beta '7' (zero unless bare) """
+        return combine_dose_responses(self.responses, ['5', '6', '7'], correlated=('6', '7'))
+
+    @property
+    def total_dose(self) -> dict:
+        """ Dose at location 1, the same detector meaning as DoseEstimatorGenericTank; see contact_dose """
+        return self.contact_dose
 
     def print_response(self):
         """ Prints dose responses """
@@ -1417,7 +1585,7 @@ class MHATank(HandlingContactDoseEstimatorGenericTank):
         self.sample_h2: float = 304.8 / 2.0  # half-height of the sample
         self.cyl_r: float = 0.05080  # inner radius of the tank cylinder; h is calculated from V & r
         self.det_z: (None, float) = None  # z location of the detector
-        self.handling_det_x: (None, float) = None
+        object.__setattr__(self, 'handling_det_x', None)  # set by mavric_deck(); not a manual det_x
         self.det_standoff_distance = 0.1  # [cm] contact dose
         self.handling_det_standoff_distance = 30.0  # [cm] handing dose
         self.box_a: float = self.handling_det_standoff_distance + 10.0
@@ -1451,6 +1619,7 @@ class MHATank(HandlingContactDoseEstimatorGenericTank):
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
+        self._validate_layers()
         tank_r: float = self.cyl_r
         tank_h2: float = self.sample_h2
         sample_z_max: float = self.sample_h2
@@ -1468,7 +1637,6 @@ global unit 1
 '''
         xy_planes: list[float] = []  # list of XY cylinder boundaries for gridgeometry
         z_planes: list[float] = [sample_z_max, sample_z_min]  # list of Z cylinder boundaries for gridgeometry
-        k: int = 0
         for k in range(len(self.layers_mats)):
             tank_r += self.layers_thicknesses[k]
             tank_h2 += self.layers_thicknesses[k]
@@ -1478,8 +1646,8 @@ global unit 1
             xy_planes.append(tank_r)
             z_planes.append(tank_h2)
             z_planes.append(-tank_h2)
-        self.det_x = tank_r + self.det_standoff_distance  # Detector is next to the tank, contact dose
-        self.handling_det_x = tank_r + self.handling_det_standoff_distance  # Detector is next to the tank, handling dose
+        self._set_computed_detectors(tank_r + self.det_standoff_distance,
+                                     tank_r + self.handling_det_standoff_distance)  # next to the tank
         xy_planes_str: str = " ".join([f' {x:.5f} -{x:.5f}' for x in xy_planes])
         self.det_z = (sample_z_max + sample_z_min) / 2.0
         z_planes.append(self.det_z + self.planes_xy_around_det)
@@ -1487,7 +1655,7 @@ global unit 1
         z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
         mavric_output += f'''
     cuboid 99999  4p {tank_r + self.box_a} 2p {tank_h2 + self.box_a}  
-    media 0 1 99999 -{k + 2}
+    media 0 1 99999 -{self.outer_body}
 boundary 99999
 end geometry
 

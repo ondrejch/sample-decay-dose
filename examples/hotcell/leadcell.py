@@ -39,7 +39,11 @@ def single_run(decay_day: float) -> dict:
     mavric.N_planes_box = 15
     mavric.N_planes_cyl = 2
     mavric.histories_per_batch = int(100000 * np.sqrt(decay_day))
-    mavric.reuse_adjoint_flux = True
+    # False: MAVRIC computes the adjoint flux for each case. Set True only after a run with the same hotcell
+    # geometry, layers and detector positions has written the adjoint flux file (my_dose.adjoint.dff).
+    # HotCellDoses then skips the adjoint calculation, reads that file, and raises if it is missing.
+    # Set mavric.adjoint_flux_file to share one adjoint flux file across decay days.
+    mavric.reuse_adjoint_flux = False
     mavric.run_mavric()
     mavric.get_responses()
 

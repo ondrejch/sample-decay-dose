@@ -6,9 +6,26 @@ import re
 import subprocess
 import numpy as np
 import pandas as pd
-from sample_decay_dose.constants import SCALE_bin_path, ATOM_DENS_MINIMUM
+from sample_decay_dose import constants
+from sample_decay_dose.constants import SCALE_bin_path
 
 NUCLIDE_RE = re.compile(r"^(?P<elem>[a-zA-Z]+)-?(?P<num>\d+)(?P<meta>m)?$")
+# Metastable suffix: an "m" that follows the mass number (am-242m, am242m). Natural "sm" and "tm" keep their "m".
+METASTABLE_SUFFIX_RE = re.compile(r'(?<=\d)m$')
+# SCALE bound-scatterer composition IDs mapped to the nuclide whose mass they carry.
+# O and Be take the O-16 and Be-9 masses, which are the dominant (Be: only) stable isotopes.
+SCALE_BOUND_NUCLIDE_MASS_KEY: dict = {
+    'h-poly': 'h-1', 'h-benzene': 'h-1', 'h-zrh2': 'h-1', 'h-solid_ch4': 'h-1', 'h-liquid_ch4': 'h-1',
+    'hfreegas': 'h-1', 'dfreegas': 'h-2', 'c-graphite': 'c', 'be-beo': 'be-9', 'o-beo': 'o-16',
+}
+# SCALE failure markers. Modules print "***Error: ..." lines; the driver summary prints
+# "terminated due to errors. completion code N" and "<module> failed. used X seconds."
+SCALE_ERROR_RE = re.compile(r'^\s*\*{3}\s*error\b|terminated due to errors|^\s*\S+ failed\. used ', re.IGNORECASE)
+
+
+def atom_dens_minimum() -> float:
+    """ Atom density threshold, read at call time so that setting constants.ATOM_DENS_MINIMUM takes effect """
+    return constants.ATOM_DENS_MINIMUM
 
 
 def _run_subprocess(command: list[str], context: str) -> str:
@@ -77,7 +94,8 @@ def get_rho_from_atom_density(adens: dict) -> float:
     for k, v in adens.items():
         if v > 0.0:
             iso_name = k.lower()
-            iso_name = re.sub(r'm$', '', iso_name)  # strip "m"
+            iso_name = SCALE_BOUND_NUCLIDE_MASS_KEY.get(iso_name, iso_name)
+            iso_name = METASTABLE_SUFFIX_RE.sub('', iso_name)  # metastable state takes the ground-state mass
             iso_name = re.sub(r'([a-zA-Z]+)(\d+)', r'\g<1>-\g<2>', iso_name)  # add dash
             my_rho += rel_iso_mass[iso_name] * v * m_Da * 1e24
     return my_rho
@@ -187,7 +205,7 @@ def get_burned_nuclide_atom_dens(f71file: str, position: int, my_cases: list[int
             value = float(data[position])
         except ValueError:
             continue
-        if value > ATOM_DENS_MINIMUM:
+        if value > atom_dens_minimum():
             densities[nuclide] = value
     sorted_densities = {k: v for k, v in sorted(densities.items(), key=lambda item: -item[1])}
     return sorted_densities
@@ -221,7 +239,7 @@ def get_burned_nuclide_data(f71file: str, position: int, f71units: str = 'atom',
             value = float(data[position])
         except ValueError:
             continue
-        if value > ATOM_DENS_MINIMUM:
+        if value > atom_dens_minimum():
             f71unit_data[nuclide] = value
     sorted_f71unit_data = {k: v for k, v in sorted(f71unit_data.items(), key=lambda item: -item[1])}
     return sorted_f71unit_data
@@ -250,9 +268,27 @@ def get_single_nuclide_case(f71file: str, position: int, my_nuclide: str) -> flo
             value = float(data[position])
         except ValueError:
             continue
-        if value > ATOM_DENS_MINIMUM and nuclide == my_nuclide:
+        if value > atom_dens_minimum() and nuclide == my_nuclide:
             return value
     return -1.0
+
+
+def get_f71_volume(f71file: str, position: int) -> float:
+    """ Material volume [cm^3] stored at an F71 position (the "volume" row of obiwan's csv view).
+    ORIGEN emission spectra on the F71 are totals over this volume. """
+    output = _run_subprocess(
+        [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=atom", "-idform={:Ee}{:AAA}{:m}",
+         f71file],
+        f"Reading material volume from {f71file}",
+    ).split("\n")
+    for line in output:
+        data = line.split(',')
+        if data[0].strip() != 'volume':
+            continue
+        if len(data) <= position:
+            break
+        return float(data[position])
+    raise RuntimeError(f"Failed to find the volume of position {position} in {f71file}")
 
 
 def get_burned_material_total_mass_dens(f71file: str, position: int) -> float:
@@ -288,9 +324,9 @@ def get_F33_num_sets(f33file: str) -> int:
     f33_base: str = os.path.basename(f33file)
     for line in output:
         data = line.split()
-        if not data:
+        if len(data) < 3:
             continue
-        if data[0] == f33_base or data[0] in f33file:
+        if data[0] == f33_base:  # obiwan lists the file by its basename
             return int(data[2])
     raise RuntimeError(f"Failed to find numSets in F33 info of {f33file}")
 
@@ -357,15 +393,29 @@ def get_cyl_h(cyl_volume: float, cyl_r: float) -> float:
     return cyl_volume / np.pi / cyl_r ** 2
 
 
+def scale_error_lines(lines: list[str]) -> list[str]:
+    """ Lines that carry SCALE failure markers (see SCALE_ERROR_RE) """
+    return [line for line in lines if SCALE_ERROR_RE.search(line)]
+
+
 def run_scale(deck_file: str, nmpi: int = 1):
-    """ Run a SCALE deck """
+    """ Run a SCALE deck. Returns False on a non-zero exit code or when SCALE reports an error.
+    scalerte can exit with code 0 after a module aborts, so the messages and the output file are also
+    checked for SCALE's failure markers. Words like "relative error" in normal output do not count. """
+    out_file: str = os.path.splitext(deck_file)[0] + '.out'
+    t_start: float = os.path.getmtime(out_file) if os.path.isfile(out_file) else -1.0
     result = subprocess.run([f"{SCALE_bin_path}/scalerte", "-N", str(nmpi), "-m", deck_file], capture_output=True)
     return_code = result.returncode if isinstance(result.returncode, int) else 0
     stdout_lines = result.stdout.decode(errors='replace').split("\n")
     stderr_lines = result.stderr.decode(errors='replace').split("\n")
-    has_error_text = any("error" in line.lower() for line in stdout_lines + stderr_lines)
-    if return_code != 0 or has_error_text:
+    error_lines: list[str] = scale_error_lines(stdout_lines + stderr_lines)
+    if os.path.isfile(out_file) and os.path.getmtime(out_file) != t_start:  # read only an output of this run
+        with open(out_file, 'r', errors='replace') as f:
+            error_lines += scale_error_lines(f.read().splitlines())
+    if return_code != 0 or error_lines:
         print('Failed run: ', deck_file)
+        for line in error_lines[:5]:
+            print('    ', line.strip())
         return False
     print('OK run: ', deck_file)
     return True
@@ -385,7 +435,7 @@ def atom_dens_for_mavric(adens: dict, mix_number: int = 1, tempK: float = 873.0)
     output = ''
     for k, v in adens.items():
         if v > 0.0:
-            k = re.sub('m$', '', k)
+            k = METASTABLE_SUFFIX_RE.sub('', k)  # MAVRIC takes the ground state; natural "sm", "tm" stay intact
             output += f'{k} {mix_number} 0 {v} {tempK} end\n'
     return output
 

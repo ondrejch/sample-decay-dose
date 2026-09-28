@@ -3370,7 +3370,8 @@ rel_iso_mass = {  # Relative isotopic mass [Da]
     "mc-288": 288.19274,
     "mc-289": 289.19363,
     "mc-290": 290.19598,
-    "uup-291": 291.19707,
+    "mc-291": 291.19707,
+    "uup-291": 291.19707,  # Legacy NIST name (ununpentium) of mc-291, kept as an alias
     "lv-289": 289.19816,
     "lv-290": 290.19864,
     "lv-291": 291.20108,
@@ -3379,7 +3380,8 @@ rel_iso_mass = {  # Relative isotopic mass [Da]
     "ts-291": 291.20553,
     "ts-292": 292.20746,
     "ts-293": 293.20824,
-    "uus-294": 294.21046,
+    "ts-294": 294.21046,
+    "uus-294": 294.21046,  # Legacy NIST name (ununseptium) of ts-294, kept as an alias
     "og-293": 293.21356,
     "og-294": 294.21392,
     "og-295": 295.21624

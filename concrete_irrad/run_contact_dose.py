@@ -8,7 +8,9 @@ sure SCALE_BIN points at a SCALE installation, and run:
     PYTHONPATH=. python concrete_irrad/run_contact_dose.py --lib cavity_spectrum.f33
 
 Add --scan 1,30,90,365 to compute the dose at several cooling times; results
-land in lid_contact_doses.csv. Without --lib the script only previews decks.
+land in lid_contact_doses.csv. Add --nmpi N to pass N MPI tasks to each SCALE
+run. Without --lib the script only previews decks, built from the same PARAMS
+and MIXER_PARAMS as a real run.
 """
 import argparse
 import csv
@@ -34,11 +36,22 @@ MIXER_PARAMS: dict = {
 # ---------------------------------------------------------------------------
 
 
-def collect_dose(calc: ConcreteLidContactDose) -> dict:
+def build_calc(decay_days: float, lib_f33: str) -> ConcreteLidContactDose:
+    """ Lid model from the EDIT-ME block for one cooling time """
+    return ConcreteLidContactDose(decay_days=decay_days, irradiation_lib_f33=lib_f33,
+                                  mixer=ConcreteRebarMixer(**MIXER_PARAMS), **PARAMS)
+
+
+def parse_scan(text: str) -> list:
+    """ Cooling times [d] from a comma-separated list; empty items are ignored """
+    return [float(item) for item in text.split(',') if item.strip()]
+
+
+def collect_dose(calc: ConcreteLidContactDose, nmpi: int = 1) -> dict:
     """ Runs the full chain for one decay time and returns the contact dose row """
     calc.write_inputs()
-    calc.run_activation()
-    calc.run_mavric()
+    calc.run_activation(nmpi=nmpi)
+    calc.run_mavric(nmpi=nmpi)
     calc.get_responses()
     dose: dict = calc.contact_dose
     return {'decay_days': calc.decay_days, 'dose_rem_per_h': dose['value'],
@@ -49,9 +62,7 @@ def scan_decay_times(days_list: list, lib_f33: str, nmpi: int = 1) -> list:
     """ Contact dose at each cooling time; ORIGEN is rerun per point """
     rows: list = []
     for days in days_list:
-        calc = ConcreteLidContactDose(decay_days=days, irradiation_lib_f33=lib_f33,
-                                      mixer=ConcreteRebarMixer(**MIXER_PARAMS), **PARAMS)
-        rows.append(collect_dose(calc))
+        rows.append(collect_dose(build_calc(days, lib_f33), nmpi=nmpi))
         print(f"decay {days:>8.2f} d : {rows[-1]['dose_rem_per_h']:.4e} "
               f"+/- {rows[-1]['stdev_rem_per_h']:.2e} rem/h")
     return rows
@@ -74,21 +85,21 @@ def main():
     args = parser.parse_args()
 
     if not args.lib:
-        preview = ConcreteLidContactDose(irradiation_lib_f33='cavity_spectrum.f33', **PARAMS)
+        preview = build_calc(args.decay_days, 'cavity_spectrum.f33')
         print(preview.origen_deck())
         print(preview.mavric_deck())
         print("# Preview only; pass --lib <f33> to execute.", file=sys.stderr)
         return
 
     if args.scan:
-        days: list = [float(d) for d in args.scan.split(',')]
+        days: list = parse_scan(args.scan)
+        if not days:
+            parser.error(f"--scan contains no cooling times: '{args.scan}'")
         rows: list = scan_decay_times(days, args.lib, nmpi=args.nmpi)
         write_csv(rows, args.csv)
         print(f"Wrote {args.csv}")
     else:
-        calc = ConcreteLidContactDose(decay_days=args.decay_days,
-                                      irradiation_lib_f33=args.lib, **PARAMS)
-        row: dict = collect_dose(calc)
+        row: dict = collect_dose(build_calc(args.decay_days, args.lib), nmpi=args.nmpi)
         print(f"\nContact photon dose after {row['decay_days']} d: "
               f"{row['dose_rem_per_h']:.4e} +/- {row['stdev_rem_per_h']:.2e} rem/h")
 

@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Plotting script for calc_doses_mass
+Plotting script for calc_f71_doses_mass.py, calc_f71_doses_decaytime.py and calc_irradiation_doses_decaytime.py
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
@@ -20,10 +20,20 @@ labels = {'m' : ['mass', 'grams', 'Fuel salt sample, 1 year burn, 30 days decay 
         'irr1': ['decay time', 'days', 'SS-316 coupon, 2 year irradiation at 1e13 n/s/cm2, 1 gram'],
           }
 
+# Responses file written by the calculation script that matches each LABEL
+datafiles = {'m': 'responses_f71_mass.json',          # calc_f71_doses_mass.py
+             'dt': 'responses_f71_decaytime.json',    # calc_f71_doses_decaytime.py
+             'dt2': 'responses_f71_decaytime.json',
+             'dt04': 'responses_f71_decaytime.json',
+             'dt12': 'responses_f71_decaytime.json',
+             'dt28': 'responses_f71_decaytime.json',
+             'irr1': 'responses_irr_decaytime.json',  # calc_irradiation_doses_decaytime.py
+             }
+
 particles = {'1': 'Neutron', '2': 'Gamma', '3': 'Beta'}
 colors = {'1': 'sandybrown', '2': 'slategrey', '3': 'cornflowerblue'}
 
-with open('responses.json') as fin:
+with open(datafiles[LABEL]) as fin:
     r = json5.load(fin)
 
 dose = {}  # doses [rem/h]
@@ -42,7 +52,7 @@ plt.yscale('linear')
 plt.grid()
 plt.title(labels[LABEL][2])
 plt.xlabel(f'Sample {labels[LABEL][0]} [{labels[LABEL][1]}]')
-plt.ylabel('Dose at 30 cm [rem/h]')
+plt.ylabel('Dose 30 cm from the sample centre [rem/h]')
 for p in particles.keys():
     if sum(dose[p]) > 1e-6:    # Only plot of there is dose form that particle
         plt.errorbar(x, dose[p], errd[p], ls='none', color=f'{colors[p]}', capsize=1.2)

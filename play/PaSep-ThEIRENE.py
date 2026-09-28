@@ -9,7 +9,7 @@ import json5
 import numpy as np
 import pandas as pd
 import scipy
-from sample_decay_dose import SampleDose, utils
+from sample_decay_dose import SampleDose, constants, utils
 
 f71_file_name: str = 'ThEIRENE.f71'
 decay_f71_file_name: str = 'decay-u233.f71'
@@ -19,7 +19,7 @@ MTiHM: dict = {' 5.00': 10.4159200656709, '19.75': 10.2647529843048}
 fuel_type: dict = {' 5.00': 'LEU+Th', '19.75': 'HALEU+Th'}
 flux_per_MW: dict = {' 5.00': 1.3070e+11, '19.75': 1.2441e+11}
 seconds_per_day: float = 60.0 * 60.0 * 24.0
-SampleDose.ATOM_DENS_MINIMUM = 0.0 # 1e-20
+constants.ATOM_DENS_MINIMUM = 0.0  # 1e-20; utils reads the threshold from constants
 os.chdir('/home/o/ThEIRENE/03-Triton-moveiso/')
 cwd: str = os.getcwd()
 results_json: str = 'u233-results.json'
@@ -136,9 +136,9 @@ def read_and_decay():
         runs[my_path]['ac225 Bq per MWday'] = slope * seconds_per_day / thermal_power
         runs[my_path]['ac225 Bq in 5y/MW'] = ac225_5y_Bqs / thermal_power
         print(f'Ac225: {runs[my_path]["ac225 Bq per day"]:.3e} Bq/day, '
-              f'total year 1: {runs[my_path]["ac225 Bq in 1y"]:.3e} Bq')
+              f'after 5 years: {runs[my_path]["ac225 Bq in 5y"]:.3e} Bq')
         print(f'Ac225: {runs[my_path]["ac225 Bq per MWday"]:.3e} Bq/day, '
-              f'total year 1: {runs[my_path]["ac225 Bq in 5y/MW"]:.3e} Bq/MW')
+              f'after 5 years: {runs[my_path]["ac225 Bq in 5y/MW"]:.3e} Bq/MW')
 
     with open(results_json, 'w') as f:
         json5.dump(runs, f, indent=4)

@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Finds minimum lead thickness for shielding
+Finds minimum lead thickness for shielding, from the co_steel_irr_hcdoses_shield_pb.py results
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
@@ -12,7 +12,9 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit, fsolve
 from sample_decay_dose.utils import extract_flux_values
 
-scale_out: str = os.path.expanduser(os.getenv('STELLITE_SCALE_OUT', '~/0.02/80-upper-encl-stellite/01-triton/msrr.out'))
+# TRITON output that holds the mixture fluxes, see README.md. The default is msrr.out next to the case directory.
+# Use the same STELLITE_SCALE_OUT for a calculation script and its plot script, since the plot titles quote the flux.
+scale_out: str = os.path.expanduser(os.getenv('STELLITE_SCALE_OUT', '../msrr.out'))
 if not os.path.isfile(scale_out):
     raise FileNotFoundError(
         f"Could not find SCALE output file at '{scale_out}'. "

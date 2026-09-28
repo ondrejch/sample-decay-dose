@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Example use case of SampleDose.DoseEstimatorTank - simple decay doses of F71 sample,
+Example use case of SampleDose.DoseEstimatorStorageTank - simple decay doses of F71 sample,
 using parallel execution of the MAVRIC cases.
 Note that the beta dose is zero if the sample has additional shielding.
 Ondrej Chvala <ochvala@utexas.edu>
@@ -72,10 +72,9 @@ def run_analysis():
     results = Parallel(n_jobs=n_jobs)(delayed(mavric_process)(origen_triton, case) for case in case_inputs)
 
     print(results)
-    with open('doses.json', 'w') as file_out:
+    with open('doses_storage_tank_scan_parallel.json', 'w') as file_out:  # read by storage_tank_plots.py
         json5.dump(results, file_out, indent=4)
 
 
 if __name__ == "__main__":
-    pass
-    # run_analysis()
+    run_analysis()

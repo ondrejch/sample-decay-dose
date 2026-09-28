@@ -1,6 +1,7 @@
 #!/bin/env python3
 """
-Plotting script for calc_doses_mass
+Plots gamma doses versus decay time from co_steel_irr_doses.py runs at several cobalt fractions.
+Each run's responses.json is read from its co_<wt%>pct/ subdirectory.
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
@@ -37,7 +38,7 @@ plt.yscale('linear')
 plt.grid()
 plt.title(labels[LABEL][2])
 plt.xlabel(f'Sample {labels[LABEL][0]} [{labels[LABEL][1]}]')
-plt.ylabel('Dose at 30 cm [rem/h]')
+plt.ylabel('Dose 30 cm from the sample centre [rem/h]')
 
 for d in data.keys():
     ytitle = d.replace('co_', '').replace('pct', '')

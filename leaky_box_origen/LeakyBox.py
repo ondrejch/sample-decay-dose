@@ -3,14 +3,19 @@
 Leaky box using SCALE/Origen
 Ondrej Chvala <ochvala@utexas.edu>
 
-Box A --> Box B --> outside
+Box A --> Box B --> Box C (outside)
+
+Box A leaks into box B, and box B leaks into box C. Box C accumulates the release to the
+environment and has no removal. Only the elements in LEAKED_ELEMENTS are removed from a box.
 
 100% per day  =  1/24/60/60 per second    = 0.0000115740740741
    1% per day  =  1e-2/24/60/60 per second = 0.000000115740740741
  0.1% per day  =  1e-3/24/60/60 per second = 0.0000000115740740741
 """
+import numbers
 import os
 import re
+import warnings
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
@@ -32,6 +37,16 @@ DEFAULT_F71_PATH: str = os.getenv(
 DEFAULT_F71_CASE: str = os.getenv('LEAKYBOX_F71_CASE', '20')
 LEAKY_BOX_ORIGEN_DIR: Path = Path(__file__).resolve().parent
 LEAKY_BOX_DATA_DIR: Path = LEAKY_BOX_ORIGEN_DIR / 'data'
+# Elements that leak out of a box. Each one gets an ORIGEN `removal { rate=... ele=[x] }` entry;
+# all other elements (including decay daughters such as Rb, Cs, Sr, Ba) are retained in the box.
+LEAKED_ELEMENTS: tuple[str, ...] = ('h', 'he', 'o', 'n', 'i', 'br', 'ar', 'kr', 'xe')
+# Fail-closed default: raise when more than 5% of the release rate has no DCF.
+# Pass max_missing_dcf_fraction=None to warn instead of raising.
+DEFAULT_MAX_MISSING_DCF_FRACTION: float = 0.05
+# Conservative ICRP-72 inhalation table for paper runs: maximum adult DCF across
+# types F/M/S per nuclide (journal method). The Type-F table
+# (dcf_icrp72_inhalation_adult.csv) is lower for insoluble forms.
+DEFAULT_ICRP72_INHALATION_CSV: str = 'dcf_icrp72_inhalation_adult_max.csv'
 
 
 class Origen:
@@ -52,6 +67,15 @@ class Origen:
         self.volume: float = np.nan  # Sample volume [cm3]
         self.final_atom_dens: dict = {}
         self.skip_calculation: bool = False  # Skips actual SCALE calculation, used for re-runs.
+        self.case_path: str = ''  # Absolute path of case_dir, set when run_decay_sample() runs
+
+    def _enter_case_dir(self) -> str:
+        """ Create case_dir under the current cwd, chdir into it, and return the caller's cwd """
+        prev_cwd: str = os.getcwd()
+        self.case_path = os.path.abspath(self.case_dir)
+        os.makedirs(self.case_path, exist_ok=True)
+        os.chdir(self.case_path)
+        return prev_cwd
 
 
 class DecayBoxA(Origen):
@@ -67,10 +91,13 @@ class DecayBoxA(Origen):
         self.case_dir = '_box_A'
         self.ORIGEN_input_file_name = 'core-decay.inp'
 
-    def set_f71_pos(self, t: float = 5184000.0, case: str = '1'):
-        """ Returns closest position in the F71 file for a case """
+    def set_f71_pos(self, t: float = 5184000.0, case: str | int = '1'):
+        """ Sets the F71 position closest in time to t for a case (ties go to the earlier slot) """
+        case_str: str = str(case)
         pos_times = sorted(
-            (k, float(v['time'])) for k, v in self.BURNED_MATERIAL_F71_index.items() if v['case'] == case
+            ((k, float(v['time'])) for k, v in self.BURNED_MATERIAL_F71_index.items()
+             if str(v['case']) == case_str),
+            key=lambda x: (x[1], x[0])
         )
         if not pos_times:
             raise ValueError(f"Case '{case}' not found in F71 index for {self.BURNED_MATERIAL_F71_file_name}")
@@ -84,7 +111,10 @@ class DecayBoxA(Origen):
             print(f"Error: Time {t} seconds is longer than {t_max} s, the maximum time in records.")
             pos_idx: int = len(times) - 1
         else:
+            # bisect_left gives the first slot at or after t; the previous slot may be closer.
             pos_idx: int = bisect_left(times, t)
+            if pos_idx > 0 and (t - times[pos_idx - 1]) <= (times[pos_idx] - t):
+                pos_idx -= 1
         pos_number: int = pos_times[pos_idx][0]
         print(f'--> Closest F71 position found at slot {pos_number}, {times[pos_idx]} seconds')
         self.BURNED_MATERIAL_F71_position = pos_number
@@ -108,9 +138,7 @@ class DecayBoxA(Origen):
         """  Writes Origen input file, runs Origen to decay it and Opus to plot spectra.
         Finally, it reads atom density of the decayed sample, used later as a mixture for Mavric.
         """
-        if not os.path.exists(self.case_dir):
-            os.mkdir(self.case_dir)
-        os.chdir(self.case_dir)
+        prev_cwd: str = self._enter_case_dir()
         try:
             if not self.skip_calculation:
                 with open(self.ATOM_DENS_file_name_Origen, 'w') as f:  # write Origen at-dens sample input
@@ -132,7 +160,7 @@ class DecayBoxA(Origen):
             self.final_atom_dens = get_burned_nuclide_atom_dens(self.F71_file_name,
                                                                 self.DECAY_steps)
         finally:
-            os.chdir(self.cwd)
+            os.chdir(prev_cwd)  # restore the caller's cwd, not the construction-time one
         if self.debug > 2:
             # print(list(self.decayed_atom_dens.items())[:25])
             nicely_print_atom_dens(self.final_atom_dens)
@@ -229,7 +257,7 @@ class DecayBoxB(Origen):
     def __init__(self, _atom_dens: dict, _volume: float):
         Origen.__init__(self)
         self.atom_dens = _atom_dens
-        self.volume: float = _volume  # Mass of the sample [g]
+        self.volume: float = _volume  # Sample volume [cm3]
         self.nuclide_feed_rates: (dict, None) = None
         self.nuclide_removal_rates: (dict, None) = None
         self.case_dir = '_box_B'
@@ -241,9 +269,7 @@ class DecayBoxB(Origen):
         """  Writes Origen input file, runs Origen to decay it and Opus to plot spectra.
         Finally, it reads atom density of the decayed sample, used later as a mixture for Mavric.
         """
-        if not os.path.exists(self.case_dir):
-            os.mkdir(self.case_dir)
-        os.chdir(self.case_dir)
+        prev_cwd: str = self._enter_case_dir()
         try:
             if not self.skip_calculation:
                 if len(self.atom_dens) > 0:
@@ -269,7 +295,7 @@ class DecayBoxB(Origen):
             self.final_atom_dens = get_burned_nuclide_atom_dens(self.F71_file_name,
                                                                 self.DECAY_steps)
         finally:
-            os.chdir(self.cwd)
+            os.chdir(prev_cwd)  # restore the caller's cwd, not the construction-time one
         if self.debug > 2:
             # print(list(self.decayed_atom_dens.items())[:25])
             nicely_print_atom_dens(self.final_atom_dens)
@@ -349,6 +375,7 @@ class LeakyBox:
     """
 
     def __init__(self):
+        self.debug: int = 0  # Debugging flag; > 2 prints every per-nuclide leak rate
         self.nuc_leak = None
         self.decay_leaks: (None, DecayBoxA) = None
         self.leak_rates: dict = {}  # Leak rate calculated as \epsilon_i^A N_i^A (t)
@@ -358,19 +385,10 @@ class LeakyBox:
 
     def setup_cases(self, origen_case: DecayBoxA):
         """ Setup cases based on a base_case """
-        self.nuclide_removal_rates = {
-            'h': self.removal_rate,
-            'he': self.removal_rate,
-            'o': self.removal_rate,
-            'n': self.removal_rate,
-            'i': self.removal_rate,
-            'br': self.removal_rate,
-            'ar': self.removal_rate,
-            'kr': self.removal_rate,
-            'xe': self.removal_rate,
-        }
+        self.nuclide_removal_rates = {ele: self.removal_rate for ele in LEAKED_ELEMENTS}
         self.decay_leaks = origen_case
-        self.decay_leaks.case_dir += '_leak'
+        if not self.decay_leaks.case_dir.endswith('_leak'):  # Idempotent on repeated calls
+            self.decay_leaks.case_dir += '_leak'
         self.decay_leaks.nuclide_removal_rates = self.nuclide_removal_rates
         self.nuc_leak: list = [s.lower() for s in self.nuclide_removal_rates.keys()]
 
@@ -378,22 +396,33 @@ class LeakyBox:
         """ Run cases and get results """
         self.decay_leaks.run_decay_sample()
 
-    def _parallel_leak_calc(self, i, vals) -> [int, float, dict, dict]:
+    def _leak_f71_path(self) -> str:
+        """ Absolute path of the leak-case F71 file.
+        Resolved in the parent process: reused joblib workers keep the cwd they started with,
+        so relative paths inside workers can point to a previous run directory.
+        """
+        case_path: str = self.decay_leaks.case_path or os.path.abspath(self.decay_leaks.case_dir)
+        return os.path.join(case_path, self.decay_leaks.F71_file_name)
+
+    def _parallel_leak_calc(self, i, vals, f71_leak_file: str | None = None) -> [int, float, dict, dict]:
         t = float(vals['time'])
-        f71_leak_file: str = self.decay_leaks.case_dir + '/' + self.decay_leaks.F71_file_name
+        if f71_leak_file is None:
+            f71_leak_file = self._leak_f71_path()
         adens_tot: dict = get_burned_nuclide_atom_dens(f71_leak_file, i)  # All nuclides
         step_leak_rate: dict = {k: adens_tot[k] for k in adens_tot.keys() if re.sub('-.*', '', k) in self.nuc_leak}
         for k in step_leak_rate.keys():
             step_leak_rate[k] *= self.nuclide_removal_rates[re.sub('-.*', '', k)]  # * self.decay_leaks.volume
-            print("LEAK_RATE: ", k, step_leak_rate[k], adens_tot[k])
+            if self.debug > 2:
+                print("LEAK_RATE: ", k, step_leak_rate[k], adens_tot[k])
         return i, t, adens_tot, step_leak_rate
 
     def get_leak_rate_parallel(self):
         """ Calculate Box B ingress rate = Box A leak rate"""
         from joblib import Parallel, delayed, cpu_count
-        f71_leak_file: str = self.decay_leaks.case_dir + '/' + self.decay_leaks.F71_file_name
+        f71_leak_file: str = self._leak_f71_path()
         times: dict = get_f71_positions_index(f71_leak_file)
-        res_list = Parallel(n_jobs=cpu_count())(delayed(self._parallel_leak_calc)(ii, vv) for ii, vv in times.items())
+        res_list = Parallel(n_jobs=cpu_count())(delayed(self._parallel_leak_calc)(ii, vv, f71_leak_file)
+                                                for ii, vv in times.items())
         for k, res in enumerate(res_list):
             (i, t, adens_tot, step_leak_rate) = res
             self.leak_rates[i]: dict = {}
@@ -705,10 +734,42 @@ def _total_activity_from_f71(f71_path: str, position: int = -1) -> float:
     return float(sum(activity.values()))
 
 
+def _case_dir_name(box: str, run_prefix: str | None, step: int | None = None) -> str:
+    # ORIGEN case directory name for a box ('box_A', 'box_B', 'box_C').
+    # Runs with an output prefix (e.g. the xe135 and xe136 tests) get their own case directories,
+    # so one run cannot overwrite the F71 files of another run in the same run directory.
+    name = f'_{box}_{run_prefix}' if run_prefix else f'_{box}'
+    if step is not None:
+        name += f'_{step:04d}'
+    return name
+
+
+def _run_prefix_from_box_json(box_json_path: str) -> str | None:
+    # Infer the run prefix from a box json5 name written by _out_name, e.g. boxB_xe135.json5 -> xe135.
+    stem = Path(box_json_path).name.split('.')[0]
+    if '_' in stem:
+        return stem.split('_', 1)[1] or None
+    return None
+
+
+def _step_case_dirs(case_prefix: str, step: int, run_prefix: str | None) -> list[str]:
+    # Candidate case directories for one step: prefixed names first, then legacy unprefixed names.
+    case_dirs: list[str] = []
+    if run_prefix:
+        base = _case_dir_name(case_prefix, run_prefix, step)
+        case_dirs += [base, f'{base}_leak']
+    base = _case_dir_name(case_prefix, None, step)
+    case_dirs += [base, f'{base}_leak']
+    return case_dirs
+
+
 def _activity_timeseries_from_box_json(box_json_path: str, case_prefix: str,
-                                       position: int = -1) -> pd.DataFrame:
+                                       position: int = -1, run_prefix: str | None = None) -> pd.DataFrame:
     # Build total activity vs time from per-case F71 outputs referenced by a box json5 file.
+    # run_prefix defaults to the prefix encoded in the json name (boxB_xe135.json5 -> xe135).
     box_root = os.path.dirname(os.path.abspath(box_json_path))
+    if run_prefix is None:
+        run_prefix = _run_prefix_from_box_json(box_json_path)
     with open(box_json_path, 'r') as f:
         box_data = json5.load(f)
     steps = sorted(box_data.items(), key=lambda kv: float(kv[1]['time']))
@@ -719,10 +780,7 @@ def _activity_timeseries_from_box_json(box_json_path: str, case_prefix: str,
         except ValueError:
             k_int = int(float(key))
         time_s = float(rec['time'])
-        case_dirs = [
-            f'_{case_prefix}_{k_int:04d}',
-            f'_{case_prefix}_{k_int:04d}_leak',
-        ]
+        case_dirs = _step_case_dirs(case_prefix, k_int, run_prefix)
         f71_path = _find_case_f71(case_dirs, search_roots=[box_root])
         if f71_path is None:
             print(f"Warning: no F71 found for {case_prefix} step {k_int:04d}")
@@ -761,9 +819,13 @@ def _write_activity_csv(pd_B_act: pd.DataFrame, pd_C_act: pd.DataFrame, out_pref
 
 
 def _activity_timeseries_per_nuclide_from_box_json(box_json_path: str, case_prefix: str,
-                                                   position: int = -1) -> pd.DataFrame:
+                                                   position: int = -1,
+                                                   run_prefix: str | None = None) -> pd.DataFrame:
     # Build per-nuclide activity (Bq) vs time from per-case F71 outputs.
+    # run_prefix defaults to the prefix encoded in the json name (boxB_xe135.json5 -> xe135).
     box_root = os.path.dirname(os.path.abspath(box_json_path))
+    if run_prefix is None:
+        run_prefix = _run_prefix_from_box_json(box_json_path)
     with open(box_json_path, 'r') as f:
         box_data = json5.load(f)
     steps = sorted(box_data.items(), key=lambda kv: float(kv[1]['time']))
@@ -774,10 +836,7 @@ def _activity_timeseries_per_nuclide_from_box_json(box_json_path: str, case_pref
         except ValueError:
             k_int = int(float(key))
         time_s = float(rec['time'])
-        case_dirs = [
-            f'_{case_prefix}_{k_int:04d}',
-            f'_{case_prefix}_{k_int:04d}_leak',
-        ]
+        case_dirs = _step_case_dirs(case_prefix, k_int, run_prefix)
         f71_path = _find_case_f71(case_dirs, search_roots=[box_root])
         activity = {}
         if f71_path is None:
@@ -793,14 +852,25 @@ def _activity_timeseries_per_nuclide_from_box_json(box_json_path: str, case_pref
 def _dcf_missing_hint(resolved: Path) -> str:
     # Recovery hint for a missing DCF table.
     if 'fgr11' in resolved.name:
-        return (f"DCF CSV not found: {resolved}. Generate the FGR-11 tables with "
-                f"'python -m leaky_box_origen.extract_fgr11_dcf' (requires pdftoppm and tesseract, "
-                f"source PDF under PDF/).")
+        return (f"DCF CSV not found: {resolved}. The FGR-11 tables ship with the repository under "
+                f"{LEAKY_BOX_DATA_DIR}/; restore them from version control "
+                f"(git checkout -- leaky_box_origen/data/) or reinstall the package. Regenerating them with "
+                f"'python -m leaky_box_origen.extract_fgr11_dcf --pdf <path>' needs a local copy of the "
+                f"EPA FGR-11 PDF, which is not distributed with the repository "
+                f"(and pdftotext, pdftoppm and tesseract).")
     if 'site-packages' in str(LEAKY_BOX_DATA_DIR):
         return (f"DCF CSV not found: {resolved}. Expected under {LEAKY_BOX_DATA_DIR}/; "
                 f"reinstall the sample_decay_dose package to restore bundled data.")
     return (f"DCF CSV not found: {resolved}. Expected under {LEAKY_BOX_DATA_DIR}/; "
             f"restore it from version control (git checkout -- leaky_box_origen/data/).")
+
+
+# Plausibility window for tabulated DCF values. The upper cap drops OCR or parsing artifacts
+# (no inhalation coefficient approaches 1e-2 Sv/Bq). The lower bound rejects OCR exponent garbage
+# such as 1e-97; the smallest published values are ~1e-15 (ICRP-72 elemental tritium,
+# Sv/Bq) and ~1e-15 Sv/day per Bq/m^3 (Ar-37 immersion).
+MAX_DCF: float = 1e-2
+MIN_DCF: float = 1e-20
 
 
 def _load_dcf_csv(path: str) -> dict[str, float]:
@@ -821,14 +891,15 @@ def _load_dcf_csv(path: str) -> dict[str, float]:
     else:
         raise ValueError("DCF CSV must include 'dcf_sv_bq' or 'dcf_rem_bq'")
     dcf_map: dict[str, float] = {}
-    max_dcf = 1e-2  # Sv/Bq sanity cap to discard OCR or parsing artifacts.
+    max_dcf = MAX_DCF  # Sv/Bq sanity cap to discard OCR or parsing artifacts.
+    min_dcf = MIN_DCF  # Sv/Bq lower bound to discard garbled exponents (e.g. 1e-97).
     for _, row in df.iterrows():
         nuclide = str(row[cols['nuclide']]).strip().lower()
         try:
             val = float(row[dcf_col]) * scale
         except (TypeError, ValueError):
             continue
-        if not math.isfinite(val) or val <= 0.0 or val > max_dcf:
+        if not math.isfinite(val) or val < min_dcf or val > max_dcf:
             continue
         dcf_map[nuclide] = val
     return dcf_map
@@ -845,14 +916,15 @@ def _load_dcf_immersion_csv(path: str) -> dict[str, float]:
     if 'nuclide' not in cols or 'dcf_sv_per_bq_m3_day' not in cols:
         raise ValueError("Immersion DCF CSV must include 'nuclide' and 'dcf_sv_per_bq_m3_day' columns")
     dcf_map: dict[str, float] = {}
-    max_dcf = 1e-2  # Sv/day per (Bq/m^3) sanity cap.
+    max_dcf = MAX_DCF  # Sv/day per (Bq/m^3) sanity cap.
+    min_dcf = MIN_DCF  # Sv/day per (Bq/m^3) lower bound to discard garbled exponents.
     for _, row in df.iterrows():
         nuclide = str(row[cols['nuclide']]).strip().lower()
         try:
             val = float(row[cols['dcf_sv_per_bq_m3_day']])
         except (TypeError, ValueError):
             continue
-        if not math.isfinite(val) or val <= 0.0 or val > max_dcf:
+        if not math.isfinite(val) or val < min_dcf or val > max_dcf:
             continue
         dcf_map[nuclide] = val
     return dcf_map
@@ -860,7 +932,8 @@ def _load_dcf_immersion_csv(path: str) -> dict[str, float]:
 
 def _chi_q_at_time(time_s: float, chi_q_schedule: float | list[tuple[float, float]]) -> float:
     # Resolve chi/Q at a given time. Schedule entries are (t_end_s, chi_q).
-    if isinstance(chi_q_schedule, (int, float)):
+    # A scalar (any real number, including numpy int/float scalars) is a constant chi/Q.
+    if isinstance(chi_q_schedule, numbers.Real):
         return float(chi_q_schedule)
     for t_end_s, chi_q in chi_q_schedule:
         if time_s <= t_end_s:
@@ -893,58 +966,77 @@ def chi_q_schedule_rg145_400m() -> list[tuple[float, float]]:
 def compute_dose_timeseries(activity_df: pd.DataFrame, dcf_inhal_map: dict[str, float],
                             chi_q_schedule: float | list[tuple[float, float]],
                             breathing_rate_m3_s: float,
-                            dcf_immersion_map: dict[str, float] | None = None) -> pd.DataFrame:
+                            dcf_immersion_map: dict[str, float] | None = None,
+                            max_missing_dcf_fraction: float | None = DEFAULT_MAX_MISSING_DCF_FRACTION) -> pd.DataFrame:
     """Compute inhalation + immersion (cloudshine) dose from a nuclide activity time series.
 
     Assumes activity_df columns (excluding time) represent release rates in Bq/s for each nuclide.
-    Inhalation: dose_rate = chi/Q * breathing_rate * sum_i( Q_i * DCF_i [Sv/Bq] ).
-    Immersion: dose_rate = chi/Q * sum_i( Q_i * DCF_imm_i [Sv/day per (Bq/m^3)] ) / 86400.
+    Inhalation: dose_rate [Sv/s] = chi/Q [s/m^3] * breathing_rate [m^3/s] * sum_i( Q_i [Bq/s] * DCF_i [Sv/Bq] ).
+    Immersion: dose_rate [Sv/s] = chi/Q * sum_i( Q_i * DCF_imm_i [Sv/day per (Bq/m^3)] ) / 86400.
+
+    Rows are sorted by time and integrated by position with the trapezoidal rule, so any index works.
+    Column 'activity_fraction_without_dcf [-]' is the fraction of the positive release rate at each
+    step carried by nuclides that have neither an inhalation nor an immersion DCF; that dose is
+    missing from the totals. A warning names the largest such nuclides whenever the fraction is
+    nonzero, and max_missing_dcf_fraction (default 0.05) raises ValueError when it is exceeded.
+    Pass None to warn only.
     """
     if 'time [s]' not in activity_df.columns:
         raise ValueError("activity_df must include 'time [s]' column")
+    activity_df = activity_df.sort_values('time [s]', kind='stable').reset_index(drop=True)
     nuclide_cols = [c for c in activity_df.columns if c not in ('time [s]', 'time [d]')]
     dcf_immersion_map = dcf_immersion_map or {}
 
-    dose_rate_inh = []
-    dose_rate_imm = []
-    chi_q_vals = []
-    for _, row in activity_df.iterrows():
-        time_s = float(row['time [s]'])
-        chi_q = _chi_q_at_time(time_s, chi_q_schedule)
-        chi_q_vals.append(chi_q)
-        inhal_sum = 0.0
-        imm_sum = 0.0
-        for nuclide in nuclide_cols:
-            try:
-                val = float(row[nuclide])
-            except (TypeError, ValueError):
-                continue
-            if math.isnan(val):
-                continue
-            if nuclide in dcf_inhal_map:
-                inhal_sum += val * dcf_inhal_map[nuclide]
-            if nuclide in dcf_immersion_map:
-                imm_sum += val * dcf_immersion_map[nuclide]
-        dose_rate_inh.append(chi_q * breathing_rate_m3_s * inhal_sum)
-        dose_rate_imm.append(chi_q * (imm_sum / 86400.0))
+    # Release rates [Bq/s]; non-numeric and NaN entries contribute nothing.
+    vals = np.zeros((len(activity_df), len(nuclide_cols)))
+    for j, nuclide in enumerate(nuclide_cols):
+        col = pd.to_numeric(activity_df[nuclide], errors='coerce').to_numpy(dtype=float)
+        vals[:, j] = np.where(np.isfinite(col), col, 0.0)
+    dcf_inh_vec = np.array([dcf_inhal_map.get(n, 0.0) for n in nuclide_cols], dtype=float)
+    dcf_imm_vec = np.array([dcf_immersion_map.get(n, 0.0) for n in nuclide_cols], dtype=float)
+    no_dcf = np.array([n not in dcf_inhal_map and n not in dcf_immersion_map for n in nuclide_cols], dtype=bool)
+
+    time_s = activity_df['time [s]'].astype(float).to_numpy()
+    chi_q_vals = np.array([_chi_q_at_time(t, chi_q_schedule) for t in time_s], dtype=float)
+    inhal_sum = vals @ dcf_inh_vec if nuclide_cols else np.zeros(len(activity_df))
+    imm_sum = vals @ dcf_imm_vec if nuclide_cols else np.zeros(len(activity_df))
+
+    # Fraction of the (positive) release rate without any DCF at each time step.
+    positive = np.clip(vals, 0.0, None)
+    total_rate = positive.sum(axis=1)
+    missing_rate = positive[:, no_dcf].sum(axis=1)
+    missing_frac = np.divide(missing_rate, total_rate, out=np.zeros_like(total_rate), where=total_rate > 0.0)
+    max_missing = float(missing_frac.max()) if len(missing_frac) else 0.0
+    if max_missing > 0.0:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            share = np.where(total_rate[:, None] > 0.0, positive / total_rate[:, None], 0.0)
+        worst = share.max(axis=0)
+        missing = sorted(((worst[j], n) for j, n in enumerate(nuclide_cols) if no_dcf[j] and worst[j] > 0.0),
+                         reverse=True)
+        top = ', '.join(f"{n} ({w:.2e})" for w, n in missing[:5])
+        msg = (f"Release without a DCF reaches {max_missing:.3e} of the total release rate; "
+               f"largest nuclides without DCF (max step fraction): {top}")
+        if max_missing_dcf_fraction is not None and max_missing > max_missing_dcf_fraction:
+            raise ValueError(f"{msg} (limit {max_missing_dcf_fraction:.3e})")
+        warnings.warn(msg, stacklevel=2)
 
     out = pd.DataFrame({
-        'time [s]': activity_df['time [s]'],
-        'time [d]': activity_df['time [s]'] / float(24 * 60 * 60),
+        'time [s]': time_s,
+        'time [d]': time_s / float(24 * 60 * 60),
         'chi/Q [s/m^3]': chi_q_vals,
-        'dose_rate_inhalation [Sv/s]': dose_rate_inh,
-        'dose_rate_immersion [Sv/s]': dose_rate_imm,
+        'dose_rate_inhalation [Sv/s]': chi_q_vals * breathing_rate_m3_s * inhal_sum,
+        'dose_rate_immersion [Sv/s]': chi_q_vals * (imm_sum / 86400.0),
+        'activity_fraction_without_dcf [-]': missing_frac,
     })
     out['dose_rate [Sv/s]'] = out['dose_rate_inhalation [Sv/s]'] + out['dose_rate_immersion [Sv/s]']
 
-    # Integrate cumulative doses (Sv) using trapezoidal rule.
-    def integrate(col: str) -> list[float]:
-        vals = [0.0]
-        for i in range(1, len(out)):
-            dt = float(out.loc[i, 'time [s]'] - out.loc[i - 1, 'time [s]'])
-            avg_rate = 0.5 * (out.loc[i, col] + out.loc[i - 1, col])
-            vals.append(vals[-1] + avg_rate * dt)
-        return vals
+    # Integrate cumulative doses (Sv) using the trapezoidal rule over row positions.
+    def integrate(col: str) -> np.ndarray:
+        rate = out[col].to_numpy(dtype=float)
+        if len(rate) == 0:
+            return rate
+        steps = 0.5 * (rate[1:] + rate[:-1]) * np.diff(time_s)
+        return np.concatenate(([0.0], np.cumsum(steps)))
 
     out['dose_inhalation [Sv]'] = integrate('dose_rate_inhalation [Sv/s]')
     out['dose_immersion [Sv]'] = integrate('dose_rate_immersion [Sv/s]')
@@ -953,14 +1045,26 @@ def compute_dose_timeseries(activity_df: pd.DataFrame, dcf_inhal_map: dict[str, 
     return out
 
 
-def _inventory_to_release_rate(activity_df: pd.DataFrame, removal_rate_s: float) -> pd.DataFrame:
-    """Convert nuclide inventory activity (Bq) into release rate (Bq/s)."""
+def _element_of(nuclide: str) -> str:
+    # 'kr-85m' -> 'kr'
+    return re.sub('-.*', '', str(nuclide)).strip().lower()
+
+
+def _inventory_to_release_rate(activity_df: pd.DataFrame, removal_rate_s: float,
+                               released_elements: list[str] | tuple[str, ...] | None = None) -> pd.DataFrame:
+    """Convert nuclide inventory activity (Bq) into release rate (Bq/s).
+
+    Only nuclides of released_elements (default LEAKED_ELEMENTS, the elements ORIGEN removes from
+    the box) leak at removal_rate_s. All other nuclides are retained in the box and get zero release.
+    """
     if removal_rate_s <= 0.0:
         raise ValueError("removal_rate_s must be positive when converting inventory to release rate")
+    released = {e.lower() for e in (LEAKED_ELEMENTS if released_elements is None else released_elements)}
     out = activity_df.copy()
     nuclide_cols = [c for c in out.columns if c not in ('time [s]', 'time [d]')]
     for col in nuclide_cols:
-        out[col] = out[col] * removal_rate_s
+        rate = removal_rate_s if _element_of(col) in released else 0.0
+        out[col] = out[col] * rate
     return out
 
 
@@ -1047,19 +1151,41 @@ def plot_dose_rate_comparison(csv_a: str, csv_b: str, label_a: str, label_b: str
     return fname
 
 
-def compute_dose_from_box(box_json_path: str, case_prefix: str, dcf_inhal_csv: str,
-                          chi_q_schedule: float | list[tuple[float, float]],
-                          breathing_rate_m3_s: float, dcf_immersion_csv: str | None = None,
+def compute_dose_from_box(box_json_path: str, case_prefix: str,
+                          dcf_inhal_csv: str = DEFAULT_ICRP72_INHALATION_CSV,
+                          chi_q_schedule: float | list[tuple[float, float]] = 1.0,
+                          breathing_rate_m3_s: float = 3.3e-4, dcf_immersion_csv: str | None = None,
                           out_prefix: str | None = None,
                           activity_representation: str = 'inventory_bq',
-                          removal_rate_s: float | None = None) -> pd.DataFrame:
+                          removal_rate_s: float | None = None,
+                          released_elements: list[str] | tuple[str, ...] | None = None,
+                          activity_scale: float = 1.0,
+                          run_prefix: str | None = None,
+                          max_missing_dcf_fraction: float | None = DEFAULT_MAX_MISSING_DCF_FRACTION) -> pd.DataFrame:
     """Compute and save inhalation+immersion dose from per-case F71 activities.
+
+    The default inhalation table is the conservative ICRP-72 maximum across types F/M/S
+    (DEFAULT_ICRP72_INHALATION_CSV), matching the journal method for unknown chemical forms.
+    Pass dcf_icrp72_inhalation_adult.csv explicitly for the Type-F (fast-clearance) table.
 
     Args:
         activity_representation: `inventory_bq` or `release_rate_bq_s`.
             - `inventory_bq`: activity in each nuclide column is Bq and is converted using `removal_rate_s`.
             - `release_rate_bq_s`: activity in each nuclide column is already Bq/s.
         removal_rate_s: Required when `activity_representation='inventory_bq'`.
+        released_elements: Elements that leak at `removal_rate_s` (default LEAKED_ELEMENTS, the elements
+            the ORIGEN deck removes). Other nuclides are retained and contribute no release.
+        activity_scale: Multiplier applied to the F71 activities before the dose calculation.
+            The default leaky-box run (apply_volume_scaling=False) models boxes B and C with a volume
+            of 1 cm^3 fed by the leak from 1 cm^3 of box A, so B/C activities and the resulting doses are
+            per cm^3 of box A. Pass the box-A volume in cm^3 to get the whole-inventory dose.
+            The value is written to the 'activity_scale [-]' output column.
+        run_prefix: Case-directory prefix of the run (default: inferred from the json name,
+            e.g. boxB_xe135.json5 -> xe135), with fallback to unprefixed legacy directories.
+        max_missing_dcf_fraction: Raise ValueError when the release fraction without any DCF exceeds it
+            (default DEFAULT_MAX_MISSING_DCF_FRACTION = 0.05; None warns only).
+            All dose and dose-rate columns scale with activity_scale, so with the default
+            activity_scale = 1.0 they are per cm^3 of box A; check 'activity_scale [-]'.
     """
     box_json_path = _resolve_run_artifact(box_json_path)
     if not os.path.isfile(box_json_path):
@@ -1069,15 +1195,20 @@ def compute_dose_from_box(box_json_path: str, case_prefix: str, dcf_inhal_csv: s
     with _in_directory(os.path.dirname(os.path.abspath(box_json_path))):
         dcf_inhal = _load_dcf_csv(dcf_inhal_csv)
         dcf_imm = _load_dcf_immersion_csv(dcf_immersion_csv) if dcf_immersion_csv else {}
-        activity_df = _activity_timeseries_per_nuclide_from_box_json(box_json_path, case_prefix)
+        activity_df = _activity_timeseries_per_nuclide_from_box_json(box_json_path, case_prefix,
+                                                                     run_prefix=run_prefix)
         if activity_representation == 'inventory_bq':
             if removal_rate_s is None:
                 raise ValueError("removal_rate_s must be provided when activity_representation='inventory_bq'")
-            activity_df = _inventory_to_release_rate(activity_df, removal_rate_s)
+            activity_df = _inventory_to_release_rate(activity_df, removal_rate_s, released_elements)
         elif activity_representation != 'release_rate_bq_s':
             raise ValueError("activity_representation must be 'inventory_bq' or 'release_rate_bq_s'")
+        nuclide_cols = [c for c in activity_df.columns if c not in ('time [s]', 'time [d]')]
+        activity_df[nuclide_cols] = activity_df[nuclide_cols] * float(activity_scale)
         pd_dose = compute_dose_timeseries(activity_df, dcf_inhal, chi_q_schedule,
-                                          breathing_rate_m3_s, dcf_imm)
+                                          breathing_rate_m3_s, dcf_imm,
+                                          max_missing_dcf_fraction=max_missing_dcf_fraction)
+        pd_dose['activity_scale [-]'] = float(activity_scale)
         fname = _out_name(out_prefix, 'leaky_boxes_dose', '.csv')
         pd_dose.to_csv(fname, index=False)
         plot_dose_timeseries(pd_dose, out_prefix)
@@ -1149,9 +1280,14 @@ def _run_simulation(box_a: DecayBoxA, apply_volume_scaling: bool, do_skip_calcs:
     box_A_leak_rate: float = PCTperDAY
     box_B_leak_rate: float = PCTperDAY * 0.1
 
-    volume: float = 1.0  # box_a.volume
-    print(volume)
+    # Boxes B and C are modelled as 1 cm^3 volumes. Box A atom densities are per cm^3, so each B/C
+    # feed is the leak from 1 cm^3 of box A (unless apply_volume_scaling rescales it). B/C
+    # inventories, activities and doses derived from them are therefore per cm^3 of box A.
+    volume: float = 1.0
 
+    # Case directories carry the output prefix so that runs sharing a run directory
+    # (e.g. the xe135 and xe136 tests) do not overwrite each other's F71 files.
+    box_a.case_dir = _case_dir_name('box_A', out_prefix)
     box_A = LeakyBox()
     box_A.removal_rate = box_A_leak_rate
     box_A.setup_cases(box_a)
@@ -1194,7 +1330,7 @@ def _run_simulation(box_a: DecayBoxA, apply_volume_scaling: bool, do_skip_calcs:
         origen_box_B[k].DECAY_steps = box_B_n_steps
         origen_box_B[k].DECAY_start_seconds = start_t
         origen_box_B[k].DECAY_end_seconds = end_t
-        origen_box_B[k].case_dir = f'_box_B_{k:04d}'
+        origen_box_B[k].case_dir = _case_dir_name('box_B', out_prefix, k)
 
         box_B[k] = LeakyBox()
         box_B[k].removal_rate = box_B_leak_rate
@@ -1231,7 +1367,7 @@ def _run_simulation(box_a: DecayBoxA, apply_volume_scaling: bool, do_skip_calcs:
         origen_box_C[k].DECAY_steps = box_C_n_steps
         origen_box_C[k].DECAY_start_seconds = start_t
         origen_box_C[k].DECAY_end_seconds = end_t
-        origen_box_C[k].case_dir = f'_box_C_{k:04d}'
+        origen_box_C[k].case_dir = _case_dir_name('box_C', out_prefix, k)
         origen_box_C[k].run_decay_sample()
 
         box_C_adens_current = origen_box_C[k].final_atom_dens

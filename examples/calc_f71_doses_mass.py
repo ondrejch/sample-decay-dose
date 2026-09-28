@@ -31,8 +31,8 @@ for mass in np.geomspace(1e-3, 1, 30):
 print(r)
 print(d)
 
-with open('responses.json', 'w') as fout:
+with open('responses_f71_mass.json', 'w') as fout:
     json5.dump(r, fout, indent=4)
 
-with open('doses.json', 'w') as fout:
+with open('doses_f71_mass.json', 'w') as fout:
     json5.dump(d, fout, indent=4)

@@ -4,7 +4,7 @@ Irradiation of SS-316 with a specified wt% of cobalt in a steel pipe, handling a
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
-from sample_decay_dose import SampleDose, utils
+from sample_decay_dose import SampleDose
 from sample_decay_dose.utils import extract_flux_values
 
 import os
@@ -31,7 +31,9 @@ if not mass_match or not years_match:
 steel_mass: float = float(mass_match.group(1))
 irradiation_years: float = float(years_match.group(1))
 
-scale_out: str = os.path.expanduser(os.getenv('STELLITE_SCALE_OUT', '~/0.02/80-upper-encl-stellite/01-triton/msrr.out'))
+# TRITON output that holds the mixture fluxes, see README.md. The default is msrr.out next to the case directory.
+# Use the same STELLITE_SCALE_OUT for a calculation script and its plot script, since the plot titles quote the flux.
+scale_out: str = os.path.expanduser(os.getenv('STELLITE_SCALE_OUT', '../msrr.out'))
 if not os.path.isfile(scale_out):
     raise FileNotFoundError(
         f"Could not find SCALE output file at '{scale_out}'. "
@@ -81,8 +83,7 @@ for decay_days in np.geomspace(1. / 24., 360, 60):
     irr.run_irradiate_decay_sample()
 
     mavric = SampleDose.HandlingContactDoseEstimatorGenericTank(irr)
-    mavric.cyl_r = pipe1_ir
-    mavric.sample_h2 = utils.get_cyl_h(mavric.sample_volume, mavric.cyl_r)
+    mavric.cyl_r = pipe1_ir  # mavric_deck() sets the sample half-height from sample_volume and cyl_r
     mavric.layers_mats = [SampleDose.ADENS_SS316H_COLD]
     mavric.layers_thicknesses = [pipe1_thick]
     mavric.layers_temperature_K = [300.0]
@@ -93,7 +94,8 @@ for decay_days in np.geomspace(1. / 24., 360, 60):
     # print(mavric.total_dose)
 
     r[decay_days] = mavric.responses
-    d[decay_days] = mavric.total_dose
+    # Contact (0.1 cm) and handling (30 cm) doses, both measured from the pipe outer surface
+    d[decay_days] = {'contact': mavric.contact_dose, 'handling': mavric.handling_dose}
 
 print(r)
 print(d)

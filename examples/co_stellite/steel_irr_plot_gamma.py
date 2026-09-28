@@ -1,6 +1,7 @@
 #!/bin/env python3
 """
-Plotting script for calc_doses_mass
+Plots the gamma dose versus decay time from co_steel_irr_doses.py or co_steel_irr_doses_shield.py.
+Set GEOMETRY to match the script that wrote responses.json.
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
@@ -11,7 +12,9 @@ import json5
 import matplotlib.pyplot as plt
 from sample_decay_dose.utils import extract_flux_values
 
-scale_out: str = os.path.expanduser(os.getenv('STELLITE_SCALE_OUT', '~/0.02/80-upper-encl-stellite/01-triton/msrr.out'))
+# TRITON output that holds the mixture fluxes, see README.md. The default is msrr.out next to the case directory.
+# Use the same STELLITE_SCALE_OUT for a calculation script and its plot script, since the plot titles quote the flux.
+scale_out: str = os.path.expanduser(os.getenv('STELLITE_SCALE_OUT', '../msrr.out'))
 if not os.path.isfile(scale_out):
     raise FileNotFoundError(
         f"Could not find SCALE output file at '{scale_out}'. "
@@ -39,6 +42,13 @@ print(f'steel flux: {irradiation_flux} n/cm2/s, mass: {steel_mass} g, irradiated
 LABEL = 'irr1'
 labels = {'irr1': ['decay time', 'days', f'SS316 {irradiation_years} years irradiation at {irradiation_flux:.1e} n/cm2/s, {steel_mass:.1f} g'], }
 
+# Detector placement of the calculation script that wrote responses.json
+#   'bare':   co_steel_irr_doses.py, detector 30 cm from the sample centre
+#   'shield': co_steel_irr_doses_shield.py, detector 30 cm from the pipe outer surface
+GEOMETRY = 'bare'
+geometries = {'bare': ['SS-316 cylinder', 'Dose 30 cm from the sample centre [rem/h]'],
+              'shield': ['SS-316 in a steel pipe', 'Dose 30 cm from the pipe outer surface [rem/h]']}
+
 # particles = {'1': 'Neutron', '2': 'Gamma', '3': 'Beta'}
 particles = {'2': 'Gamma'}
 data = {'.': 'slategrey',}
@@ -64,10 +74,10 @@ plt.yscale('linear')
 plt.grid()
 plt.title(labels[LABEL][2])
 plt.xlabel(f'Sample {labels[LABEL][0]} [{labels[LABEL][1]}]')
-plt.ylabel('Dose at 30 cm [rem/h]')
+plt.ylabel(geometries[GEOMETRY][1])
 
 for d in data.keys():
-    ytitle = f'SS-316 cylinder, {steel_mass:.1f} g'
+    ytitle = f'{geometries[GEOMETRY][0]}, {steel_mass:.1f} g'
     plt.errorbar(x, dose[d], errd[d], ls='none', color=f'{data[d]}', capsize=0.8)
     plt.scatter(x, dose[d], color=f'{data[d]}', s=5, label=ytitle)
 

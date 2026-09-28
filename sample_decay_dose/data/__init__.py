@@ -7,8 +7,7 @@ def _load_isotopic_data():
     Loads isotopic data from the JSON file and makes it available
     at the package level.
     """
-    # The path is constructed relative to this __init__.py file.
-    # It navigates up to the repository root, then into the 'data' directory.
+    # The JSON file sits next to this __init__.py, in the package's data directory.
     data_path = os.path.join(os.path.dirname(__file__), 'isotopic_data.json')
     try:
         with open(data_path, 'r', encoding='utf-8') as f:
@@ -18,8 +17,9 @@ def _load_isotopic_data():
                 data.items()}
     except (FileNotFoundError, json.JSONDecodeError) as e:
         # Provide a clear error message if the data file is missing or corrupt.
-        raise RuntimeError(f"Could not load isotopic data from {data_path}. "
-                           f"Please ensure 'download_NIST_nuclide_data.py' has been run successfully. Error: {e}")
+        raise RuntimeError(f"Could not load isotopic data from {data_path}. Regenerate it with "
+                           f"'python -m sample_decay_dose.download_NIST_nuclide_data', which parses the shipped "
+                           f"NIST listing data/aw.html and writes this file. Error: {e}")
 
 
 # This line executes when the 'sample_decay_dose' package is imported,

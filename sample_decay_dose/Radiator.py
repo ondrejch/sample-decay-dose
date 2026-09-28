@@ -1,8 +1,9 @@
 import os
+import shutil
 import numpy as np
 
-from sample_decay_dose.SampleDose import NOW, MAVRIC_NG_XSLIB, Origen, OrigenFromTriton, run_scale_or_raise
-from sample_decay_dose.utils import get_f71_positions_index, atom_dens_for_mavric
+from sample_decay_dose.SampleDose import NOW, MAVRIC_NG_XSLIB, DAY_IN_SECONDS, OrigenFromTriton, run_scale_or_raise
+from sample_decay_dose.utils import get_f71_volume, atom_dens_for_mavric
 from sample_decay_dose.HotCell import HotCellDoses
 from typing import TypedDict
 
@@ -20,6 +21,16 @@ class RadiatorBox(HotCellDoses):
     """ MAVRIC calculation of rem/h doses from the decayed sample in a cubical radiator
         1st material in "shielding" layer, mix=10, is the tube material
         2nd material in "shielding" layer, mix=11, is in-between tubes (air)
+        layers_thicknesses is not used; the tube geometry comes from radiator_geometry.
+    The source is the salt state at F71 position origen_from_triton.BURNED_MATERIAL_F71_position, read directly
+    from the burned-material F71 without an ORIGEN decay step.
+    Monaco's origensBinaryConcentrationFile distribution reads the emission spectra stored on the F71.
+    The selected position must therefore carry gamma spectra (and neutron spectra for the neutron source),
+    i.e., flags G and N in obiwan's DCGNAB column. ORIGEN writes them for cases run with gamma=yes and
+    neutron=yes. TRITON depletion positions carry concentrations only (DC----), and mavric_deck() raises for them.
+    Source strength assumption: the F71 spectra are totals over the F71 material volume (obiwan "volume" row).
+    The radiator holds all_pins_volume of that salt, so the sources are scaled by
+    all_pins_volume / V_F71 unless source_multiplier is set.
     """
     def __init__(self, _o: OrigenFromTriton = None):
         """ This reads decayed sample information from the Origen object """
@@ -27,9 +38,16 @@ class RadiatorBox(HotCellDoses):
         self.origen_from_triton: OrigenFromTriton = _o
         self.ORIGEN_dir = 'run'
         self.decay_days = 0.0               # no decay, just raw F71, copy the data from F71 file
+        self.DECAYED_SAMPLE_days = self.decay_days
         self.DECAYED_SAMPLE_F71_file_name = _o.BURNED_MATERIAL_F71_file_name
-        self.DECAYED_SAMPLE_F71_index = get_f71_positions_index(self.DECAYED_SAMPLE_F71_file_name)
-        self.handling_det_x: (None, float) = None
+        self.DECAYED_SAMPLE_F71_index: dict = _o.BURNED_MATERIAL_F71_index  # already read by OrigenFromTriton
+        self.DECAYED_SAMPLE_F71_position = _o.BURNED_MATERIAL_F71_position
+        # The OPUS integrals of an ORIGEN decay case do not describe the burned F71 used here. The neutron source
+        # is included unless neutron_intensity is set to 0.0, which omits neutron transport explicitly.
+        self.neutron_intensity = None
+        self.source_multiplier: float | None = None  # None: all_pins_volume / F71 volume at the source position
+        self.check_f71_spectra: bool = True  # raise if the F71 position lacks the needed emission spectra
+        object.__setattr__(self, 'handling_det_x', None)  # set by mavric_deck(); not a manual det_x
         self.radiator_geometry: RadiatorGeometry = {  # 10ft MSRE-like model
             "length_I": 10 * 30.48,
             "n_X": 10,
@@ -74,20 +92,74 @@ class RadiatorBox(HotCellDoses):
     def all_pins_volume(self) -> float:
         return self.radiator_geometry['n_X'] * self.radiator_geometry['n_Z'] * self.pin_volume
 
+    @property
+    def beta_applies(self) -> bool:
+        """ The salt sits inside the tube walls, so the bare-sample beta estimate does not apply """
+        return False
+
+    @property
+    def f71_basename(self) -> str:
+        """ The F71 file is copied into case_dir and referenced by its basename """
+        return os.path.basename(self.DECAYED_SAMPLE_F71_file_name)
+
+    def _f71_path(self) -> str:
+        return os.path.join(self.cwd, self.DECAYED_SAMPLE_F71_file_name)
+
+    def _validate_layers(self):
+        """ The radiator uses exactly two materials: tube (mix 10) and the space between tubes (mix 11) """
+        if len(self.layers_mats) != 2 or len(self.layers_temperature_K) != 2:
+            raise ValueError(f"RadiatorBox needs two layers_mats and two layers_temperature_K (tube, between tubes), "
+                             f"got {len(self.layers_mats)} and {len(self.layers_temperature_K)}")
+
+    def _set_source_position(self):
+        """ Source position and its time from the OrigenFromTriton object, which may have changed after __init__ """
+        self.DECAYED_SAMPLE_F71_position = self.origen_from_triton.BURNED_MATERIAL_F71_position
+        record: dict | None = self.DECAYED_SAMPLE_F71_index.get(self.DECAYED_SAMPLE_F71_position)
+        if record is None:
+            raise ValueError(f"Position {self.DECAYED_SAMPLE_F71_position} is not in the index of "
+                             f"{self.DECAYED_SAMPLE_F71_file_name}")
+        return record
+
+    def _check_spectra(self, record: dict):
+        """ Monaco reads the stored emission spectra, see the class docstring """
+        if not self.check_f71_spectra:
+            return
+        flags: str = record.get('DCGNAB', '')
+        needed: list[tuple[str, str]] = [('G', 'gamma')]
+        if self._include_neutron_source():
+            needed.append(('N', 'neutron'))
+        missing: list[str] = [name for flag, name in needed if flag not in flags]
+        if missing:
+            raise ValueError(
+                f"F71 position {self.DECAYED_SAMPLE_F71_position} of {self.DECAYED_SAMPLE_F71_file_name} has no "
+                f"{' or '.join(missing)} emission spectra (DCGNAB flags '{flags}'), which the MAVRIC source needs. "
+                f"Select a position from an ORIGEN case run with gamma=yes neutron=yes, or decay the material with "
+                f"OrigenFromTriton.run_decay_sample(). Set neutron_intensity = 0.0 to omit the neutron source.")
+
+    def _source_multiplier(self) -> float:
+        """ Scales the F71 spectra (totals over the F71 material volume) to the radiator salt volume """
+        if self.source_multiplier is not None:
+            return self.source_multiplier
+        f71_volume: float = get_f71_volume(self._f71_path(), self.DECAYED_SAMPLE_F71_position)
+        if not f71_volume > 0.0:
+            raise ValueError(f"Non-positive material volume {f71_volume} at F71 position "
+                             f"{self.DECAYED_SAMPLE_F71_position}; set source_multiplier explicitly")
+        return self.all_pins_volume / f71_volume
+
     def run_mavric(self, nmpi: int = 1):
         """ Writes Mavric inputs and runs the case """
+        self._validate_layers()
         self.case_dir: str = f'run_MAVRIC_{NOW}_{self.all_pins_volume:.5}_cm-{self.decay_days:.5}_days'  # Directory to run the case
-        self.DECAYED_SAMPLE_F71_position = self.origen_from_triton.BURNED_MATERIAL_F71_position
+        self._set_source_position()
 
-        if not os.path.isfile(os.path.join(self.cwd, self.DECAYED_SAMPLE_F71_file_name)):
-            raise FileNotFoundError(
-                "Expected decayed sample F71 file: \n" + os.path.join(self.cwd, self.DECAYED_SAMPLE_F71_file_name))
-        if not os.path.exists(self.case_dir):
-            os.mkdir(self.case_dir)
+        if not os.path.isfile(self._f71_path()):
+            raise FileNotFoundError("Expected decayed sample F71 file: \n" + self._f71_path())
+        if not self.origen_from_triton.burned_atom_dens:
+            raise ValueError("No burned-material composition, call read_burned_material() first")
+        os.makedirs(os.path.join(self.cwd, self.case_dir), exist_ok=True)
+        shutil.copy2(self._f71_path(), os.path.join(self.cwd, self.case_dir, self.f71_basename))
         os.chdir(os.path.join(self.cwd, self.case_dir))
         try:
-            os.chdir(self.cwd + '/' + self.case_dir)
-
             with open(self.SAMPLE_ATOM_DENS_file_name_MAVRIC, 'w') as f:  # write MAVRIC at-dens sample input
                 f.write(atom_dens_for_mavric(self.origen_from_triton.burned_atom_dens, 1, self.sample_temperature_K))
                 for k in range(len(self.layers_mats)):
@@ -105,9 +177,14 @@ class RadiatorBox(HotCellDoses):
 
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
+        self._validate_layers()
         if not self.det_z:
             self.det_z = 0.0
-        adjoint_flux_file: str = os.path.join(self.cwd, self.MAVRIC_input_file_name.replace('.inp', '.adjoint.dff'))
+        record: dict = self._set_source_position()
+        self._check_spectra(record)
+        source_time_days: float = float(record['time']) / DAY_IN_SECONDS
+        multiplier: float = self._source_multiplier()
+        adjoint_flux_file: str = self._reused_adjoint_flux_path(self.case_dir) if self.reuse_adjoint_flux else ''
         # self.cyl_r = get_cyl_r(self.sample_volume)
         # self.sample_h2 = self.cyl_r             # sample is a square cylinder
         # sample_r: float = self.cyl_r            # sample outer layer [cm]
@@ -123,12 +200,18 @@ class RadiatorBox(HotCellDoses):
         nX = self.radiator_geometry['n_X']
         nZ = self.radiator_geometry['n_Z']
 
-        self.det_x = box_x2 + self.det_standoff_distance  # Detector is next to the tank, contact dose
-        self.handling_det_x = box_x2 + self.handling_det_standoff_distance  # Detector is next to the tank, handling dose
+        self._set_computed_detectors(box_x2 + self.det_standoff_distance,
+                                     box_x2 + self.handling_det_standoff_distance)  # next to the tank
 
+        # Grid planes over the radiator, plus the problem boundary and both detectors: Monaco stops when a particle
+        # leaves the importance map inside the geometry
         x_planes: list[float] = list(np.linspace(-box_x2, box_x2, nX))      # boundaries for gridgeometry
+        x_planes += [-box_x2 - self.box_a, box_x2 + self.box_a,
+                     self.handling_det_x - self.planes_xy_around_det, self.handling_det_x + self.planes_xy_around_det]
         y_planes: list[float] = list(np.linspace(-box_y2, box_y2, self.N_planes_box))
+        y_planes += [-box_y2 - self.box_a, box_y2 + self.box_a]
         z_planes: list[float] = list(np.linspace(-box_z2, box_z2, nZ))
+        z_planes += [-box_z2 - self.box_a, box_z2 + self.box_a]
 
         x_planes_str: str = " ".join([f' {x:.5f}' for x in x_planes])
         y_planes_str: str = " ".join([f' {x:.5f}' for x in y_planes])
@@ -138,12 +221,12 @@ class RadiatorBox(HotCellDoses):
 
         mavric_output = f'''
 =shell
-cp -r ${{INPDIR}}/../{self.DECAYED_SAMPLE_F71_file_name} .
+cp -r ${{INPDIR}}/{self.f71_basename} .
 cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_MAVRIC} .
 end
 
 =mavric parm=(   )
-{NOW} HotCellDoses, {self.sample_weight} g, layers {self.layers_thicknesses}
+{NOW} RadiatorBox, F71 position {self.DECAYED_SAMPLE_F71_position} (t = {source_time_days:.6g} d), salt {self.all_pins_volume:.6g} cm3
 {MAVRIC_NG_XSLIB}
 
 read parameters
@@ -202,21 +285,21 @@ read definitions
     end response 
 '''
 
-        if self.neutron_intensity > 0.0:
+        if self._include_neutron_source(note=True):
             mavric_output += f'''
     distribution 1
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, neutrons"
+        title="Salt at F71 position {self.DECAYED_SAMPLE_F71_position}, t = {source_time_days:.6g} days, neutrons"
         special="origensBinaryConcentrationFile"
         parameters {self.DECAYED_SAMPLE_F71_position} 1 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
+        filename="{self.f71_basename}"
     end distribution'''
 
         mavric_output += f'''
     distribution 2
-        title="Decayed sample after {self.DECAYED_SAMPLE_days} days, photons"
+        title="Salt at F71 position {self.DECAYED_SAMPLE_F71_position}, t = {source_time_days:.6g} days, photons"
         special="origensBinaryConcentrationFile"
         parameters {self.DECAYED_SAMPLE_F71_position} 5 end
-        filename="{self.DECAYED_SAMPLE_F71_file_name}"
+        filename="{self.f71_basename}"
     end distribution
 
     gridGeometry 1
@@ -232,12 +315,13 @@ read definitions
 end definitions
 
 read sources'''
-        if self.neutron_intensity > 0.0:
+        if self._include_neutron_source():
             mavric_output += f'''
     src 1
         title="Sample neutrons"
         neutron
         useNormConst
+        multiplier={multiplier}
         cuboid  -{box_x2} {box_x2} -{box_y2} {box_y2} -{box_z2} {box_z2}
         mixture=1
         eDistributionID=1
@@ -248,6 +332,7 @@ read sources'''
         title="Sample photons"
         photon
         useNormConst
+        multiplier={multiplier}
         cuboid  -{box_x2} {box_x2} -{box_y2} {box_y2} -{box_z2} {box_z2}
         mixture=1
         eDistributionID=2

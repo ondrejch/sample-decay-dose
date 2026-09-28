@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Plotting script for calc_doses_mass
+Plots the gamma dose versus decay time from stell_irr_doses.py
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
@@ -11,7 +11,9 @@ import json5
 import matplotlib.pyplot as plt
 from sample_decay_dose.utils import extract_flux_values
 
-scale_out: str = os.path.expanduser(os.getenv('STELLITE_SCALE_OUT', '~/0.02/80-upper-encl-stellite/03-triton-longer/msrr.out'))
+# TRITON output that holds the mixture fluxes, see README.md. The default is msrr.out next to the case directory.
+# Use the same STELLITE_SCALE_OUT for a calculation script and its plot script, since the plot titles quote the flux.
+scale_out: str = os.path.expanduser(os.getenv('STELLITE_SCALE_OUT', '../msrr.out'))
 if not os.path.isfile(scale_out):
     raise FileNotFoundError(
         f"Could not find SCALE output file at '{scale_out}'. "
@@ -64,7 +66,7 @@ plt.yscale('linear')
 plt.grid()
 plt.title(labels[LABEL][2])
 plt.xlabel(f'Sample {labels[LABEL][0]} [{labels[LABEL][1]}]')
-plt.ylabel('Dose at 30 cm [rem/h]')
+plt.ylabel('Dose 30 cm from the sample centre [rem/h]')
 
 for d in data.keys():
     ytitle = f'Stellite cylinder, {stellite_mass:.1f} g'

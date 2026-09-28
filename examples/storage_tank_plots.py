@@ -18,7 +18,7 @@ my_data = {
 
 
 def make_plot(title: str, my_dir: str):
-    with open(f'{my_dir}/doses.json') as fin:
+    with open(f'{my_dir}/doses_storage_tank_scan_parallel.json') as fin:
         r = json5.load(fin)
 
     _steel_cm_list = []
@@ -70,8 +70,11 @@ def make_plot(title: str, my_dir: str):
 
     steel_cm = [f'{float(x):.2f}' for x in _steel_cm_list]
     concrete_cm = [f'{float(x):.2f}' for x in _concrete_cm_list]
-    pd_mrem_dose = pd.DataFrame(g_mrem_dose, columns=steel_cm, index=concrete_cm)
-    pd_mrem_stdev = pd.DataFrame(g_mrem_stdev, columns=steel_cm, index=concrete_cm)
+    # Rows of g_mrem_* follow _steel_cm_list (index i), columns follow _concrete_cm_list (index j)
+    pd_mrem_dose = pd.DataFrame(g_mrem_dose, index=pd.Index(steel_cm, name='steel [cm]'),
+                                columns=pd.Index(concrete_cm, name='concrete [cm]'))
+    pd_mrem_stdev = pd.DataFrame(g_mrem_stdev, index=pd.Index(steel_cm, name='steel [cm]'),
+                                 columns=pd.Index(concrete_cm, name='concrete [cm]'))
     return pd_mrem_dose, pd_mrem_stdev
 
 

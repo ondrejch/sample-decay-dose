@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -11,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 
-TERMINAL_STATES = {"COMPLETED", "FAILED", "CANCELED", "SUBMIT_FAILED"}
+TERMINAL_STATES = {"COMPLETED", "FAILED", "CANCELED", "SUBMIT_FAILED", "LOST"}
 
 
 class ScalerteSshError(RuntimeError):
@@ -20,7 +21,11 @@ class ScalerteSshError(RuntimeError):
 
 @dataclass
 class ScalerteSshClient:
-    """Thin Python API around ``ssh <host> scalerte-ssh-agent ...``."""
+    """Thin Python API around ``ssh <host> scalerte-ssh-agent ...``.
+
+    ``agent_command`` is split like a shell command line, so it can hold several words, e.g.
+    ``"python3 -m sample_decay_dose.gw_exe.scalerte_ssh_agent"``.
+    """
 
     host: str = "cl"
     agent_command: str = "scalerte-ssh-agent"
@@ -28,11 +33,19 @@ class ScalerteSshClient:
     ssh_options: tuple[str, ...] = ()
     jobs_root: str | None = None
 
-    def _ssh_base_command(self) -> list[str]:
-        return [self.ssh_bin, *self.ssh_options, self.host, self.agent_command]
+    def _ssh_command(self, args: list[str]) -> list[str]:
+        """Build the local ssh argv for one agent call.
+
+        OpenSSH joins every word after the host with spaces and hands the result to the remote shell, which
+        splits it again. The agent command and its arguments are therefore quoted into one remote command
+        string. Without quoting, ``--cmd "scalerte input.inp"`` reached the agent as two words, and a ``&&``
+        in it ran the tail on the login node. ``--`` ends ssh option parsing before the host.
+        """
+        remote_command = shlex.join([*shlex.split(self.agent_command), *args])
+        return [self.ssh_bin, *self.ssh_options, "--", self.host, remote_command]
 
     def _run_json(self, args: list[str]) -> dict[str, Any]:
-        cmd = self._ssh_base_command() + args
+        cmd = self._ssh_command(args)
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
             raise ScalerteSshError(
@@ -50,7 +63,7 @@ class ScalerteSshClient:
         return payload
 
     def _run_text(self, args: list[str], *, capture_output: bool = True) -> str | int:
-        cmd = self._ssh_base_command() + args
+        cmd = self._ssh_command(args)
         if capture_output:
             proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
             if proc.returncode != 0:
@@ -134,6 +147,11 @@ class ScalerteSshClient:
         return str(self._run_text(args, capture_output=True))
 
     def wait(self, job_id: str, *, poll_seconds: float = 5.0, timeout_seconds: float | None = None) -> dict[str, Any]:
+        """Poll ``status`` until the job reaches a terminal state and return its view.
+
+        A job whose worker process died becomes LOST, which is terminal, so this returns for it as well.
+        ``timeout_seconds`` bounds the wait and raises TimeoutError when it expires.
+        """
         start = time.monotonic()
         while True:
             job = self.status(job_id)
@@ -168,7 +186,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
     submit = sub.add_parser("submit", help="Submit command to remote worker pool.")
-    submit.add_argument("--workdir", default=".", help="Working directory on remote side.")
+    submit.add_argument(
+        "--workdir",
+        default=".",
+        help="Working directory on the remote side. Relative paths resolve against the remote $HOME.",
+    )
     submit.add_argument("--workers", default=None, help="CSV list of workers.")
     submit.add_argument("--worker", default=None, help="Force specific worker.")
     submit.add_argument("--name", default=None, help="Optional job label.")
@@ -195,7 +217,7 @@ def _build_parser() -> argparse.ArgumentParser:
     wait = sub.add_parser("wait", help="Wait until job finishes.")
     wait.add_argument("job_id")
     wait.add_argument("--poll-seconds", type=float, default=5.0)
-    wait.add_argument("--timeout-seconds", type=float, default=None)
+    wait.add_argument("--timeout-seconds", type=float, default=None, help="Give up after this many seconds.")
 
     return parser
 

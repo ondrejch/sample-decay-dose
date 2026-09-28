@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Example use case of SampleDose.DoseEstimatorTank - simple decay doses of F71 sample.
+Example use case of SampleDose.DoseEstimatorSquareTank - simple decay doses of F71 sample.
 Note that the beta dose is zero if the sample has additional shielding.
 Ondrej Chvala <ochvala@utexas.edu>
 """
