@@ -126,6 +126,8 @@ class ValencyMapper:
         return z_map
 
     def _get_valency_map_lower_estimate(self):
+        # Inherited from RefuelCore. Cr 5, V 5 and Mn 4 are not fluoride-melt states (the melt holds CrF2/CrF3,
+        # VF3 and MnF2); use 'upper' or valence_overrides when reconstructing a salt.
         z_map = self._get_base_valency_map()
         z_map.update({'29': 2, '24': 5, '25': 4, '26': 3, '27': 3, '22': 4, '23': 5, '21': 3, '46': 3, '28': 2})
         return z_map

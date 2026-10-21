@@ -384,3 +384,83 @@ def test_isomer_impurity_key_is_preserved():
     assert densities['Am-242m'] > 0 and 'Am-242' not in densities
     with pytest.raises(ValueError, match="by nuclide"):
         FluorideSalt("100%LiF", impurities_wt={'Pm': 1e-6}).get_atom_densities(900)
+
+
+# --- review 2026-10-21: enrichment validation, molar volume, impurities, formula parsing -------------------------
+
+def _flibe(**kwargs):
+    return FluorideSalt("66.666666666666667%LiF-33.333333333333333%BeF2", **kwargs)
+
+
+def test_single_key_uranium_weight_fraction_raises():
+    with pytest.raises(ValueError, match="sum to 1"):
+        FluorideSalt("78%LiF-22%UF4", enrichments={'U': {'u-235': 0.05}})
+    with pytest.raises(ValueError, match="sum to 1"):
+        FlibeUF4Salt("x", 950, {'u-235': 0.1975}, {}, 0.22)
+    ok = FluorideSalt("78%LiF-22%UF4", enrichments={'U': {'u-235': 0.05, 'u-238': 0.95}})
+    assert ok.enrichments['U'][235] == pytest.approx(0.05 * 238.0508 / (0.05 * 238.0508 + 0.95 * 235.0439), rel=1e-4)
+
+
+def test_u235_enr_and_explicit_u_are_exclusive():
+    with pytest.raises(ValueError, match="not both"):
+        FluorideSalt("78%LiF-22%UF4", enrichments={'U235_enr': 0.05, 'U': {235: 0.05, 238: 0.95}})
+
+
+def test_top_level_nuclide_enrichment_key_is_rejected_clearly():
+    with pytest.raises(ValueError, match="Key enrichments by element"):
+        FluorideSalt("78%LiF-22%UF4", enrichments={'u-235': 0.2})
+
+
+def test_enrichment_keeps_the_natural_molar_volume():
+    """ Isotopic substitution leaves the molar volume unchanged: equal number densities, mass scales with M """
+    natural = _flibe()
+    enriched = _flibe(enrichments={'Li': {7: 0.99995, 6: 0.00005}})
+    n_nat, n_enr = natural.get_atom_densities(923.0), enriched.get_atom_densities(923.0)
+    assert n_enr['Be-9'] == pytest.approx(n_nat['Be-9'], rel=1e-12)
+    assert n_enr['F-19'] == pytest.approx(n_nat['F-19'], rel=1e-12)
+    assert n_enr['Li-7'] + n_enr['Li-6'] == pytest.approx(n_nat['Li-7'] + n_nat['Li-6'], rel=1e-12)
+    assert enriched.density(923.0) / natural.density(923.0) == pytest.approx(
+        enriched.mixture_molar_mass() / natural.mixture_molar_mass(), rel=1e-12)
+    assert enriched.density(923.0) > natural.density(923.0)  # heavier lithium, same volume
+
+
+def test_elemental_impurity_follows_the_enrichment():
+    salt = FluorideSalt("100%LiF", enrichments={'B': {10: 1.0}}, impurities_wt={'B': 1e-4})
+    dens = salt.get_atom_densities(900.0)
+    assert dens['B-10'] > 0 and 'B-11' not in dens
+    natural = FluorideSalt("100%LiF", impurities_wt={'B': 1e-4}).get_atom_densities(900.0)
+    assert natural['B-11'] / natural['B-10'] == pytest.approx(0.801 / 0.199, rel=1e-3)
+
+
+def test_negative_impurity_raises():
+    with pytest.raises(ValueError, match="non-negative"):
+        FluorideSalt("100%LiF", impurities_wt={'Fe': -0.5, 'Ni': 0.6})
+
+
+def test_generic_formula_is_resolved_case_insensitively():
+    assert set(FluorideSalt("50%LiF-50%PUF3", enrichments={'Pu': {239: 1.0}}).components) == {'LiF', 'PuF3'}
+    with pytest.raises(ValueError, match="no natural isotopic abundance"):
+        FluorideSalt("50%LiF-50%PUF3")  # a Pu composition is needed
+    assert set(FluorideSalt("50%LiF-50%csf").components) == {'LiF', 'CsF'}
+    assert set(FluorideSalt("50%LiF - 50%BeF2").components) == {'LiF', 'BeF2'}  # spaces around the dash
+    for bad in ("50%LiF-50%NaCl", "50%LiF-50%XxF3", "50%LiF-50%FF3", "50%LiF-50%LiBeF3"):
+        with pytest.raises(ValueError):
+            FluorideSalt(bad)
+
+
+def test_zero_impurity_cutoff_keeps_trace_anions_as_impurities():
+    salt = FluorideSalt("78%LiF-22%UF4", enrichments={'U': {235: 0.05, 238: 0.95}})
+    dens = salt.get_atom_densities(900.0)
+    dens['I-131'] = 1e-9
+    rebuilt = FluorideSalt.from_atom_densities(dens, impurity_cutoff=0.0)
+    assert 'I-131' in rebuilt.impurities_wt and 'IF' not in rebuilt.components
+    dens['Cl-35'] = 0.5 * dens['F-19']  # a chloride is not a fluoride salt
+    with pytest.raises(ValueError, match="anion"):
+        FluorideSalt.from_atom_densities(dens, impurity_cutoff=0.0)
+
+
+def test_admixture_enrichment_dict_is_copied():
+    enr = {176: 1.0}
+    salt = FlibeUF4Salt("x", 950, {'u-235': 0.2, 'u-238': 0.8}, {}, 0.2,
+                        admixtures={'LuF3': {'mol_frac': 0.01, 'enrichment': enr}})
+    assert salt.enrichments['Lu'] == enr and salt.enrichments['Lu'] is not enr

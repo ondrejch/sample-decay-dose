@@ -64,12 +64,20 @@ class FluorideSalt:
     - Can adjust fluorine content based on a specified UF3/UF4 ratio.
     """
 
+    # Pure-component liquid densities rho(T) = A - B * T [g/cm3, T in K] of the natural salts, Janz/Cantor type
+    # linear correlations. The mixture takes the ideal (additive) molar volume of these components. For 2LiF-BeF2
+    # this underpredicts the Janz FLiBe correlation 2.413 - 4.88e-4 T by 2.9% at 800 K, 1.8% at 900 K and 0.8% at
+    # 1000 K. The BeF2 slope 1.45e-5 is ten times smaller than the 1.4771e-4 of some compilations; it is kept
+    # because it is closer to the FLiBe data under ideal mixing and a network liquid expands little.
     SALT_COEFFICIENTS = {"LiF": {"A": 2.37, "B": 5e-4}, "BeF2": {"A": 1.97, "B": 1.45e-5},
         "UF4": {"A": 7.78, "B": 9.92e-4}, "LaF3": {"A": 5.79, "B": 6.82e-4}, "KF": {"A": 2.64, "B": 6.57e-4},
         "NaF": {"A": 2.70, "B": 5.90e-4}, "SrF2": {"A": 4.78, "B": 7.51e-4}, "ThF4": {"A": 7.11, "B": 7.59e-4},
         "ZrF4": {"A": 5.36, "B": 1.23e-3}}
     AVOGADRO_NUMBER = 6.02214076e23  # atoms/mol
-    BARN_CM_CONVERSION = 1e24  # (cm^2 / barn)
+    BARN_CM_CONVERSION = 1e24  # barn/cm^2 (1 barn = 1e-24 cm^2)
+    # Share of the retained non-fluorine atoms above which an anion other than fluorine is rejected by
+    # from_atom_densities(), whatever impurity_cutoff is. Below it the anion is a trace impurity.
+    ANION_IMPURITY_FLOOR = 1e-3
     LANTHANIDE_SYMBOLS = ["La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu"]
     ISOTOPIC_DATA = _isotopic_data
 
@@ -84,11 +92,17 @@ class FluorideSalt:
                          - Mole fractions keyed by int mass number, listing every isotope of the element so that
                            they sum to 1, e.g. {'U': {235: 0.05, 238: 0.95}}. An isomer uses a string key such
                            as '242m', e.g. {'Am': {241: 0.9, 242: 0.05, '242m': 0.05}}.
-                         - Uranium weight fractions keyed by nuclide name, e.g. {'U': {'u-235': 0.05, 'u-238': 0.95}}.
+                         - Uranium weight fractions keyed by nuclide name, listing every isotope so that they
+                           sum to 1, e.g. {'U': {'u-235': 0.05, 'u-238': 0.95}}.
                          - Special weight-fraction keys, e.g. {'Li7_enr': 0.9999, 'U235_enr': 0.1975}.
+                           'Li7_enr' is the weight fraction of Li-7 in lithium (99.995 at% Li-7 is
+                           w7 = 0.999957). 'U235_enr' sets U-234 from w234 = 0.0089 w235 and the rest to U-238;
+                           it cannot be combined with an explicit 'U' entry.
             impurities_wt: Dictionary defining impurities by weight fraction of the *total salt mass*.
-                           Keys are nuclides (e.g. 'Fe-56', 'Am-242m') or elements with natural abundance ('Fe').
-                           Impurities are added as bare atoms. They carry no fluorine.
+                           Keys are nuclides (e.g. 'Fe-56', 'Am-242m') or elements ('Fe'). An element follows
+                           the enrichment given for it, otherwise its natural abundance.
+                           Impurities are added as bare atoms. They carry no fluorine and add no volume, so
+                           they raise the mass density by their weight fraction (fine at trace levels).
             uf3_to_uf4_ratio: Molar ratio of U3+ to U4+ to set the fluorine potential.
         """
         # This mapping is the key to robust, case-insensitive salt parsing.
@@ -100,6 +114,8 @@ class FluorideSalt:
         processed_impurities = {}
         if impurities_wt:
             for key, val in impurities_wt.items():
+                if not val >= 0:
+                    raise ValueError(f"Impurity weight fraction of '{key}' must be non-negative, got {val}.")
                 parsed = _parse_nuclide(key)
                 if parsed:
                     symbol, mass_num, suffix = parsed
@@ -179,6 +195,8 @@ class FluorideSalt:
 
         # Handle U-235 weight fraction enrichment (Auto-calculate U-234/U-238)
         if 'U235_enr' in processed:
+            if 'U' in processed:
+                raise ValueError("Give either 'U235_enr' or an explicit 'U' enrichment, not both.")
             self._set_uranium_isotopics_from_enrichment(processed)
 
         # Handle generic Uranium weight fraction enrichment (Explicit dictionary)
@@ -195,10 +213,19 @@ class FluorideSalt:
                     _, mass_num, suffix = parsed
                     isotope_mass = self.ISOTOPIC_DATA['u'][mass_num]['mass']
                     u_enr_mole[_isotope_key(mass_num, suffix)] = wt_frac / isotope_mass
+                total_weight = sum(u_enr_weight.values())
+                if abs(total_weight - 1.0) > 1e-6:
+                    raise ValueError(f"Uranium weight fractions must sum to 1, but sum to {total_weight:.6g}. List "
+                                     f"every isotope, e.g. {{'U': {{'u-235': 0.05, 'u-238': 0.95}}}}, or use "
+                                     f"{{'U235_enr': <weight fraction>}} to fill in U-234 and U-238.")
                 total_moles = sum(u_enr_mole.values())
-                if total_moles > 0:
-                    processed['U'] = {mass: mol / total_moles for mass, mol in u_enr_mole.items()}
+                processed['U'] = {mass: mol / total_moles for mass, mol in u_enr_mole.items()}
 
+        for symbol, distribution in processed.items():
+            if not isinstance(distribution, dict):
+                raise ValueError(f"Enrichment for '{symbol}' must be a dict of isotope fractions, got "
+                                 f"{distribution!r}. Key enrichments by element, e.g. {{'U': {{235: 0.05, 238: "
+                                 f"0.95}}}}; the special keys are 'Li7_enr' and 'U235_enr'.")
         return processed
 
     def _set_uranium_isotopics_from_enrichment(self, processed_enrichments: dict):
@@ -209,6 +236,8 @@ class FluorideSalt:
         Uses the standard correlation for fresh fuel (typical in SCALE/ASTM):
         w_234 = 0.0089 * w_235
         w_238 = 1.0 - w_235 - w_234
+        The companion U-236 term of recycled uranium (w_236 = 0.0046 w_235) is not included; give an explicit
+        'U' dictionary for uranium with U-236.
         """
         w235 = processed_enrichments.pop('U235_enr')
         if not (0 <= w235 <= 1):
@@ -259,7 +288,8 @@ class FluorideSalt:
         2. Impurity. A retained element below ``impurity_cutoff`` is carried in ``impurities_wt`` nuclide by
            nuclide. Impurities are bare atoms outside the fluorine balance, as in the forward model, so a trace
            metal such as an Al impurity leaves the UF3/UF4 ratio unchanged. Trace anions other than fluorine
-           (Cl, Br, I, O, S, ...) are carried the same way. An anion above the cutoff raises ValueError.
+           (Cl, Br, I, O, S, ...) are carried the same way while their share is below
+           max(impurity_cutoff, ANION_IMPURITY_FLOOR); a larger share raises ValueError.
         3. Excluded. Elements with valence 0 are dropped when ``drop_zero_valence`` is True. These are the noble
            gases, which are off-gassed, and the noble metals, which plate out. They are listed with their atom
            fraction of the input in ``salt.excluded_species``, and a UserWarning names them.
@@ -276,7 +306,8 @@ class FluorideSalt:
             atom_densities (dict): Nuclide name (e.g. 'Li-7', 'li7', 'am-242m') to atom density [atoms/barn-cm].
             valency_estimate_type (str): The valency map to use ('upper', 'lower', 'doligez'). Defaults to 'upper'.
             impurity_cutoff (float): Share of the retained non-fluorine atoms below which an element is carried
-                as an impurity. Defaults to 1e-3 (0.1 mol%). With 0, every cation becomes a salt component.
+                as an impurity. Defaults to 1e-3 (0.1 mol%). With 0, every cation becomes a salt component,
+                and anions below ANION_IMPURITY_FLOOR stay trace impurities.
             drop_zero_valence (bool): Drop valence-0 elements (default). With False, they are kept as impurities.
             valence_overrides (dict): Element symbol to valence, used before the valency map. A valence of 0
                 drops the element.
@@ -334,9 +365,18 @@ class FluorideSalt:
 
         components = {}  # element symbol -> valence
         impurity_elements = []
+        anion_cutoff = max(impurity_cutoff, cls.ANION_IMPURITY_FLOOR)
         for symbol in retained:
             valence = valence_of(symbol)
             share = elemental[symbol] / retained_total
+            if valence is not None and valence < 0:
+                if share < anion_cutoff:
+                    impurity_elements.append(symbol)
+                    continue
+                raise ValueError(
+                    f"Element '{symbol}' (valence {valence}) is an anion making up {share:.3e} of the "
+                    f"non-fluorine atoms, which is at least {anion_cutoff:.3e}. Only fluorine can be "
+                    f"a major anion of a fluoride salt. Other anions are carried as trace impurities.")
             if share < impurity_cutoff or valence == 0:
                 impurity_elements.append(symbol)
             elif valence is None:
@@ -344,11 +384,6 @@ class FluorideSalt:
                     f"Element '{symbol}' makes up {share:.3e} of the non-fluorine atoms, which is above "
                     f"impurity_cutoff={impurity_cutoff}, and the '{valency_estimate_type}' valency map has no "
                     f"valence for it. Pass valence_overrides={{'{symbol}': <valence>}}, or 0 to drop it.")
-            elif valence < 0:
-                raise ValueError(
-                    f"Element '{symbol}' (valence {valence}) is an anion making up {share:.3e} of the "
-                    f"non-fluorine atoms, which is above impurity_cutoff={impurity_cutoff}. Only fluorine can be "
-                    f"a major anion of a fluoride salt. Other anions are carried as trace impurities.")
             else:
                 components[symbol] = valence
         if not components:
@@ -420,22 +455,17 @@ class FluorideSalt:
         xxx_component_salt = None
         total_specified_percentage = 0.0
         for part in parts:
-            match = re.match(r"((?:\d+(?:\.\d+)?)|XXX)%([a-zA-Z0-9]+)", part, re.IGNORECASE)
+            match = re.fullmatch(r"((?:\d+(?:\.\d+)?)|XXX)%([a-zA-Z0-9]+)", part.strip(), re.IGNORECASE)
             if not match:
                 raise ValueError(f"Could not parse component: '{part}'")
             percentage_str, salt_input = match.group(1), match.group(2)
 
             # Use the known salts mapping to find the canonical formula.
             canonical_salt = self._known_salts.get(salt_input.lower())
-            # If not a known salt, try to parse it as a generic formula. This allows
-            # reconstruction from atom densities where density data may not exist.
+            # Otherwise accept the fluoride of any one element, e.g. a component reconstructed from atom
+            # densities for which no density correlation exists. density() raises for those.
             if canonical_salt is None:
-                # Attempt to parse as a valid chemical formula (e.g., FeF2)
-                parsed_elements = re.findall(r'([A-Z][a-z]?)(\d*)', salt_input)
-                if not parsed_elements or "".join(f"{s}{c}" for s, c in parsed_elements) != salt_input:
-                    raise ValueError(f"Unsupported or malformed salt component: '{salt_input}'")
-                # Use the user's input, but with the first letter capitalized as a convention
-                canonical_salt = salt_input[0].upper() + salt_input[1:]
+                canonical_salt = self._generic_fluoride_formula(salt_input)
 
             if percentage_str.upper() == "XXX":
                 if xxx_component_salt is not None:
@@ -454,6 +484,23 @@ class FluorideSalt:
                 raise ValueError(f"Specified percentages ({total_specified_percentage}%) exceed 100%.")
             components[xxx_component_salt] = remainder
         return components
+
+    @classmethod
+    def _generic_fluoride_formula(cls, salt_input: str) -> str:
+        """Canonical 'XxFn' spelling of the fluoride of one element, case-insensitive: 'puf3' -> 'PuF3',
+        'CSF' -> 'CsF'. Anything else (two cations, an anion other than fluorine, an unknown element) raises."""
+        match = re.fullmatch(r"([A-Za-z]{1,2})f(\d*)", salt_input, re.IGNORECASE)
+        cation = match.group(1).capitalize() if match else None
+        if cation is None or cation == 'F' or cation.lower() not in cls.ISOTOPIC_DATA:
+            raise ValueError(f"Unsupported or malformed salt component: '{salt_input}'. Expected the fluoride of "
+                             f"one element, e.g. 'CsF' or 'PuF3'.")
+        return f"{cation}F{match.group(2)}"
+
+    def _natural_molar_mass(self, formula: str) -> float:
+        """Molar mass [g/mol] of a formula unit with natural isotopic abundances, the basis of the density
+        correlations in SALT_COEFFICIENTS."""
+        return sum(self._natural_elemental_mass(symbol) * (int(count) if count else 1)
+                   for symbol, count in re.findall(r'([A-Z][a-z]?)(\d*)', formula))
 
     def _calculate_elemental_masses(self) -> dict:
         elemental_masses = {}
@@ -567,24 +614,26 @@ class FluorideSalt:
     def density(self, temperature: float) -> float:
         """Mass density [g/cm3] of the salt including impurities, at temperature [K].
 
-        Pure-salt molar volumes are mixed ideally. Lanthanide trifluorides without coefficients use the molar
-        volume of LaF3. Assumption for the UF3/UF4 ratio: reducing U4+ to U3+ removes fluorine at constant
+        Pure-salt molar volumes are mixed ideally. Each pure molar volume is the natural molar mass over the
+        correlation density, because the correlations describe the natural salts. Isotopic enrichment leaves
+        the molar volume unchanged, so an enriched salt keeps the number densities of the natural salt and its
+        mass density scales with the enriched molar mass. Lanthanide trifluorides without coefficients use the
+        molar volume of LaF3. Assumption for the UF3/UF4 ratio: reducing U4+ to U3+ removes fluorine at constant
         molar volume. The UF4 correlation still sets the uranium component's molar volume, and the mass of the
         removed fluorine lowers the density. Number densities of all nuclides other than fluorine are therefore
-        independent of uf3_to_uf4_ratio.
+        independent of uf3_to_uf4_ratio. Impurities add mass at zero volume.
         """
         mixture_molar_volume = 0.0
         ref_molar_volume = None
         for salt, percentage in self.components.items():
             molar_fraction = percentage / 100.0
-            molar_mass = self.molar_masses[salt]
 
             if salt in self.SALT_COEFFICIENTS:
                 coeffs = self.SALT_COEFFICIENTS[salt]
                 density_pure = coeffs['A'] - coeffs['B'] * temperature
                 if density_pure <= 0:
                     raise ValueError(f"Density of {salt} is non-positive at {temperature} K.")
-                molar_volume_pure = molar_mass / density_pure
+                molar_volume_pure = self._natural_molar_mass(salt) / density_pure
             elif self._formula_cation(salt) in self.LANTHANIDE_SYMBOLS:
                 # Fallback for lanthanides not in SALT_COEFFICIENTS, using the LaF3 molar volume at this temperature.
                 if ref_molar_volume is None:
@@ -665,16 +714,10 @@ class FluorideSalt:
                         f"without natural isotopic abundance must be given by nuclide, e.g. '{symbol}-<mass number>'.")
 
                 element_atom_density = (impurity_mass_density / avg_atomic_mass) * self.AVOGADRO_NUMBER
-                iso_data = self.ISOTOPIC_DATA[symbol.lower()]
-                for mass_num, data in iso_data.items():
-                    if data.get('abundance', 0) > 0:
-                        isotope_name = f"{symbol}-{mass_num}"
-                        isotope_densities[isotope_name] += element_atom_density * data['abundance']
-                    # Handle cases like Ac-227 which has 0 natural abundance but is the only isotope
-                    elif len(iso_data) == 1:
-                        isotope_name = f"{symbol}-{mass_num}"
-                        isotope_densities[isotope_name] += element_atom_density
-                        break
+                # The same isotopic split as the salt components: the enrichment if given, else natural
+                for mass_num, fraction in isotopic_distribution(symbol).items():
+                    if fraction > 0:
+                        isotope_densities[f"{symbol}-{mass_num}"] += element_atom_density * fraction
 
         for iso, dens in isotope_densities.items():
             isotope_densities[iso] = dens / self.BARN_CM_CONVERSION
@@ -705,7 +748,8 @@ class FlibeUF4Salt(FluorideSalt):
             admixtures (dict): Optional dictionary defining extra salts.
                                Example: {'LuF3': {'mol_frac': 0.01, 'enrichment': {176: 1.0}}}
             UF3_to_UF4 (float): Molar ratio of U3+ to U4+.
-            Li7_enr (float): Weight fraction enrichment of Li-7.
+            Li7_enr (float): Weight fraction of Li-7 in lithium. Vendor specifications are usually atom
+                             percent; 99.995 at% Li-7 is a weight fraction of 0.999957.
         """
         self.name = name
         self.temperature = temperature
@@ -748,7 +792,7 @@ class FlibeUF4Salt(FluorideSalt):
                     cation = self._formula_cation(self._canonical_formula(salt))
                     if not cation:
                         raise ValueError(f"Could not parse cation from admixture salt: {salt}")
-                    enrichments[cation] = props['enrichment']
+                    enrichments[cation] = dict(props['enrichment'])  # a copy, so the caller's dict stays untouched
 
         # --- Calculate Impurity Weight Fractions (Relative to Total Salt Mass) ---
         # We need a temporary object to calculate the mass of Uranium per mole of salt
@@ -805,7 +849,8 @@ class FlibeSalt(FluorideSalt):
         Args:
             name (str): A name for the salt material.
             temperature (float): The operating temperature in Kelvin.
-            Li7_enr (float): Weight fraction enrichment of Li-7.
+            Li7_enr (float): Weight fraction of Li-7 in lithium. Vendor specifications are usually atom
+                             percent; 99.995 at% Li-7 is a weight fraction of 0.999957.
             impurities_wt (dict, optional): Dictionary of impurity isotope/element names to their
                                             weight fractions of the *total salt*. Defaults to None.
         """
