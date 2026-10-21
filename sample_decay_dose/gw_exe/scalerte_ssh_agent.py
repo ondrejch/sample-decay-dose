@@ -39,10 +39,22 @@ LOST_GRACE_SECONDS = 60.0
 # Interval between liveness probes while following logs.
 LIVENESS_INTERVAL_SECONDS = 30.0
 PROBE_TIMEOUT_SECONDS = 60.0
+# A launch SSH call that takes longer than this fails the submission instead of blocking the agent.
+LAUNCH_TIMEOUT_SECONDS = 120.0
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _parse_utc_iso(text: Any) -> float | None:
+    """POSIX seconds of a timestamp written by _utc_now_iso, or None when it does not parse."""
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -242,7 +254,11 @@ def _launch_remote_job(
     remote_command = f"nohup bash {shlex.quote(str(run_script_path))} </dev/null >/dev/null 2>&1 & echo $!"
     # '--' ends ssh option parsing, so the worker name cannot be read as an option.
     cmd = [ssh_bin, *ssh_options, "--", worker, remote_command]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL,
+                              timeout=LAUNCH_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"SSH launch on {worker} timed out after {LAUNCH_TIMEOUT_SECONDS:.0f} s") from exc
     if proc.returncode != 0:
         raise RuntimeError(
             f"SSH launch failed on {worker}: rc={proc.returncode}; "
@@ -301,6 +317,8 @@ def _refresh_liveness(
     The run script writes exit_code before it exits. A launcher that is gone without an exit code was killed,
     for example by a node reboot, the OOM killer or ``kill -9``. The first observation is recorded in
     ``missing_since``. A later probe that finds the launcher again clears it.
+    A job left in meta state SUBMITTED for ``grace_seconds`` never launched: the agent died between writing
+    meta.json and the SSH launch. It becomes SUBMIT_FAILED, so it stops counting as a running job.
     """
     state, _ = _compute_state(job_directory)
     if state != "RUNNING":
@@ -309,8 +327,17 @@ def _refresh_liveness(
         meta = _read_json(job_directory / "meta.json")
     except (OSError, json.JSONDecodeError):
         return
+    grace_seconds = LOST_GRACE_SECONDS if grace_seconds is None else grace_seconds
+    now = time.time() if now is None else now
+    if meta.get("state") == "SUBMITTED":
+        submitted_at = _parse_utc_iso(meta.get("submitted_at"))
+        if submitted_at is not None and now - submitted_at >= grace_seconds:
+            meta["state"] = "SUBMIT_FAILED"
+            meta["submit_error"] = f"launch did not complete within {grace_seconds:.0f} s of submission"
+            _write_json(job_directory / "meta.json", meta)
+        return
     if meta.get("state") != "RUNNING":
-        return  # Not launched yet.
+        return
     alive = _probe_launcher(meta, job_directory)
     if alive is None:
         return
@@ -318,8 +345,6 @@ def _refresh_liveness(
     if alive:
         missing_path.unlink(missing_ok=True)
         return
-    grace_seconds = LOST_GRACE_SECONDS if grace_seconds is None else grace_seconds
-    now = time.time() if now is None else now
     first_missing = _optional_float(missing_path)
     if first_missing is None:
         _write_text_atomic(missing_path, f"{now}\n")
@@ -361,8 +386,10 @@ def _stream_log_until_complete(
     log_path: Path,
     poll_seconds: float,
     liveness_interval: float = LIVENESS_INTERVAL_SECONDS,
+    start_position: int = 0,
 ) -> None:
-    position = 0
+    """Print the log from ``start_position`` onwards until the job reaches a terminal state."""
+    position = start_position
     last_probe = time.monotonic()
     while True:
         if log_path.exists():
@@ -523,7 +550,10 @@ def _command_logs(args: argparse.Namespace) -> int:
     for line in _tail_lines(log_path, args.lines):
         sys.stdout.write(line)
     sys.stdout.flush()
-    _stream_log_until_complete(job_directory, log_path, poll_seconds=args.poll_seconds)
+    # Continue after the tail, so the tailed lines are not printed a second time.
+    start_position = log_path.stat().st_size if log_path.exists() else 0
+    _stream_log_until_complete(job_directory, log_path, poll_seconds=args.poll_seconds,
+                               start_position=start_position)
     return 0
 
 

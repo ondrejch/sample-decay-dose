@@ -72,8 +72,8 @@ def test_pick_worker_least_busy(tmp_path: Path) -> None:
 def test_client_submit_builds_expected_ssh_command(monkeypatch: pytest.MonkeyPatch) -> None:
     recorded: list[list[str]] = []
 
-    def fake_run(cmd, capture_output, text, check):  # noqa: ANN001
-        recorded.append(cmd)
+    def fake_run(cmd, capture_output, text, check, timeout=None):  # noqa: ANN001
+        recorded.append((cmd, timeout))
         return subprocess.CompletedProcess(
             cmd,
             0,
@@ -87,6 +87,8 @@ def test_client_submit_builds_expected_ssh_command(monkeypatch: pytest.MonkeyPat
     result = client.submit(["scalerte", "input.inp"], workdir="/home/u/case")
 
     assert result["job_id"] == "j123"
+    assert recorded[0][1] == client.timeout_seconds == 300.0  # every agent call is bounded
+    recorded[:] = [cmd for cmd, _ in recorded]
     assert recorded, "subprocess.run was not called"
     cmd = recorded[0]
     assert cmd[:5] == ["ssh", "-o", "BatchMode=yes", "--", "cl"]
@@ -323,3 +325,72 @@ def test_meta_write_is_atomic(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
         agent._write_json(path, {"state": "RUNNING"})
     assert json.loads(path.read_text(encoding="utf-8")) == {"state": "SUBMITTED"}
     assert [p.name for p in tmp_path.iterdir()] == ["meta.json"]
+
+
+# --- review 2026-10-21 -------------------------------------------------------------------------------------
+
+
+def test_logs_follow_does_not_repeat_the_tail(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    jobs_root = tmp_path / "jobs"
+    job_dir = jobs_root / JOB_ID
+    job_dir.mkdir(parents=True)
+    _write_meta(job_dir, "c0801")
+    (job_dir / "stdout.log").write_text("line1\nline2\nline3\n", encoding="utf-8")
+    (job_dir / "exit_code").write_text("0\n", encoding="utf-8")  # terminal: the follow loop ends at once
+    assert agent.main(["--jobs-root", str(jobs_root), "logs", JOB_ID, "--follow", "--lines", "2"]) == 0
+    assert capsys.readouterr().out == "line2\nline3\n"
+
+
+def test_job_stuck_in_submitted_becomes_submit_failed(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "jobs"
+    job_dir = jobs_root / JOB_ID
+    job_dir.mkdir(parents=True)
+    (job_dir / "meta.json").write_text(json.dumps({"job_id": JOB_ID, "worker": "c0802", "state": "SUBMITTED",
+                                                   "submitted_at": "2026-10-21T10:00:00Z"}), encoding="utf-8")
+    submitted = agent._parse_utc_iso("2026-10-21T10:00:00Z")
+    assert submitted is not None
+    assert agent._active_jobs_by_worker(jobs_root) == {"c0802": 1}
+    agent._refresh_liveness(job_dir, grace_seconds=60.0, now=submitted + 30.0)
+    assert agent._compute_state(job_dir)[0] == "RUNNING"  # still within the grace period
+    agent._refresh_liveness(job_dir, grace_seconds=60.0, now=submitted + 61.0)
+    assert agent._compute_state(job_dir)[0] == "SUBMIT_FAILED"
+    assert "launch did not complete" in json.loads((job_dir / "meta.json").read_text())["submit_error"]
+    assert agent._active_jobs_by_worker(jobs_root) == {}
+
+
+def test_launch_timeout_fails_the_submission(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def fake_run(cmd, **kwargs):  # noqa: ANN001
+        assert kwargs["timeout"] == agent.LAUNCH_TIMEOUT_SECONDS
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="timed out"):
+        agent._launch_remote_job(ssh_bin="ssh", ssh_options=[], worker="c0801", run_script_path=tmp_path / "run.sh")
+
+
+def test_client_wait_tolerates_transient_ssh_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = ScalerteSshClient()
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    calls: list[int] = []
+
+    def flaky_status(job_id: str) -> dict:
+        calls.append(1)
+        if len(calls) < 3:
+            raise client_mod.ScalerteSshError("ssh rc=255")
+        return {"state": "COMPLETED", "job_id": job_id}
+
+    monkeypatch.setattr(client, "status", flaky_status)
+    assert client.wait("j1", poll_seconds=0.0)["state"] == "COMPLETED"
+    assert len(calls) == 3
+    monkeypatch.setattr(client, "status", lambda job_id: (_ for _ in ()).throw(client_mod.ScalerteSshError("down")))
+    with pytest.raises(client_mod.ScalerteSshError):
+        client.wait("j1", poll_seconds=0.0, max_consecutive_errors=3)
+
+
+def test_client_call_timeout_raises_ssh_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(cmd, **kwargs):  # noqa: ANN001
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(client_mod.ScalerteSshError, match="timed out"):
+        ScalerteSshClient(timeout_seconds=1.0).status("j1")

@@ -32,6 +32,10 @@ class ScalerteSshClient:
     ssh_bin: str = "ssh"
     ssh_options: tuple[str, ...] = ()
     jobs_root: str | None = None
+    # Each agent call (submit, status, result, list, logs without --follow) must finish within this time; a hung
+    # connection raises ScalerteSshError instead of blocking. Add "-o ConnectTimeout=30" to ssh_options to bound
+    # the connection step itself. None disables the limit.
+    timeout_seconds: float | None = 300.0
 
     def _ssh_command(self, args: list[str]) -> list[str]:
         """Build the local ssh argv for one agent call.
@@ -44,9 +48,15 @@ class ScalerteSshClient:
         remote_command = shlex.join([*shlex.split(self.agent_command), *args])
         return [self.ssh_bin, *self.ssh_options, "--", self.host, remote_command]
 
+    def _run_captured(self, cmd: list[str]) -> subprocess.CompletedProcess:
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=self.timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            raise ScalerteSshError(f"Remote agent call timed out after {self.timeout_seconds} s: cmd={cmd!r}") from exc
+
     def _run_json(self, args: list[str]) -> dict[str, Any]:
         cmd = self._ssh_command(args)
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = self._run_captured(cmd)
         if proc.returncode != 0:
             raise ScalerteSshError(
                 "Remote agent call failed: "
@@ -65,7 +75,7 @@ class ScalerteSshClient:
     def _run_text(self, args: list[str], *, capture_output: bool = True) -> str | int:
         cmd = self._ssh_command(args)
         if capture_output:
-            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            proc = self._run_captured(cmd)
             if proc.returncode != 0:
                 raise ScalerteSshError(
                     "Remote logs call failed: "
@@ -146,17 +156,29 @@ class ScalerteSshClient:
             return self._run_text(args, capture_output=False)
         return str(self._run_text(args, capture_output=True))
 
-    def wait(self, job_id: str, *, poll_seconds: float = 5.0, timeout_seconds: float | None = None) -> dict[str, Any]:
+    def wait(self, job_id: str, *, poll_seconds: float = 5.0, timeout_seconds: float | None = None,
+             max_consecutive_errors: int = 5) -> dict[str, Any]:
         """Poll ``status`` until the job reaches a terminal state and return its view.
 
         A job whose worker process died becomes LOST, which is terminal, so this returns for it as well.
         ``timeout_seconds`` bounds the wait and raises TimeoutError when it expires.
+        A failed status call (a dropped SSH connection, for example) is retried after ``poll_seconds``; the job
+        keeps running on the worker meanwhile. ``max_consecutive_errors`` failures in a row raise the last
+        ScalerteSshError.
         """
         start = time.monotonic()
+        consecutive_errors = 0
         while True:
-            job = self.status(job_id)
-            if job.get("state") in TERMINAL_STATES:
-                return job
+            try:
+                job = self.status(job_id)
+            except ScalerteSshError:
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    raise
+            else:
+                consecutive_errors = 0
+                if job.get("state") in TERMINAL_STATES:
+                    return job
             if timeout_seconds is not None and (time.monotonic() - start) > timeout_seconds:
                 raise TimeoutError(f"Timed out waiting for job {job_id}")
             time.sleep(max(poll_seconds, 0.05))
