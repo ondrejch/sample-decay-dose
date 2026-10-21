@@ -31,11 +31,26 @@ F71-based leakage simulations live.
   box JSON name (`boxB_xe135.json5` -> `xe135`) and fall back to the unprefixed names.
 
 **Model conventions**
-- Leaked elements: each box removes H, He, O, N, I, Br, Ar, Kr and Xe
+- Leaked elements: boxes A and B remove H, He, O, N, I, Br, Ar, Kr and Xe
   (`LEAKED_ELEMENTS`, one ORIGEN `removal` entry per element). All other elements,
-  including decay daughters such as Rb, Sr, Cs and Ba, stay in the box.
+  including decay daughters such as Rb, Sr, Cs and Ba, stay in the box. Box C has no
+  removal; it collects what box B releases.
   `compute_dose_from_box` converts inventories to release rates for those elements
   only (`released_elements` overrides the list).
+- Environmental release: the release to the environment is the leak out of box B,
+  `eps_B * A_B(t)` with `eps_B = 0.1 * PCTperDAY`. `_run_simulation` writes the
+  removal rates it applied to `leaky_boxes_rates_<prefix>.json5`, and
+  `compute_dose_from_box(boxB_<prefix>.json5, 'box_B')` reads `eps_B` from there
+  unless `removal_rate_s` is given. Box C has no removal, so its inventory is the
+  cumulative release. The journal method uses `eps * A_C(t)` as a conservative
+  release-rate surrogate; box C with `inventory_bq` therefore needs an explicit
+  `removal_rate_s` and warns that the result is a surrogate.
+- Dose defaults (journal method): chi/Q from `chi_q_schedule_rg145_400m()`
+  (RG 1.145, 400 m), breathing rate `BREATHING_RATE_M3_S` (22.2 m^3/d), ICRP-72 maximum
+  inhalation DCF across types F/M/S, and the ICRP-72 immersion table for the noble
+  gases. The cumulative dose splits every ORIGEN interval at the chi/Q schedule
+  boundaries (2 h, 8 h, 24 h, 4 d, 30 d), so the early windows are integrated with
+  their own chi/Q also when they fall between two ORIGEN time points.
 - Normalization: boxes B and C are 1 cm^3 volumes fed by the leak from 1 cm^3 of box A
   (default `apply_volume_scaling=False`). Their inventories, activities and the doses
   computed from them are therefore per cm^3 of box A. Pass
@@ -44,8 +59,9 @@ F71-based leakage simulations live.
 - Missing coefficients: the dose output has the column
   `activity_fraction_without_dcf [-]`, the fraction of the release rate at each time
   step carried by nuclides with neither an inhalation nor an immersion DCF. A warning
-  names the largest of them. `max_missing_dcf_fraction` turns the warning into an error
-  above a chosen fraction.
+  names the largest of them, and `compute_dose_timeseries` raises when the fraction
+  exceeds `max_missing_dcf_fraction` (5% by default; `None` warns only). A step whose
+  F71 is missing raises instead of entering the dose as zero.
 - DCF loaders keep values between 1e-20 and 1e-2 (Sv/Bq, or Sv/day per Bq/m^3) and
   drop anything outside that window as an extraction error.
 

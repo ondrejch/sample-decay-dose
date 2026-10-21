@@ -620,3 +620,140 @@ class TestRunSimulationCaseDirs(unittest.TestCase):
         case_dirs, written = self._run(None)
         self.assertEqual(case_dirs, ['_box_A_leak', '_box_B_0002_leak', '_box_C_0002'])
         self.assertIn('boxB.json5', written)
+
+
+class TestDoseIntegrationAtScheduleBoundaries(unittest.TestCase):
+    """ Review 2026-10-21: chi/Q steps between ORIGEN time points are integrated with their own chi/Q """
+
+    def test_boundary_inside_an_interval(self):
+        from leaky_box_origen.LeakyBox import compute_dose_timeseries
+        df = pd.DataFrame({'time [s]': [0.0, 40.0], 'i-131': [1.0, 1.0]})
+        sched = [(10.0, 2.0), (1e9, 1.0)]  # chi/Q 2 until 10 s, then 1
+        out = compute_dose_timeseries(df, {'i-131': 1.0}, sched, 1.0)
+        self.assertAlmostEqual(out['dose [Sv]'].iloc[-1], 2.0 * 10.0 + 1.0 * 30.0)  # 60 with the old trapezoid
+        self.assertEqual(out['chi/Q [s/m^3]'].tolist(), [2.0, 1.0])
+        # a linearly rising release is integrated exactly on each piece
+        df = pd.DataFrame({'time [s]': [0.0, 40.0], 'i-131': [0.0, 40.0]})
+        out = compute_dose_timeseries(df, {'i-131': 1.0}, sched, 1.0)
+        self.assertAlmostEqual(out['dose [Sv]'].iloc[-1], 2.0 * 50.0 + 1.0 * (800.0 - 50.0))
+
+    def test_rg145_first_day_on_a_coarse_grid(self):
+        from leaky_box_origen.LeakyBox import compute_dose_timeseries, chi_q_schedule_rg145_400m, _chi_q_at_time
+        sched = chi_q_schedule_rg145_400m()
+        coarse = pd.DataFrame({'time [s]': [0.0, 0.24 * 3600.0, 12.24 * 3600.0, 24.24 * 3600.0], 'kr-88': [1.0] * 4})
+        fine_t = np.append(np.arange(0.0, 24.24 * 3600.0, 60.0), 24.24 * 3600.0)  # 1-minute grid to the same end
+        fine = pd.DataFrame({'time [s]': fine_t, 'kr-88': [1.0] * len(fine_t)})
+        dose_c = compute_dose_timeseries(coarse, {}, sched, 1.0, {'kr-88': 86400.0})['dose [Sv]'].iloc[-1]
+        dose_f = compute_dose_timeseries(fine, {}, sched, 1.0, {'kr-88': 86400.0})['dose [Sv]'].iloc[-1]
+        exact = sum(_chi_q_at_time(0.5 * (a + b), sched) * (b - a) for a, b in
+                    zip([0.0, 7200.0, 28800.0, 86400.0], [7200.0, 28800.0, 86400.0, 24.24 * 3600.0]))
+        self.assertAlmostEqual(dose_c / exact, 1.0, places=9)
+        self.assertAlmostEqual(dose_f / exact, 1.0, places=6)
+
+    def test_scalar_schedule_matches_trapezoid(self):
+        from leaky_box_origen.LeakyBox import compute_dose_timeseries
+        df = pd.DataFrame({'time [s]': [0.0, 10.0, 30.0], 'i-131': [1.0, 1.0, 3.0]})
+        out = compute_dose_timeseries(df, {'i-131': 1.0}, 2.0, 1.0)
+        self.assertAlmostEqual(out['dose [Sv]'].iloc[-1], 2.0 * (10.0 + 40.0))
+
+
+class TestDoseFromBoxReleaseSemantics(unittest.TestCase):
+
+    def _box_run(self, tmpdir, prefix='xe135'):
+        import json5
+        for k in (1, 2):
+            for d in (f'_box_B_{prefix}_{k:04d}_leak', f'_box_C_{prefix}_{k:04d}'):
+                os.makedirs(os.path.join(tmpdir, d))
+                open(os.path.join(tmpdir, d, 'origen.f71'), 'w').close()
+        box_json = os.path.join(tmpdir, f'boxB_{prefix}.json5')
+        with open(box_json, 'w') as f:
+            json5.dump({'1': {'time': 0.0, 'adens': {}}, '2': {'time': 100.0, 'adens': {}}}, f)
+        dcf_csv = os.path.join(tmpdir, 'inh.csv')
+        with open(dcf_csv, 'w') as f:
+            f.write('nuclide,dcf_sv_bq\ni-131,1e-8\n')
+        return box_json, dcf_csv
+
+    def test_removal_rate_read_from_the_run_and_box_c_rejected(self):
+        import json5
+        from leaky_box_origen.LeakyBox import compute_dose_from_box, BREATHING_RATE_M3_S
+        with tempfile.TemporaryDirectory() as tmpdir:
+            box_json, dcf_csv = self._box_run(tmpdir)
+            fake = lambda path, pos, f71units='becq': {'i-131': 1.0e6}
+            with patch('leaky_box_origen.LeakyBox.get_burned_nuclide_data', side_effect=fake), \
+                 patch('leaky_box_origen.LeakyBox.plot_dose_timeseries', return_value='x.png'):
+                with self.assertRaises(ValueError):  # no rates file and no removal_rate_s
+                    compute_dose_from_box(box_json, 'box_B', dcf_csv, chi_q_schedule=1e-3, dcf_immersion_csv=None)
+                with open(os.path.join(tmpdir, 'leaky_boxes_rates_xe135.json5'), 'w') as f:
+                    json5.dump({'box_A': {'removal_rate_s': 1e-4}, 'box_B': {'removal_rate_s': 1e-5}}, f)
+                out = compute_dose_from_box(box_json, 'box_B', dcf_csv, chi_q_schedule=1e-3, dcf_immersion_csv=None)
+                expected_rate = 1e-3 * BREATHING_RATE_M3_S * (1.0e6 * 1e-5) * 1e-8  # eps_B of the run, 22.2 m3/d
+                self.assertAlmostEqual(out.loc[0, 'dose_rate [Sv/s]'] / expected_rate, 1.0)
+                # box C: no removal of its own; an explicit rate gives the journal surrogate, with a warning
+                with self.assertRaises(ValueError):
+                    compute_dose_from_box(box_json, 'box_C', dcf_csv, chi_q_schedule=1e-3, dcf_immersion_csv=None,
+                                          run_prefix='xe135')
+                with open(os.path.join(tmpdir, 'leaky_boxes_rates_xe135.json5'), 'w') as f:
+                    json5.dump({'box_B': {'removal_rate_s': 1e-5}, 'box_C': {'removal_rate_s': 0.0}}, f)
+                with self.assertRaises(ValueError):
+                    compute_dose_from_box(box_json, 'box_C', dcf_csv, chi_q_schedule=1e-3, dcf_immersion_csv=None,
+                                          run_prefix='xe135')
+                with self.assertWarns(UserWarning):
+                    compute_dose_from_box(box_json, 'box_C', dcf_csv, chi_q_schedule=1e-3, dcf_immersion_csv=None,
+                                          removal_rate_s=1e-5, run_prefix='xe135')
+        self.assertAlmostEqual(BREATHING_RATE_M3_S, 22.2 / 86400.0)
+
+    def test_default_schedule_and_immersion_table(self):
+        from leaky_box_origen.LeakyBox import compute_dose_from_box, chi_q_schedule_rg145_400m
+        with tempfile.TemporaryDirectory() as tmpdir:
+            box_json, dcf_csv = self._box_run(tmpdir)
+            fake = lambda path, pos, f71units='becq': {'i-131': 1.0e6, 'kr-85': 1.0e9}
+            with patch('leaky_box_origen.LeakyBox.get_burned_nuclide_data', side_effect=fake), \
+                 patch('leaky_box_origen.LeakyBox.plot_dose_timeseries', return_value='x.png'):
+                out = compute_dose_from_box(box_json, 'box_B', dcf_csv, removal_rate_s=1e-5)
+        self.assertAlmostEqual(out.loc[0, 'chi/Q [s/m^3]'], chi_q_schedule_rg145_400m()[0][1])
+        self.assertGreater(out.loc[0, 'dose_rate_immersion [Sv/s]'], 0.0)  # kr-85 from the ICRP-72 immersion table
+
+    def test_missing_f71_raises_and_dotted_prefix_is_kept(self):
+        import json5
+        from leaky_box_origen.LeakyBox import (_activity_timeseries_per_nuclide_from_box_json,
+                                               _run_prefix_from_box_json, _activity_timeseries_from_box_json)
+        self.assertEqual(_run_prefix_from_box_json('/x/boxB_v1.2.json5'), 'v1.2')
+        self.assertEqual(_run_prefix_from_box_json('boxB_xe135.json5'), 'xe135')
+        self.assertIsNone(_run_prefix_from_box_json('boxB.json5'))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            box_json = os.path.join(tmpdir, 'boxB_v1.2.json5')
+            with open(box_json, 'w') as f:
+                json5.dump({'1': {'time': 0.0, 'adens': {}}}, f)
+            with self.assertRaises(FileNotFoundError):
+                _activity_timeseries_per_nuclide_from_box_json(box_json, 'box_B')
+            with self.assertWarns(UserWarning):
+                act = _activity_timeseries_from_box_json(box_json, 'box_B')
+            self.assertTrue(np.isnan(act['activity [Bq]'].iloc[0]))
+
+    def test_merged_activity_csv_columns(self):
+        from leaky_box_origen.LeakyBox import _write_activity_csv
+        b = pd.DataFrame({'time [s]': [0.0, 10.0], 'time [d]': [0.0, 10.0 / 86400], 'activity [Bq]': [1.0, 2.0]})
+        c = pd.DataFrame({'time [s]': [0.0, 10.0], 'time [d]': [0.0, 10.0 / 86400], 'activity [Bq]': [3.0, 4.0]})
+        with tempfile.TemporaryDirectory() as tmpdir:
+            start = os.getcwd()
+            try:
+                os.chdir(tmpdir)
+                fname = _write_activity_csv(b, c, 't')
+                merged = pd.read_csv(fname)
+            finally:
+                os.chdir(start)
+        self.assertEqual(list(merged.columns), ['time [s]', 'time [d]', 'boxB_activity [Bq]', 'boxC_activity [Bq]'])
+
+
+class TestBoxBCDeckGrid(unittest.TestCase):
+
+    def test_first_time_point_is_after_start(self):
+        from leaky_box_origen.LeakyBox import DecayBoxB
+        box = DecayBoxB({'xe-135': 1.0}, 1.0)
+        box.DECAY_steps = 8
+        box.DECAY_start_seconds = 100.0
+        box.DECAY_end_seconds = 800.0
+        deck = box.origen_deck()
+        self.assertIn('t=[5I 200.0 800.0]', deck)  # 7 times after the start state: positions 2..8
+        self.assertIn('start=100.0', deck)
+

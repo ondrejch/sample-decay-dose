@@ -47,6 +47,10 @@ DEFAULT_MAX_MISSING_DCF_FRACTION: float = 0.05
 # types F/M/S per nuclide (journal method). The Type-F table
 # (dcf_icrp72_inhalation_adult.csv) is lower for insoluble forms.
 DEFAULT_ICRP72_INHALATION_CSV: str = 'dcf_icrp72_inhalation_adult_max.csv'
+# ICRP-72 adult immersion (cloudshine) table, the default for the noble-gas dose.
+DEFAULT_ICRP72_IMMERSION_CSV: str = 'dcf_icrp72_immersion_adult.csv'
+# Adult breathing rate of the journal method: 22.2 m^3/d (ICRP-66 daily average) in m^3/s.
+BREATHING_RATE_M3_S: float = 22.2 / 86400.0
 
 
 class Origen:
@@ -323,9 +327,12 @@ class DecayBoxB(Origen):
                 feed += f'{k}={v} '
             feed += ']'
 
+        # DECAY_steps F71 positions: the start state plus DECAY_steps - 1 evenly spaced times after it. The list
+        # begins one step after start, because ORIGEN stores the start state itself as position 1.
         time_interp_steps = self.DECAY_steps - 3
         if time_interp_steps < 1:
             raise ValueError("Too few time steps")
+        first_time = self.DECAY_start_seconds + (self.DECAY_end_seconds - self.DECAY_start_seconds) / (self.DECAY_steps - 1)
 
         origen_output = f'''=shell
 cp -r ${{INPDIR}}/{self.ATOM_DENS_file_name_Origen} .
@@ -356,7 +363,7 @@ case {{
     }}
     time {{
         units=SECONDS
-        t=[{time_interp_steps}I {self.DECAY_start_seconds} {self.DECAY_end_seconds}]
+        t=[{time_interp_steps}I {first_time} {self.DECAY_end_seconds}]
         start={self.DECAY_start_seconds}
     }}
 {removal} 
@@ -746,7 +753,8 @@ def _case_dir_name(box: str, run_prefix: str | None, step: int | None = None) ->
 
 def _run_prefix_from_box_json(box_json_path: str) -> str | None:
     # Infer the run prefix from a box json5 name written by _out_name, e.g. boxB_xe135.json5 -> xe135.
-    stem = Path(box_json_path).name.split('.')[0]
+    name = Path(box_json_path).name
+    stem = name[:-len('.json5')] if name.endswith('.json5') else Path(box_json_path).stem
     if '_' in stem:
         return stem.split('_', 1)[1] or None
     return None
@@ -783,8 +791,9 @@ def _activity_timeseries_from_box_json(box_json_path: str, case_prefix: str,
         case_dirs = _step_case_dirs(case_prefix, k_int, run_prefix)
         f71_path = _find_case_f71(case_dirs, search_roots=[box_root])
         if f71_path is None:
-            print(f"Warning: no F71 found for {case_prefix} step {k_int:04d}")
-            total_bq = 0.0
+            warnings.warn(f"No F71 found for {case_prefix} step {k_int:04d} (searched {case_dirs} under {box_root}); "
+                          f"its activity is NaN", stacklevel=2)
+            total_bq = float('nan')
         else:
             total_bq = _total_activity_from_f71(f71_path, position)
         rows.append({
@@ -804,12 +813,11 @@ def _write_activity_csv(pd_B_act: pd.DataFrame, pd_C_act: pd.DataFrame, out_pref
 
     merged = pd.merge_asof(
         pd_B_act.sort_values('time [s]'),
-        pd_C_act.sort_values('time [s]'),
+        pd_C_act.sort_values('time [s]').drop(columns=['time [d]'], errors='ignore'),
         on='time [s]',
         suffixes=('_B', '_C'),
     )
     merged.rename(columns={
-        'time [d]_B': 'time [d]',
         'activity [Bq]_B': 'boxB_activity [Bq]',
         'activity [Bq]_C': 'boxC_activity [Bq]',
     }, inplace=True)
@@ -838,11 +846,10 @@ def _activity_timeseries_per_nuclide_from_box_json(box_json_path: str, case_pref
         time_s = float(rec['time'])
         case_dirs = _step_case_dirs(case_prefix, k_int, run_prefix)
         f71_path = _find_case_f71(case_dirs, search_roots=[box_root])
-        activity = {}
-        if f71_path is None:
-            print(f"Warning: no F71 found for {case_prefix} step {k_int:04d}")
-        else:
-            activity = get_burned_nuclide_data(f71_path, position, f71units='becq')
+        if f71_path is None:  # a zero row here would integrate a hole into the cumulative dose
+            raise FileNotFoundError(f"No F71 found for {case_prefix} step {k_int:04d}; searched {case_dirs} under "
+                                    f"{box_root}. Rerun the leaky-box calculation or pass run_prefix.")
+        activity = get_burned_nuclide_data(f71_path, position, f71units='becq')
         row = {'time [s]': time_s, 'time [d]': time_s / float(24 * 60 * 60)}
         row.update(activity)
         rows.append(row)
@@ -941,6 +948,13 @@ def _chi_q_at_time(time_s: float, chi_q_schedule: float | list[tuple[float, floa
     return float(chi_q_schedule[-1][1])
 
 
+def _chi_q_boundaries(chi_q_schedule: float | list[tuple[float, float]]) -> list[float]:
+    # Times at which a piecewise-constant chi/Q schedule changes value; none for a scalar.
+    if isinstance(chi_q_schedule, numbers.Real):
+        return []
+    return sorted(float(t_end) for t_end, _ in chi_q_schedule)
+
+
 def chi_q_schedule_rg145_400m() -> list[tuple[float, float]]:
     # RG 1.145 (PAVAN) 95th-percentile ground-level chi/Q at 400 m.
     # Values: 0-2h, 0-8h, 8-24h, 1-4d, 4-30d, annual.
@@ -974,7 +988,11 @@ def compute_dose_timeseries(activity_df: pd.DataFrame, dcf_inhal_map: dict[str, 
     Inhalation: dose_rate [Sv/s] = chi/Q [s/m^3] * breathing_rate [m^3/s] * sum_i( Q_i [Bq/s] * DCF_i [Sv/Bq] ).
     Immersion: dose_rate [Sv/s] = chi/Q * sum_i( Q_i * DCF_imm_i [Sv/day per (Bq/m^3)] ) / 86400.
 
-    Rows are sorted by time and integrated by position with the trapezoidal rule, so any index works.
+    Rows are sorted by time, so any index works. The cumulative doses integrate chi/Q(t) times the
+    DCF-weighted release sum, with the sum interpolated linearly between rows and every interval split at the
+    chi/Q schedule boundaries. The result is exact for a linear release under a stepwise chi/Q, also when a
+    boundary (2 h, 8 h, 24 h, ...) falls between two ORIGEN time points. The dose-rate columns hold the
+    instantaneous rates at the row times.
     Column 'activity_fraction_without_dcf [-]' is the fraction of the positive release rate at each
     step carried by nuclides that have neither an inhalation nor an immersion DCF; that dose is
     missing from the totals. A warning names the largest such nuclides whenever the fraction is
@@ -1030,17 +1048,29 @@ def compute_dose_timeseries(activity_df: pd.DataFrame, dcf_inhal_map: dict[str, 
     })
     out['dose_rate [Sv/s]'] = out['dose_rate_inhalation [Sv/s]'] + out['dose_rate_immersion [Sv/s]']
 
-    # Integrate cumulative doses (Sv) using the trapezoidal rule over row positions.
-    def integrate(col: str) -> np.ndarray:
-        rate = out[col].to_numpy(dtype=float)
-        if len(rate) == 0:
-            return rate
-        steps = 0.5 * (rate[1:] + rate[:-1]) * np.diff(time_s)
-        return np.concatenate(([0.0], np.cumsum(steps)))
+    # Cumulative doses [Sv]: integral of chi/Q(t) * factor * S(t), S the DCF-weighted release sum, linear between
+    # rows. Each row interval is split at the schedule boundaries, where chi/Q is constant on every piece.
+    boundaries = _chi_q_boundaries(chi_q_schedule)
 
-    out['dose_inhalation [Sv]'] = integrate('dose_rate_inhalation [Sv/s]')
-    out['dose_immersion [Sv]'] = integrate('dose_rate_immersion [Sv/s]')
-    out['dose [Sv]'] = integrate('dose_rate [Sv/s]')
+    def integrate(weighted_sum: np.ndarray, factor: float) -> np.ndarray:
+        cumulative = np.zeros(len(time_s))
+        for i in range(1, len(time_s)):
+            t0, t1 = time_s[i - 1], time_s[i]
+            cumulative[i] = cumulative[i - 1]
+            if not t1 > t0:
+                continue
+            s0, s1 = weighted_sum[i - 1], weighted_sum[i]
+            cuts = [t0] + [b for b in boundaries if t0 < b < t1] + [t1]
+            for a, b in zip(cuts, cuts[1:]):
+                s_a = s0 + (s1 - s0) * (a - t0) / (t1 - t0)
+                s_b = s0 + (s1 - s0) * (b - t0) / (t1 - t0)
+                chi = _chi_q_at_time(0.5 * (a + b), chi_q_schedule)
+                cumulative[i] += chi * factor * 0.5 * (s_a + s_b) * (b - a)
+        return cumulative
+
+    out['dose_inhalation [Sv]'] = integrate(inhal_sum, breathing_rate_m3_s)
+    out['dose_immersion [Sv]'] = integrate(imm_sum, 1.0 / 86400.0)
+    out['dose [Sv]'] = out['dose_inhalation [Sv]'] + out['dose_immersion [Sv]']
     out['dose [rem]'] = out['dose [Sv]'] * 100.0
     return out
 
@@ -1151,10 +1181,32 @@ def plot_dose_rate_comparison(csv_a: str, csv_b: str, label_a: str, label_b: str
     return fname
 
 
+def _removal_rate_from_run(box_json_path: str, case_prefix: str, run_prefix: str | None) -> float:
+    # The removal rate ORIGEN applied to this box, from the rates file _run_simulation writes next to the box json.
+    rates_path = os.path.join(os.path.dirname(os.path.abspath(box_json_path)),
+                              _out_name(run_prefix, 'leaky_boxes_rates', '.json5'))
+    if not os.path.isfile(rates_path):
+        raise ValueError(f"removal_rate_s is needed for activity_representation='inventory_bq', and the run did not "
+                         f"leave {rates_path}. Pass removal_rate_s explicitly (the ORIGEN removal rate of "
+                         f"{case_prefix}, PCTperDAY for box A and 0.1 * PCTperDAY for box B in run_test).")
+    with open(rates_path, 'r') as f:
+        rates = json5.load(f)
+    try:
+        rate = float(rates[case_prefix]['removal_rate_s'])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(f"{rates_path} has no removal rate for {case_prefix}") from None
+    if not rate > 0.0:
+        raise ValueError(f"{case_prefix} has no removal in the ORIGEN run ({rates_path}), so its inventory is not "
+                         f"released at a rate of its own. Pass removal_rate_s explicitly to use rate * A(t) as a "
+                         f"release-rate surrogate, or use case_prefix='box_B' for the environmental release.")
+    return rate
+
+
 def compute_dose_from_box(box_json_path: str, case_prefix: str,
                           dcf_inhal_csv: str = DEFAULT_ICRP72_INHALATION_CSV,
-                          chi_q_schedule: float | list[tuple[float, float]] = 1.0,
-                          breathing_rate_m3_s: float = 3.3e-4, dcf_immersion_csv: str | None = None,
+                          chi_q_schedule: float | list[tuple[float, float]] | None = None,
+                          breathing_rate_m3_s: float = BREATHING_RATE_M3_S,
+                          dcf_immersion_csv: str | None = DEFAULT_ICRP72_IMMERSION_CSV,
                           out_prefix: str | None = None,
                           activity_representation: str = 'inventory_bq',
                           removal_rate_s: float | None = None,
@@ -1167,12 +1219,24 @@ def compute_dose_from_box(box_json_path: str, case_prefix: str,
     The default inhalation table is the conservative ICRP-72 maximum across types F/M/S
     (DEFAULT_ICRP72_INHALATION_CSV), matching the journal method for unknown chemical forms.
     Pass dcf_icrp72_inhalation_adult.csv explicitly for the Type-F (fast-clearance) table.
+    The defaults of the journal method: chi/Q from chi_q_schedule_rg145_400m() (RG 1.145, 400 m), the breathing
+    rate BREATHING_RATE_M3_S (22.2 m^3/d) and the ICRP-72 immersion table for the noble gases.
+
+    The release to the environment is the leak out of box B, removal_rate_s(box B) * A_B(t), so the
+    environmental dose comes from case_prefix='box_B' with the default 'inventory_bq'. Box C collects that
+    release and has no removal, so its inventory is a cumulative amount. The journal method treats
+    removal_rate_s * A_C(t) as a conservative release-rate surrogate; box C with 'inventory_bq' therefore needs an
+    explicit removal_rate_s and warns that the result is a surrogate.
 
     Args:
+        chi_q_schedule: A constant chi/Q [s/m^3] or a list of (t_end_s, chi_q) steps; None (default) selects
+            chi_q_schedule_rg145_400m().
+        dcf_immersion_csv: Immersion table; None drops the immersion dose of the noble gases.
         activity_representation: `inventory_bq` or `release_rate_bq_s`.
             - `inventory_bq`: activity in each nuclide column is Bq and is converted using `removal_rate_s`.
             - `release_rate_bq_s`: activity in each nuclide column is already Bq/s.
-        removal_rate_s: Required when `activity_representation='inventory_bq'`.
+        removal_rate_s: Release constant [1/s] of the box for `inventory_bq`. None reads the rate ORIGEN applied
+            to the box from `leaky_boxes_rates_<prefix>.json5`, which `_run_simulation` writes next to the box json.
         released_elements: Elements that leak at `removal_rate_s` (default LEAKED_ELEMENTS, the elements
             the ORIGEN deck removes). Other nuclides are retained and contribute no release.
         activity_scale: Multiplier applied to the F71 activities before the dose calculation.
@@ -1190,6 +1254,15 @@ def compute_dose_from_box(box_json_path: str, case_prefix: str,
     box_json_path = _resolve_run_artifact(box_json_path)
     if not os.path.isfile(box_json_path):
         raise FileNotFoundError(f"Box JSON not found: {box_json_path}")
+    if chi_q_schedule is None:
+        chi_q_schedule = chi_q_schedule_rg145_400m()
+    if activity_representation == 'inventory_bq' and case_prefix.lower().startswith('box_c'):
+        warnings.warn("Box C has no removal, so removal_rate_s * A_C(t) is a conservative release-rate surrogate "
+                      "(journal method), not the physical release. The environmental release is the box-B leak: "
+                      "case_prefix='box_B'.", stacklevel=2)
+    if activity_representation == 'inventory_bq' and removal_rate_s is None:
+        removal_rate_s = _removal_rate_from_run(box_json_path, case_prefix,
+                                                run_prefix or _run_prefix_from_box_json(box_json_path))
     dcf_inhal_csv = _resolve_input_file(dcf_inhal_csv, LEAKY_BOX_DATA_DIR)
     dcf_immersion_csv = _resolve_input_file(dcf_immersion_csv, LEAKY_BOX_DATA_DIR) if dcf_immersion_csv else None
     with _in_directory(os.path.dirname(os.path.abspath(box_json_path))):
@@ -1198,8 +1271,6 @@ def compute_dose_from_box(box_json_path: str, case_prefix: str,
         activity_df = _activity_timeseries_per_nuclide_from_box_json(box_json_path, case_prefix,
                                                                      run_prefix=run_prefix)
         if activity_representation == 'inventory_bq':
-            if removal_rate_s is None:
-                raise ValueError("removal_rate_s must be provided when activity_representation='inventory_bq'")
             activity_df = _inventory_to_release_rate(activity_df, removal_rate_s, released_elements)
         elif activity_representation != 'release_rate_bq_s':
             raise ValueError("activity_representation must be 'inventory_bq' or 'release_rate_bq_s'")
@@ -1298,6 +1369,10 @@ def _run_simulation(box_a: DecayBoxA, apply_volume_scaling: bool, do_skip_calcs:
         json5.dump(box_A.adens, f, indent=4)
     with open(_out_name(out_prefix, 'boxA_leak_rate', '.json5'), 'w') as f:  # Save to json
         json5.dump(box_A.leak_rates, f, indent=4)
+    with open(_out_name(out_prefix, 'leaky_boxes_rates', '.json5'), 'w') as f:  # removal rates for the dose step
+        json5.dump({'box_A': {'removal_rate_s': box_A_leak_rate}, 'box_B': {'removal_rate_s': box_B_leak_rate},
+                    'box_C': {'removal_rate_s': 0.0}, 'volume_cm3': volume,
+                    'released_elements': list(LEAKED_ELEMENTS)}, f, indent=4)
 
     origen_box_B: dict = {}  # ORIGEN runs that describe decay of box_B nuclides without leak
     box_B: dict = {}
