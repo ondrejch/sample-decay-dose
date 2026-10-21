@@ -17,26 +17,29 @@ def make_default_mixer():
 
 
 def test_steel_volume_fraction_matches_unit_cell_geometry():
-    """ Two bar segments per cell minus one Steinmetz crossing volume 2 d^3 / 3 """
+    """ Two stacked bar families: one segment of each per cell of area sx * sy and height 2 d, no shared volume """
     mixer = make_default_mixer()
     d, sx, sy = 1.59, 30.48, 15.24
-    expected = (math.pi * d ** 2 * (sx + sy) / 4.0 - 2.0 * d ** 3 / 3.0) / (sx * sy * d)
+    expected = (math.pi * d ** 2 * (sx + sy) / 4.0) / (sx * sy * 2.0 * d)
+    assert mixer.layer_thickness_cm == pytest.approx(2.0 * d)
     assert mixer.steel_volume_fraction() == pytest.approx(expected, rel=1e-12)
+    assert mixer.steel_volume_fraction() == pytest.approx(0.06146, abs=5e-5)
+    assert mixer.mixture_density() == pytest.approx(2.641, abs=5e-4)
 
 
 def test_steel_volume_fraction_hand_value():
-    """ d = 2 cm, 10 cm square grid: pi/10 - 8/300 = 0.2874925987 """
+    """ d = 2 cm, 10 cm square grid: pi * 2 * 20 / (8 * 100) = pi / 20 """
     mixer = crm.ConcreteRebarMixer(rebar_diameter_cm=2.0, spacing_x_cm=10.0, spacing_y_cm=10.0)
-    assert mixer.steel_volume_fraction() == pytest.approx(0.2874925987, rel=1e-9)
+    assert mixer.steel_volume_fraction() == pytest.approx(math.pi / 20.0, rel=1e-12)
 
 
-def test_steel_volume_fraction_removes_one_crossing_at_defaults():
-    """ The crossing overlap is 2 d^2 / (3 sx sy), about 2.95% of the uncorrected fraction """
+def test_steel_mass_per_area_counts_both_families_in_full():
+    """ Steel mass per unit lid area is the sum of the two bar families; bars in a mat share no volume """
+    mixer = make_default_mixer()
     d, sx, sy = 1.59, 30.48, 15.24
-    uncorrected = math.pi * d * (sx + sy) / (4.0 * sx * sy)
-    overlap = 2.0 * d ** 2 / (3.0 * sx * sy)
-    assert make_default_mixer().steel_volume_fraction() == pytest.approx(uncorrected - overlap, rel=1e-12)
-    assert overlap / uncorrected == pytest.approx(0.0295, abs=5e-4)
+    per_area = mixer.steel_volume_fraction() * mixer.layer_thickness_cm * crm.REBAR_STEEL_DENSITY
+    expected = crm.REBAR_STEEL_DENSITY * math.pi * d ** 2 / 4.0 * (1.0 / sy + 1.0 / sx)  # g/cm^2
+    assert per_area == pytest.approx(expected, rel=1e-12)
 
 
 def test_mixture_density_is_volume_weighted():
@@ -158,6 +161,6 @@ def test_impossible_geometry_raises():
 
 
 def test_touching_bars_stay_below_unity():
-    """ At d = spacing the fraction is pi/2 - 2/3 """
+    """ At d = spacing each sub-layer is a row of touching cylinders, so the fraction is pi/4 """
     mixer = crm.ConcreteRebarMixer(10.0, 10.0, 10.0)
-    assert mixer.steel_volume_fraction() == pytest.approx(math.pi / 2.0 - 2.0 / 3.0, rel=1e-12)
+    assert mixer.steel_volume_fraction() == pytest.approx(math.pi / 4.0, rel=1e-12)

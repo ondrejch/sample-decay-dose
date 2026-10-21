@@ -48,7 +48,7 @@ def _assert_mixer(calc, params):
     assert calc.mixer.rebar_diameter_cm == params['rebar_diameter_cm']
     assert calc.mixer.spacing_x_cm == params['spacing_x_cm']
     assert calc.mixer.spacing_y_cm == params['spacing_y_cm']
-    assert calc.mixed_thickness_cm == params['rebar_diameter_cm']
+    assert calc.mixed_thickness_cm == 2.0 * params['rebar_diameter_cm']
 
 
 def test_collect_dose_scales_with_decay_days(mocked_chain):
@@ -115,9 +115,21 @@ def test_main_preview_uses_mixer_params(custom_mixer, monkeypatch, tmp_path, cap
     monkeypatch.setattr(sys, 'argv', ['run_contact_dose.py'])
     driver.main()
     out = capsys.readouterr().out
-    mixed_volume = driver.PARAMS['length_cm'] * driver.PARAMS['width_cm'] * custom_mixer['rebar_diameter_cm']
+    mixed_volume = driver.PARAMS['length_cm'] * driver.PARAMS['width_cm'] * 2.0 * custom_mixer['rebar_diameter_cm']
     assert f'volume={mixed_volume:.6e}' in out
     assert os.listdir(str(tmp_path)) == []
+
+
+def test_lib_pos_is_forwarded(mocked_chain, monkeypatch):
+    monkeypatch.setattr(sys, 'argv', ['run_contact_dose.py', '--lib', 'fake.f33', '--lib-pos', '4'])
+    driver.main()
+    (calc,) = mocked_chain['calcs']
+    assert calc.irradiation_lib_pos == 4
+    assert 'pos=4' in calc.origen_deck()
+    monkeypatch.setattr(sys, 'argv', ['run_contact_dose.py', '--lib', 'fake.f33'])
+    driver.main()
+    assert mocked_chain['calcs'][-1].irradiation_lib_pos is None  # ORIGEN default, set 1
+    assert 'pos=' not in mocked_chain['calcs'][-1].origen_deck()
 
 
 @pytest.mark.parametrize('text, expected', [('1,30,90', [1.0, 30.0, 90.0]), ('1,30,', [1.0, 30.0]),

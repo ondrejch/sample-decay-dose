@@ -8,8 +8,9 @@ The class chains the two-step workflow from concrete_irrad/README.md:
    decay of the two modeled lid regions, the bottom concrete slab and the
    homogenized concrete-rebar layer.
 2. MAVRIC fixed-source photon transport with point-detector dose at the top
-   surface of the lid, using ORIGEN spectral distributions read from the F71
-   files.
+   surface of the lid (the upper concrete slab when top_thickness_cm > 0,
+   otherwise the rebar mat), using ORIGEN spectral distributions read from
+   the F71 files.
 
 Deck structure follows the conventions of sample_decay_dose.SampleDose
 (OrigenIrradiation chaining, DoseEstimator useNormConst sources and response
@@ -17,6 +18,7 @@ parsing). The ORIGEN deck runs under SCALE 6.3.3, checked with a stand-in F33.
 The MAVRIC deck has not been run yet, so check its first output before relying
 on the dose.
 """
+import hashlib
 import os
 import re
 import shutil
@@ -33,11 +35,16 @@ class ConcreteLidContactDose:
     """
     Activation and contact gamma dose for a three-slice reactor-cavity lid.
 
-    The modeled regions are the bottom concrete slab and the homogenized
-    concrete-rebar mixed layer; the upper concrete is excluded per the README.
-    Each region is activated in its own ORIGEN case pair. Within one ORIGEN
-    input the cases chain: each irradiation case carries an explicit fresh
-    material, and each following decay case continues from the preceding case.
+    The activated regions are the bottom concrete slab and the homogenized
+    concrete-rebar mixed layer. Each is activated in its own ORIGEN case pair.
+    Within one ORIGEN input the cases chain: each irradiation case carries an
+    explicit fresh material, and each following decay case continues from the
+    preceding case.
+    The upper concrete slab (top_thickness_cm) is farthest from the cavity and
+    is carried as an unactivated shield only, with no ORIGEN case and no
+    source. With top_thickness_cm = 0 (the default) the detector sits
+    contact_standoff_cm above the rebar mat, which is the lid top only when
+    the lid ends at the mat.
     """
 
     def __init__(self,
@@ -45,6 +52,7 @@ class ConcreteLidContactDose:
                  length_cm: float = 100.0,
                  width_cm: float = 100.0,
                  bottom_thickness_cm: float = 5.0,
+                 top_thickness_cm: float = 0.0,
                  mixer: ConcreteRebarMixer | None = None,
                  irradiation_lib_f33: str = '',
                  irradiation_lib_pos: int | None = None,
@@ -58,6 +66,8 @@ class ConcreteLidContactDose:
                  batches: int = 10):
         if length_cm <= 0 or width_cm <= 0 or bottom_thickness_cm <= 0:
             raise ValueError("Lid dimensions must be positive")
+        if top_thickness_cm < 0:
+            raise ValueError(f"top_thickness_cm must be non-negative, got {top_thickness_cm}")
         if irradiation_days <= 0:
             raise ValueError(f"irradiation_days must be positive, got {irradiation_days}")
         if decay_days < 0:
@@ -69,7 +79,8 @@ class ConcreteLidContactDose:
             if mixer is not None else ConcreteRebarMixer(rebar_diameter_cm=1.59,
                                                          spacing_x_cm=30.48, spacing_y_cm=15.24)
         self.bottom_thickness_cm: float = float(bottom_thickness_cm)
-        self.mixed_thickness_cm: float = self.mixer.rebar_diameter_cm
+        self.mixed_thickness_cm: float = self.mixer.layer_thickness_cm
+        self.top_thickness_cm: float = float(top_thickness_cm)
         self.irradiation_lib_f33: str = irradiation_lib_f33
         self.irradiation_lib_pos: int | None = irradiation_lib_pos
         self.irradiation_flux: float = float(irradiation_flux)
@@ -84,8 +95,6 @@ class ConcreteLidContactDose:
 
         self.debug: int = 3
         self.cwd: str = os.getcwd()
-        self.case_dir: str = f"run_{name}_{irradiation_days:.5}d-{decay_days:.5}d"
-        self.case_dir_mavric: str = self.case_dir + '_MAVRIC'
         self.ORIGEN_input_file_name: str = f'{name}_activation.inp'
         self.MAVRIC_input_file_name: str = f'{name}_dose.inp'
 
@@ -109,8 +118,22 @@ class ConcreteLidContactDose:
                 wt_fractions_to_atom_densities(self.mixer.concrete_wt_fractions,
                                                self.mixer.concrete_density_g_cc)),
             'mixed_layer': self.mixer.get_atom_densities()}
+        self.top_slab_comp_file: str = f'{name}_top_adens_mavric.inp'  # unactivated concrete, mix 3
+        self.top_slab_mix_id: int = 3
+        # The case directory carries the irradiation and cooling times plus a hash of everything else the
+        # ORIGEN deck depends on, so two models with the same times do not share (and reuse) one deck.
+        self.case_dir: str = f"run_{name}_{irradiation_days:.5}d-{decay_days:.5}d-{self._activation_hash()}"
+        self.case_dir_mavric: str = self.case_dir + '_MAVRIC'
         self.decayed_adens: dict = {}
         self.responses: dict = {}
+
+    def _activation_hash(self) -> str:
+        """ Short hash of the ORIGEN inputs: flux, library, time grid, region volumes and fresh compositions """
+        key: str = repr((self.irradiation_flux, os.path.basename(self.irradiation_lib_f33), self.irradiation_lib_pos,
+                         self.irradiation_steps, self.f71_position,
+                         sorted((r, self.regions[r]['volume']) for r in self.regions),
+                         sorted((r, sorted(a.items())) for r, a in self.fresh_adens.items())))
+        return hashlib.sha1(key.encode()).hexdigest()[:8]
 
     @property
     def MAVRIC_out_file_name(self) -> str:
@@ -238,9 +261,8 @@ case(dec_{region}) {{
             os.chdir(self.cwd)
 
     def run_activation(self, nmpi: int = 1):
-        """ Runs the ORIGEN activation-decay chain and reads back decayed atom densities """
-        if not os.path.isfile(os.path.join(self.cwd, self.case_dir, self.ORIGEN_input_file_name)):
-            self.write_inputs()
+        """ Writes the ORIGEN inputs, runs the activation-decay chain and reads back decayed atom densities """
+        self.write_inputs()  # always, so the deck on disk matches this object
         os.chdir(os.path.join(self.cwd, self.case_dir))
         try:
             if self.debug > 0:
@@ -266,17 +288,26 @@ case(dec_{region}) {{
 
         Geometry bodies and source cuboids list bounds max-first,
         +X -X +Y -Y +Z -Z, per the KENO-VI body definition and the Monaco
-        source-shape table.
+        source-shape table. The importance-map grid spans the whole problem
+        boundary, so Monaco never loses a particle inside the geometry.
         """
         hx: float = self.length_cm / 2.0
         hy: float = self.width_cm / 2.0
         z_bot_lo, z_bot_hi = 0.0, self.bottom_thickness_cm
         z_mix_hi: float = z_bot_hi + self.mixed_thickness_cm
+        z_top_hi: float = z_mix_hi + self.top_thickness_cm  # lid top surface
         box_pad: float = 10.0 + self.contact_standoff_cm
-        bx, by, bz = hx + box_pad, hy + box_pad, z_mix_hi + box_pad  # boundary half-extents
-        det_z: float = z_mix_hi + self.contact_standoff_cm
+        bx, by, bz = hx + box_pad, hy + box_pad, z_top_hi + box_pad  # boundary half-extents
+        det_z: float = z_top_hi + self.contact_standoff_cm
 
+        top_slab_body: str = ''
+        top_slab_void: str = ''
         comp_includes: str = ''
+        if self.top_thickness_cm > 0.0:
+            comp_includes += f'<{self.top_slab_comp_file}\n'
+            top_slab_body = (f'\n    cuboid 13 {hx} {-hx} {hy} {-hy} {z_top_hi} {z_mix_hi}'
+                             f'\n    media {self.top_slab_mix_id} 1 13')
+            top_slab_void = ' -13'
         distributions: str = ''
         sources: str = ''
         src_id: int = 1
@@ -326,9 +357,9 @@ global unit 1
     cuboid 11 {hx} {-hx} {hy} {-hy} {z_bot_hi} {z_bot_lo}
     media 2 1 11
     cuboid 12 {hx} {-hx} {hy} {-hy} {z_mix_hi} {z_bot_hi}
-    media 1 1 12
+    media 1 1 12{top_slab_body}
     cuboid 99999 {bx} {-bx} {by} {-by} {bz} {-bz}
-    media 0 1 99999 -11 -12
+    media 0 1 99999 -11 -12{top_slab_void}
 boundary 99999
 end geometry
 
@@ -343,13 +374,13 @@ read definitions
 {distributions}
 
     gridGeometry 1
-        title="Grid over the lid, detector at top center"
+        title="Grid over the lid and the problem boundary, detector at top center"
         xLinear 5 {-hx} {hx}
         yLinear 5 {-hy} {hy}
-        zLinear 8 {z_bot_lo} {z_mix_hi + box_pad}
-        xPlanes {-hx} {hx} end
-        yPlanes {-hy} {hy} end
-        zPlanes {z_bot_lo} {z_bot_hi} {z_mix_hi} {det_z} end
+        zLinear 8 {z_bot_lo} {bz}
+        xPlanes {-bx} {-hx} {hx} {bx} end
+        yPlanes {-by} {-hy} {hy} {by} end
+        zPlanes {-bz} {z_bot_lo} {z_bot_hi} {z_mix_hi} {z_top_hi} {det_z} {det_z + 0.5} {bz} end
     end gridGeometry
 end definitions
 
@@ -394,6 +425,10 @@ end
                 with open(r['mavric_comp_file'], 'w') as f:
                     f.write(atom_dens_for_mavric(self.decayed_adens[region], r['mix_id'],
                                                  self.sample_temperature_K))
+            if self.top_thickness_cm > 0.0:  # unactivated concrete above the mat, a shield only
+                with open(self.top_slab_comp_file, 'w') as f:
+                    f.write(atom_dens_for_mavric(self.fresh_adens['bottom_slab'], self.top_slab_mix_id,
+                                                 self.sample_temperature_K))
             with open(self.MAVRIC_input_file_name, 'w') as f:
                 f.write(self.mavric_deck())
             if self.debug > 0:
@@ -433,7 +468,8 @@ end
 
     @property
     def contact_dose(self) -> dict:
-        """ Contact photon dose at the lid top center [rem/h] with its absolute 1-sigma 'stdev' [rem/h] """
+        """ Contact photon dose [rem/h] with its absolute 1-sigma 'stdev' [rem/h] at contact_standoff_cm above
+        the lid top: the upper slab when top_thickness_cm > 0, otherwise the rebar mat """
         if '2' not in self.responses:
             raise RuntimeError("No responses parsed; call get_responses() first")
         r: dict = self.responses['2']

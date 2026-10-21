@@ -103,7 +103,87 @@ def test_cuboids_list_bounds_max_first(calc):
         b = _cuboid_bounds(deck, body)
         assert b[0] > b[1] and b[2] > b[3] and b[4] > b[5], (body, b)
     assert _cuboid_bounds(deck, '11') == pytest.approx([50.0, -50.0, 50.0, -50.0, 5.0, 0.0])
-    assert _cuboid_bounds(deck, '12') == pytest.approx([50.0, -50.0, 50.0, -50.0, 5.0 + 1.59, 5.0])
+    assert _cuboid_bounds(deck, '12') == pytest.approx([50.0, -50.0, 50.0, -50.0, 5.0 + 2 * 1.59, 5.0])
+
+
+def _plane_values(deck: str, keyword: str) -> list[float]:
+    grid = deck[deck.index('gridGeometry 1'):deck.index('end gridGeometry')]
+    m = re.search(rf'^\s*{keyword}\s+(.*?)\bend\b', grid, flags=re.M | re.S)
+    assert m is not None, keyword
+    return [float(x) for x in m.group(1).split()]
+
+
+def test_importance_grid_spans_the_problem_boundary(calc):
+    deck = calc.mavric_deck()
+    bx, _, by, _, bz, bz_lo = _cuboid_bounds(deck, '99999')
+    assert min(_plane_values(deck, 'xPlanes')) == pytest.approx(-bx) and max(_plane_values(deck, 'xPlanes')) == pytest.approx(bx)
+    assert min(_plane_values(deck, 'yPlanes')) == pytest.approx(-by) and max(_plane_values(deck, 'yPlanes')) == pytest.approx(by)
+    z_planes = _plane_values(deck, 'zPlanes')
+    assert min(z_planes) == pytest.approx(bz_lo) and max(z_planes) == pytest.approx(bz)
+    det_z = float(re.search(r'position 0.0 0.0 (\S+)', deck).group(1))
+    assert any(z > det_z for z in z_planes) and any(z < det_z for z in z_planes)
+
+
+def test_top_slab_is_a_shield_above_the_mat(tmp_path, monkeypatch):
+    """ top_thickness_cm adds an unactivated concrete body between the rebar mat and the detector """
+    monkeypatch.chdir(tmp_path)
+    with open('x.f33', 'wb') as f:
+        f.write(b'fake')
+    calc = cld.ConcreteLidContactDose(top_thickness_cm=20.0, irradiation_lib_f33='x.f33')
+    deck = calc.mavric_deck()
+    z_mat = calc.bottom_thickness_cm + calc.mixed_thickness_cm
+    assert _cuboid_bounds(deck, '13') == pytest.approx([50.0, -50.0, 50.0, -50.0, z_mat + 20.0, z_mat])
+    assert 'media 3 1 13' in deck and 'media 0 1 99999 -11 -12 -13' in deck
+    assert f'position 0.0 0.0 {z_mat + 20.0 + 0.1}' in deck
+    assert '<lid_top_adens_mavric.inp' in deck
+    assert deck.count('origensBinaryConcentrationFile') == 2  # the top slab is not a source
+    assert 'case(irr_top' not in calc.origen_deck()
+    # run_mavric writes the top-slab composition as mix 3 of plain concrete
+    monkeypatch.setattr(cld, 'run_scale_or_raise', lambda deck_file, nmpi=1, context_dir='': True)
+    calc.decayed_adens = {r: {'co-60': 1e-10} for r in calc.regions}
+    os.makedirs(calc.case_dir, exist_ok=True)
+    for r in calc.regions.values():
+        open(os.path.join(calc.case_dir, r['f71']), 'w').close()
+    calc.run_mavric()
+    with open(os.path.join(calc.case_dir_mavric, 'lid_top_adens_mavric.inp')) as f:
+        lines = f.read().splitlines()
+    assert lines and all(' 3 0 ' in ln for ln in lines)
+    assert any(ln.startswith('o-16 3 ') for ln in lines)
+    # without a top slab there is no body 13 and no third composition file
+    bare = cld.ConcreteLidContactDose(irradiation_lib_f33='x.f33').mavric_deck()
+    assert 'cuboid 13' not in bare and 'lid_top_adens' not in bare
+    with pytest.raises(ValueError):
+        cld.ConcreteLidContactDose(top_thickness_cm=-1.0)
+
+
+def test_case_dir_tracks_the_activation_inputs(tmp_path, monkeypatch):
+    """ Models that differ in flux, geometry or composition do not share an ORIGEN case directory """
+    monkeypatch.chdir(tmp_path)
+    base = cld.ConcreteLidContactDose(irradiation_lib_f33='x.f33')
+    assert base.case_dir.startswith('run_lid_365.24d-30.0d-')
+    same = cld.ConcreteLidContactDose(irradiation_lib_f33='x.f33')
+    assert same.case_dir == base.case_dir
+    for kwargs in ({'irradiation_flux': 1e12}, {'bottom_thickness_cm': 20.0}, {'irradiation_lib_pos': 3},
+                   {'mixer': cld.ConcreteRebarMixer(2.0, 20.0, 20.0)}):
+        other = cld.ConcreteLidContactDose(irradiation_lib_f33='x.f33', **kwargs)
+        assert other.case_dir != base.case_dir, kwargs
+    top = cld.ConcreteLidContactDose(irradiation_lib_f33='x.f33', top_thickness_cm=10.0)
+    assert top.case_dir == base.case_dir  # the shield-only slab does not change the ORIGEN run
+
+
+def test_run_activation_rewrites_the_deck(tmp_path, monkeypatch):
+    """ run_activation() writes the deck of this object even when the case directory holds an older one """
+    monkeypatch.chdir(tmp_path)
+    open('x.f33', 'wb').close()
+    monkeypatch.setattr(cld, 'run_scale_or_raise', lambda deck_file, nmpi=1, context_dir='': True)
+    monkeypatch.setattr(cld, 'get_burned_nuclide_atom_dens', lambda f71, pos: {'co-60': 1e-10})
+    calc = cld.ConcreteLidContactDose(irradiation_lib_f33='x.f33', irradiation_flux=1e12)
+    os.makedirs(calc.case_dir)
+    with open(os.path.join(calc.case_dir, calc.ORIGEN_input_file_name), 'w') as f:
+        f.write('stale deck')
+    calc.run_activation()
+    with open(os.path.join(calc.case_dir, calc.ORIGEN_input_file_name)) as f:
+        assert '1000000000000.0' in f.read()
 
 
 def test_non_square_lid_boundary_uses_both_half_widths(tmp_path, monkeypatch):

@@ -9,8 +9,9 @@ sure SCALE_BIN points at a SCALE installation, and run:
 
 Add --scan 1,30,90,365 to compute the dose at several cooling times; results
 land in lid_contact_doses.csv. Add --nmpi N to pass N MPI tasks to each SCALE
-run. Without --lib the script only previews decks, built from the same PARAMS
-and MIXER_PARAMS as a real run.
+run and --lib-pos P to irradiate with cross-section set P of the F33 (set 1
+otherwise). Without --lib the script only previews decks, built from the same
+PARAMS and MIXER_PARAMS as a real run.
 """
 import argparse
 import csv
@@ -25,21 +26,26 @@ PARAMS: dict = {
     'length_cm': 100.0,          # lid span along x [cm]
     'width_cm': 100.0,           # lid span along y [cm]
     'bottom_thickness_cm': 6.0,  # concrete between cavity surface and rebar mat [cm]
+    'top_thickness_cm': 0.0,     # concrete above the rebar mat [cm], a shield only; 0 puts the detector on the mat
     'irradiation_flux': 1.0e10,  # cavity neutron flux at the lid [n/cm2/s]
     'irradiation_days': 365.24,  # operating time before shutdown [d]
+    # 'irradiation_lib_pos': 1,  # F33 cross-section set; see --lib-pos
 }
 MIXER_PARAMS: dict = {
-    'rebar_diameter_cm': 1.59,   # also the mixed-layer thickness [cm]
+    'rebar_diameter_cm': 1.59,   # the mixed layer is two diameters thick (stacked bar families) [cm]
     'spacing_x_cm': 30.48,
     'spacing_y_cm': 15.24,
 }
 # ---------------------------------------------------------------------------
 
 
-def build_calc(decay_days: float, lib_f33: str) -> ConcreteLidContactDose:
-    """ Lid model from the EDIT-ME block for one cooling time """
+def build_calc(decay_days: float, lib_f33: str, lib_pos: int | None = None) -> ConcreteLidContactDose:
+    """ Lid model from the EDIT-ME block for one cooling time; lib_pos overrides PARAMS['irradiation_lib_pos'] """
+    params: dict = dict(PARAMS)
+    if lib_pos is not None:
+        params['irradiation_lib_pos'] = lib_pos
     return ConcreteLidContactDose(decay_days=decay_days, irradiation_lib_f33=lib_f33,
-                                  mixer=ConcreteRebarMixer(**MIXER_PARAMS), **PARAMS)
+                                  mixer=ConcreteRebarMixer(**MIXER_PARAMS), **params)
 
 
 def parse_scan(text: str) -> list:
@@ -58,11 +64,11 @@ def collect_dose(calc: ConcreteLidContactDose, nmpi: int = 1) -> dict:
             'stdev_rem_per_h': dose['stdev']}
 
 
-def scan_decay_times(days_list: list, lib_f33: str, nmpi: int = 1) -> list:
+def scan_decay_times(days_list: list, lib_f33: str, nmpi: int = 1, lib_pos: int | None = None) -> list:
     """ Contact dose at each cooling time; ORIGEN is rerun per point """
     rows: list = []
     for days in days_list:
-        rows.append(collect_dose(build_calc(days, lib_f33), nmpi=nmpi))
+        rows.append(collect_dose(build_calc(days, lib_f33, lib_pos), nmpi=nmpi))
         print(f"decay {days:>8.2f} d : {rows[-1]['dose_rem_per_h']:.4e} "
               f"+/- {rows[-1]['stdev_rem_per_h']:.2e} rem/h")
     return rows
@@ -82,10 +88,14 @@ def main():
     parser.add_argument('--decay-days', type=float, default=30.0, help='Cooling time for a single run [d]')
     parser.add_argument('--csv', default='lid_contact_doses.csv', help='Output CSV for scans')
     parser.add_argument('--nmpi', type=int, default=1, help='MPI tasks per SCALE run')
+    parser.add_argument('--lib-pos', type=int, default=None,
+                        help='Cross-section set (position) on the F33 to irradiate with. ORIGEN uses set 1 when '
+                             'this is not given; a TRITON F33 holds one set per depletion step, listed by '
+                             '"obiwan info <file>.f33"')
     args = parser.parse_args()
 
     if not args.lib:
-        preview = build_calc(args.decay_days, 'cavity_spectrum.f33')
+        preview = build_calc(args.decay_days, 'cavity_spectrum.f33', args.lib_pos)
         print(preview.origen_deck())
         print(preview.mavric_deck())
         print("# Preview only; pass --lib <f33> to execute.", file=sys.stderr)
@@ -95,11 +105,11 @@ def main():
         days: list = parse_scan(args.scan)
         if not days:
             parser.error(f"--scan contains no cooling times: '{args.scan}'")
-        rows: list = scan_decay_times(days, args.lib, nmpi=args.nmpi)
+        rows: list = scan_decay_times(days, args.lib, nmpi=args.nmpi, lib_pos=args.lib_pos)
         write_csv(rows, args.csv)
         print(f"Wrote {args.csv}")
     else:
-        row: dict = collect_dose(build_calc(args.decay_days, args.lib), nmpi=args.nmpi)
+        row: dict = collect_dose(build_calc(args.decay_days, args.lib, args.lib_pos), nmpi=args.nmpi)
         print(f"\nContact photon dose after {row['decay_days']} d: "
               f"{row['dose_rem_per_h']:.4e} +/- {row['stdev_rem_per_h']:.2e} rem/h")
 

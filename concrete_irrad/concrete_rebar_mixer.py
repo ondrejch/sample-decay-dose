@@ -3,8 +3,9 @@
 Homogenized atom densities of a concrete-rebar layer.
 
 Computes the volume-averaged material for a horizontal slice that contains one
-mat of reinforcement bars. The slice thickness equals the bar diameter, so the
-mat fits inside a single homogenized layer.
+mat of reinforcement bars. A mat is two stacked families of bars, the x-running
+bars resting on the y-running bars, so the slice is two bar diameters thick and
+the bars share no volume.
 """
 import math
 import warnings
@@ -83,14 +84,15 @@ class ConcreteRebarMixer:
     Homogenizes one concrete-rebar layer into a single material.
 
     The layer contains bars running along x on a grid with spacing `spacing_x_cm`
-    and bars running along y with spacing `spacing_y_cm`, both within a slice of
-    height equal to the bar diameter `rebar_diameter_cm`. Steel volume fraction
-    follows from the unit cell of area spacing_x * spacing_y and height d. The
-    cell holds one x-running and one y-running bar segment, which cross once.
-    The crossing is a Steinmetz bicylinder of volume 2 d^3 / 3, counted once:
+    and bars running along y with spacing `spacing_y_cm`. The two families are
+    stacked, one resting on the other, as in a tied or welded mat, so the slice
+    is two bar diameters thick (`layer_thickness_cm = 2 d`) and the bars share no
+    volume. The steel volume fraction follows from the unit cell of area
+    spacing_x * spacing_y and height 2 d, which holds one x-running and one
+    y-running bar segment:
 
-        V_steel = pi * d^2 * (spacing_x + spacing_y) / 4 - 2 * d^3 / 3
-        f_steel = V_steel / (spacing_x * spacing_y * d)
+        V_steel = pi * d^2 * (spacing_x + spacing_y) / 4
+        f_steel = V_steel / (spacing_x * spacing_y * 2 d) = pi * d * (spacing_x + spacing_y) / (8 spacing_x spacing_y)
 
     Activation-relevant trace impurities are folded into both constituents: the
     rebar carries Co-59 (default inside the conservative design band), and the
@@ -112,7 +114,7 @@ class ConcreteRebarMixer:
         Initializes the mixer geometry and constituent materials.
 
         Args:
-            rebar_diameter_cm: Bar diameter in cm; also the mixed-layer thickness.
+            rebar_diameter_cm: Bar diameter in cm; the mixed layer is two diameters thick.
             spacing_x_cm: Center-to-center bar spacing along x in cm.
             spacing_y_cm: Center-to-center bar spacing along y in cm.
             steel_density_g_cc: Rebar mass density in g/cm^3.
@@ -161,21 +163,24 @@ class ConcreteRebarMixer:
         self.steel_wt_fractions: dict = _normalize_composition(steel_composition)
         self.concrete_wt_fractions: dict = _normalize_composition(concrete_composition)
 
+    @property
+    def layer_thickness_cm(self) -> float:
+        """ Thickness of the mixed layer [cm]: two stacked bar families, one bar diameter each """
+        return 2.0 * self.rebar_diameter_cm
+
     def steel_volume_fraction(self) -> float:
         """ Steel volume fraction of the mixed layer from the unit-cell geometry
 
-        Each cell of spacing_x * spacing_y * d holds one bar segment of each
-        family. The two perpendicular bars of equal diameter d cross once per
-        cell, and their shared volume is the Steinmetz bicylinder 2 d^3 / 3.
-        Subtracting it once counts the crossing volume a single time.
+        Each cell of spacing_x * spacing_y * (2 d) holds one bar segment of each
+        family in its own sub-layer, so the steel volume is the sum of the two
+        segment volumes.
         """
         d: float = self.rebar_diameter_cm
         if d > min(self.spacing_x_cm, self.spacing_y_cm):
             raise ValueError(f"Rebar diameter {d} cm exceeds the bar spacing "
                              f"({self.spacing_x_cm}, {self.spacing_y_cm}) cm; parallel bars overlap")
-        cell_volume: float = self.spacing_x_cm * self.spacing_y_cm * d
-        steel_volume: float = math.pi * d ** 2 * (self.spacing_x_cm + self.spacing_y_cm) / 4.0 \
-            - 2.0 * d ** 3 / 3.0
+        cell_volume: float = self.spacing_x_cm * self.spacing_y_cm * self.layer_thickness_cm
+        steel_volume: float = math.pi * d ** 2 * (self.spacing_x_cm + self.spacing_y_cm) / 4.0
         return steel_volume / cell_volume
 
     def mixture_density(self) -> float:
@@ -243,6 +248,7 @@ def expand_to_nuclides(elemental_densities: dict) -> dict:
 
 if __name__ == "__main__":
     mixer = ConcreteRebarMixer(rebar_diameter_cm=1.59, spacing_x_cm=30.48, spacing_y_cm=15.24)
+    print(f"Mixed layer thickness : {mixer.layer_thickness_cm:.3f} cm")
     print(f"Steel volume fraction : {mixer.steel_volume_fraction():.5f}")
     print(f"Mixture density       : {mixer.mixture_density():.5f} g/cm^3")
     print(f"Steel Co-59           : {mixer.steel_co59_wt_fraction:.5%} wt")

@@ -17,12 +17,15 @@ gamma rays from the activated concrete and rebar.
 
 ## Start here
 
-1. Export the SCALE installation: `export SCALE_BIN=/opt/scale6.3.2-mpi/bin` (adjust to your site).
-2. Edit the `EDIT ME` block in `run_contact_dose.py`: lid span, bottom slab
-   thickness, rebar diameter and grid spacings, cavity flux, and irradiation
-   duration.
+1. Export the SCALE installation, for example `export SCALE_BIN=/opt/scale6.3.3/bin` (the ORIGEN deck
+   was checked under SCALE 6.3.3).
+2. Edit the `EDIT ME` block in `run_contact_dose.py`: lid span, bottom and top
+   slab thicknesses, rebar diameter and grid spacings, cavity flux, and
+   irradiation duration.
 3. Obtain the cavity neutron spectrum as an ORIGEN alpha-library F33 and pass
-   it with `--lib`.
+   it with `--lib`. ORIGEN irradiates with cross-section set 1 of that file
+   unless `--lib-pos P` (or `irradiation_lib_pos`) selects another set. A
+   TRITON F33 holds one set per depletion step; `obiwan info <file>.f33` lists them.
 4. Run one cooling time:
    `PYTHONPATH=. python concrete_irrad/run_contact_dose.py --lib cavity_spectrum.f33 --decay-days 30`
    Add `--nmpi N` to pass N MPI tasks to each SCALE run.
@@ -31,8 +34,11 @@ gamma rays from the activated concrete and rebar.
    `--scan 1,30,90,365`, which writes `lid_contact_doses.csv`. A cooling time
    of 0 gives the dose at shutdown.
 
-Case directories `run_*/` hold the ORIGEN decks, outputs, F71 files, and the
-MAVRIC deck and output for inspection.
+Case directories `run_<name>_<irradiation>d-<cooling>d-<hash>/` hold the ORIGEN
+decks, outputs and F71 files, and `..._MAVRIC/` the MAVRIC deck and output. The
+hash covers the flux, library, time grid and the fresh compositions, so two
+models with the same times never share one deck, and `run_activation()` always
+rewrites the deck before it runs.
 
 ## Getting the spectrum library (F33)
 
@@ -52,33 +58,40 @@ horizontal slices stacked along the vertical axis:
 1. **Bottom concrete slab.** Pure concrete between the cavity-facing surface
    and the first layer of reinforcement.
 2. **Concrete-rebar mixed layer.** A single slice containing the first mat of
-   reinforcement bars running in two orthogonal directions. The slice thickness
-   equals the bar diameter, so the mat fits inside one slice. The bars and the
-   surrounding concrete are homogenized into a single material whose atom
+   reinforcement bars running in two orthogonal directions. The two bar
+   families are stacked, so the slice is two bar diameters thick. The bars and
+   the surrounding concrete are homogenized into a single material whose atom
    densities come from `concrete_rebar_mixer.py`.
-3. **Upper concrete slab.** The remaining concrete above the mixed layer. This
-   region contributes negligibly to the dose rate and is excluded from the
-   quantitative model.
+3. **Upper concrete slab.** The remaining concrete above the mixed layer
+   (`top_thickness_cm`). It is farthest from the cavity, so its activation
+   contributes negligibly to the dose rate and it has no ORIGEN case and no
+   source. As a shield it matters: 10 cm of concrete attenuates the uncollided
+   1.25 MeV Co-60 flux to about a quarter. The model therefore carries it as
+   plain concrete between the mat and the detector. With `top_thickness_cm = 0`
+   (the default) the detector sits directly above the rebar mat, which is the
+   lid top only when the lid ends at the mat.
 
 ## Material model
 
-The mixed-layer composition follows from simple volume averaging. In a unit
-cell of area `spacing_x * spacing_y` and height equal to the bar diameter `d`,
-the cell contains one x-running bar segment of length `spacing_x` and one
-y-running bar segment of length `spacing_y`. The two segments cross once per
-cell. Their shared volume is the Steinmetz bicylinder of two perpendicular
-cylinders of diameter `d`, which is `2 d^3 / 3`. The steel volume counts it
-once:
+The mixed-layer composition follows from simple volume averaging. A mat is two
+stacked families of bars: the x-running bars rest on the y-running bars, as in
+a tied or welded mat, so the bars share no volume and the slice is `2 d` thick.
+In a unit cell of area `spacing_x * spacing_y` and height `2 d`, the cell
+contains one x-running bar segment of length `spacing_x` and one y-running bar
+segment of length `spacing_y`:
 
 ```
-V_steel = pi * d^2 * (spacing_x + spacing_y) / 4 - 2 * d^3 / 3
-f_steel = V_steel / (spacing_x * spacing_y * d)
+V_steel = pi * d^2 * (spacing_x + spacing_y) / 4
+f_steel = V_steel / (spacing_x * spacing_y * 2 d) = pi * d * (spacing_x + spacing_y) / (8 spacing_x spacing_y)
 ```
 
-Parallel bars overlap when `d` exceeds a spacing, and the mixer raises an
-error for that geometry. At the defaults (`d = 1.59` cm on a 30.48 x 15.24 cm
-grid) the steel volume fraction is 0.1193 and the mixture density is 2.962
-g/cm^3. Counting the crossing twice would give 0.1229 and 2.982 g/cm^3.
+The steel mass per unit lid area, which sets the Co-60 source term, is then the
+full mass of both bar families. Parallel bars overlap when `d` exceeds a
+spacing, and the mixer raises an error for that geometry. At the defaults
+(`d = 1.59` cm on a 30.48 x 15.24 cm grid) the layer is 3.18 cm thick, the
+steel volume fraction is 0.0615 and the mixture density is 2.641 g/cm^3. An
+earlier version put both families in one `d`-thick slice and subtracted a
+Steinmetz crossing volume, which removed 2.95% of the steel.
 
 Each constituent keeps its own density and elemental composition. The mixture
 mass density is `f_steel * rho_steel + (1 - f_steel) * rho_concrete`, and the
@@ -97,7 +110,10 @@ Long-lived gamma emitters dominate the decay dose from irradiated concrete, and
 they originate from trace elements rather than from the major constituents.
 Kinno et al. (2002) showed that Co-60, Eu-152, Eu-154, and Cs-134 account for
 99--100% of the total activity of ordinary concrete shields. The mixer
-therefore carries explicit trace impurities in both materials.
+therefore carries explicit trace impurities in both materials. The defaults
+cover Co and Eu. Cs-134 comes from a Cs-133 trace, which the defaults omit;
+pass it through `concrete_impurities_wt` when the concrete analysis reports
+caesium.
 
 The rebar steel carries a Co-59 impurity that produces the Co-60 source term.
 It is set through `steel_co59_wt_fraction` with a default of 0.25 wt%, the
@@ -139,7 +155,8 @@ precursors of Eu-152 and Eu-154.
   Each MAVRIC source uses `useNormConst`, which sets its strength to the
   normalization constant of its F71 photon distribution. Each source cuboid
   spans its full region, so each source carries the absolute emission rate of
-  its region.
+  its region. The upper slab, when present, is mixture 3 of plain concrete
+  without a source. The importance-map grid spans the whole problem boundary.
 - ORIGEN requires decay times after the case start. For zero cooling the decay
   case therefore keeps a nominal 1-day grid, and the model reads F71 position
   1. That position is the decay-case start, which holds the end-of-irradiation
@@ -183,9 +200,10 @@ low_co = ConcreteRebarMixer(1.59, 30.48, 15.24, steel_co59_wt_fraction=0.001)
 
 ## Assumptions
 
-- Bars run along both x and y in a single plane, on rectangular grids.
-- The mixed-layer thickness equals the bar diameter; concrete displaced by
+- Bars run along x and along y in two stacked layers, on rectangular grids.
+- The mixed-layer thickness is two bar diameters; concrete displaced by
   steel inside the slice belongs to the mixture volume only.
+- The upper concrete slab is unactivated and shields only.
 - Default compositions are ASTM A615 Grade 60 reinforcing steel and ordinary
   concrete per PNNL-15870 Rev. 1 material #96 at the ANSI/ANS-6.4.3 density of
   2.30 g/cm^3. Both are overridable constructor arguments.
