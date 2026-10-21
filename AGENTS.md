@@ -29,8 +29,8 @@ This repository computes dose rates from decaying samples using SCALE/ORIGEN/MAV
 
 ## Validation Commands
 
-- Preferred: `pytest -q`
-- Alternative: `PYTHONPATH=. python -m unittest discover -s test -p 'test_*.py'`
+- `pytest -q` runs the whole suite. The `unittest` runner collects only the `TestCase` modules
+  (about 120 of the tests), so it is not a substitute.
 
 ## Agent Working Rules
 
