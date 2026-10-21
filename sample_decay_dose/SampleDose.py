@@ -104,15 +104,8 @@ def parse_point_detector_responses(mavric_output: str) -> dict:
     return results
 
 # Predefined lists of atom densities for convenience. Check and make yours :)
-# https://www.sandmeyersteel.com/316H.html
-ADENS_SS316H_HOT: dict = {'c': 0.0002384, 'n-14': 0.000254609, 'n-15': 9.30164e-07, 'al-27': 5.30544e-05,
-    'si-28': 1.56475e-05, 'si-29': 7.94907e-07, 'si-30': 5.24622e-07, 'p-31': 6.93324e-05, 's-32': 4.23788e-05,
-    's-33': 3.34604e-07, 's-34': 1.89609e-06, 's-36': 4.46139e-09, 'ti-46': 3.28985e-06, 'ti-47': 2.96684e-06,
-    'ti-48': 2.93973e-05, 'ti-49': 2.15734e-06, 'ti-50': 2.06562e-06, 'cr-50': 0.000677912, 'cr-52': 0.0130729,
-    'cr-53': 0.00148236, 'cr-54': 0.00036899, 'mn-55': 1.73977e-05, 'fe-54': 0.00390032, 'fe-56': 0.0612267,
-    'fe-57': 0.00141399, 'fe-58': 0.000188176, 'ni-58': 6.64309e-05, 'ni-60': 2.55891e-05, 'ni-61': 1.11234e-06,
-    'ni-62': 3.54662e-06, 'ni-64': 9.03221e-07, 'mo-92': 0.00018364, 'mo-94': 0.00011476, 'mo-95': 0.00019769,
-    'mo-96': 0.000207388, 'mo-97': 0.000118863, 'mo-98': 0.000300762, 'mo-100': 0.00012023}
+# SS-316H, https://www.sandmeyersteel.com/316H.html, wt%: Fe balance, Cr 17, Ni 12, Mo 2.5, Mn 2, Si 1, Co 0.1 (impurity),
+# C 0.08, P 0.045, S 0.03; 7.77 g/cm3 at room temperature.
 ADENS_SS316H_COLD: dict = {'c': 0.000311167, 'si-28': 0.00153402, 'si-29': 7.79293e-05, 'si-30': 5.14317e-05,
     'p-31': 6.78722e-05, 's-32': 4.15187e-05, 's-33': 3.27814e-07, 's-34': 1.85761e-06, 's-36': 4.37085e-09,
     'cr-50': 0.000663653, 'cr-52': 0.0127979, 'cr-53': 0.00145118, 'cr-54': 0.000361229, 'mn-55': 0.00170071,
@@ -120,6 +113,12 @@ ADENS_SS316H_COLD: dict = {'c': 0.000311167, 'si-28': 0.00153402, 'si-29': 7.792
     'ni-58': 0.00650228, 'ni-60': 0.00250467, 'ni-61': 0.000108876, 'ni-62': 0.000347145, 'ni-64': 8.84075e-05,
     'mo-92': 0.000179806, 'mo-94': 0.000112364, 'mo-95': 0.000193563, 'mo-96': 0.000203058, 'mo-97': 0.000116381,
     'mo-98': 0.000294483, 'mo-100': 0.00011772}
+# The same alloy at 873 K. The mean linear thermal expansion coefficient of 316 from 300 K to 873 K is about
+# 18.8e-6 /K, so the volume grows by (1 + 18.8e-6 * 573)^3 = 1.0327 and the atom densities shrink by that factor.
+# (An earlier table under this name had Ni 0.12 wt%, Mn 0.02 wt%, Si 0.01 wt% and no Co, with Fe as the balance,
+# which is a ferritic Fe-17Cr-2.5Mo steel rather than 316H.)
+SS316_VOLUME_EXPANSION_873K: float = (1.0 + 18.8e-6 * (873.0 - 300.0)) ** 3
+ADENS_SS316H_HOT: dict = scale_adens(ADENS_SS316H_COLD, 1.0 / SS316_VOLUME_EXPANSION_873K)
 ADENS_HDPE_COLD: dict = {'c-12': 3.992647e-02, 'c-13': 4.318339e-04, 'h-poly': 8.071660e-02}
 ADENS_HELIUM_COLD: dict = {'he-3': 2.680585e-11, 'he-4': 2.693156e-05}
 ADENS_HELIUM_HOT: dict = {'he-3': 8.27507e-12, 'he-4': 8.27506e-06}

@@ -265,6 +265,45 @@ def expand_origen_times(time_line: str) -> list[float]:
     return [float(x) for x in body]
 
 
+class TestPredefinedMaterials(unittest.TestCase):
+
+    @staticmethod
+    def _weight_percent(adens: dict) -> dict:
+        from sample_decay_dose.isotopes import rel_iso_mass
+        masses: dict = {}
+        for nuclide, dens in adens.items():
+            element: str = re.match(r'[a-z]+', nuclide).group(0)
+            masses[element] = masses.get(element, 0.0) + rel_iso_mass[nuclide] * dens
+        total: float = sum(masses.values())
+        return {e: 100.0 * m / total for e, m in masses.items()}
+
+    def test_ss316h_compositions_match_the_alloy_specification(self):
+        # SS-316H: Cr 16-18, Ni 10-14, Mo 2-3, Mn <= 2, Si <= 1 wt%; the cold table also carries 0.1 wt% Co.
+        for adens in (sd.ADENS_SS316H_COLD, sd.ADENS_SS316H_HOT):
+            w = self._weight_percent(adens)
+            self.assertTrue(16.0 <= w['cr'] <= 18.0, w)
+            self.assertTrue(10.0 <= w['ni'] <= 14.0, w)
+            self.assertTrue(2.0 <= w['mo'] <= 3.0, w)
+            self.assertTrue(1.0 <= w['mn'] <= 2.0, w)
+            self.assertTrue(0.3 <= w['si'] <= 1.0, w)
+            self.assertAlmostEqual(w['co'], 0.1, places=2)
+            self.assertAlmostEqual(w['fe'], 100.0 - sum(v for e, v in w.items() if e != 'fe'))
+
+    def test_ss316h_hot_is_the_cold_alloy_expanded_to_873_K(self):
+        rho_cold = utils.get_rho_from_atom_density(sd.ADENS_SS316H_COLD)
+        rho_hot = utils.get_rho_from_atom_density(sd.ADENS_SS316H_HOT)
+        self.assertAlmostEqual(rho_cold, 7.77, delta=0.02)
+        self.assertAlmostEqual(rho_cold / rho_hot, sd.SS316_VOLUME_EXPANSION_873K, places=9)
+        self.assertAlmostEqual(sd.SS316_VOLUME_EXPANSION_873K, 1.0327, places=3)  # about 3% less dense
+        self.assertEqual(set(sd.ADENS_SS316H_HOT), set(sd.ADENS_SS316H_COLD))
+
+    def test_predefined_material_densities(self):
+        expected = {'ADENS_HDPE_COLD': 0.94, 'ADENS_CONCRETE_COLD': 2.30, 'ADENS_LEAD_COLD': 11.34,
+                    'ADENS_DRYAIR_COLD': 1.2e-3, 'ADENS_KAOWOOL_COLD': 0.16, 'ADENS_HELIUM_COLD': 1.8e-4}
+        for name, rho in expected.items():
+            self.assertAlmostEqual(utils.get_rho_from_atom_density(getattr(sd, name)), rho, delta=0.01 * rho, msg=name)
+
+
 class TestDecayTimeGrid(unittest.TestCase):
 
     def test_grids_are_strictly_increasing(self):

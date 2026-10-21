@@ -73,3 +73,10 @@ The deck generator raises `FileNotFoundError` if the file does not exist.
   scalerte can exit with code 0 after a module aborts, which is why the output is checked.
 - `utils` reads `constants.ATOM_DENS_MINIMUM` at call time, so setting it on `sample_decay_dose.constants` takes effect.
 - `get_rho_from_atom_density()` maps SCALE bound-scatterer IDs such as `h-poly` to the nuclide mass, and gives metastable states the ground-state mass.
+
+## Predefined materials
+
+`ADENS_SS316H_COLD` is SS-316H (Fe balance, Cr 17, Ni 12, Mo 2.5, Mn 2, Si 1, Co 0.1 wt%) at 7.77 g/cm3, and
+`ADENS_SS316H_HOT` is the same alloy expanded to 873 K (`SS316_VOLUME_EXPANSION_873K`, about 3% less dense).
+An earlier hot table had Ni 0.12 wt% and Mn 0.02 wt%, a ferritic Fe-17Cr-2.5Mo steel; results from before 2026-10-21
+that used it (the default irradiation material and the default first tank layer) carry that composition.
