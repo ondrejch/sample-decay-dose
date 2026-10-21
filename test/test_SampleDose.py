@@ -159,9 +159,11 @@ class TestSampleDoseFunctions(unittest.TestCase):
         )
         self.assertEqual(utils.atom_dens_for_mavric(adens), expected)
 
-    def test_atom_dens_for_mavric_keeps_natural_sm_tm(self):
-        out = utils.atom_dens_for_mavric({'sm': 1.0, 'tm': 2.0, 'am242m': 3.0}, 5, 300.0)
-        self.assertEqual(out, 'sm 5 0 1.0 300.0 end\ntm 5 0 2.0 300.0 end\nam242 5 0 3.0 300.0 end\n')
+    def test_atom_dens_for_mavric_keeps_natural_sm_tm_and_library_isomers(self):
+        out = utils.atom_dens_for_mavric({'sm': 1.0, 'tm': 2.0, 'am242m': 3.0, 'Am-242m': 4.0, 'te-131m': 5.0},
+                                         5, 300.0)
+        self.assertEqual(out, 'sm 5 0 1.0 300.0 end\ntm 5 0 2.0 300.0 end\nam242m 5 0 3.0 300.0 end\n'
+                              'Am-242m 5 0 4.0 300.0 end\nte-131 5 0 5.0 300.0 end\n')  # te-131m: no evaluation
 
     def test_get_rho_handles_bound_hydrogen_and_metastables(self):
         fake = types.ModuleType('sample_decay_dose.isotopes')
@@ -372,6 +374,24 @@ class TestOrigenDecks(unittest.TestCase):
         o.irradiate_days = 0.0
         with self.assertRaises(ValueError):
             o.origen_deck()
+
+    @patch('sample_decay_dose.SampleDose.get_F33_num_sets', return_value=2)
+    def test_origen_irradiation_stages_absolute_f33_path(self, _mock_sets):
+        o = sd.OrigenIrradiation(_f33='/data/libs/EIRENE.mix0002.f33', _mass=1.0)
+        o.sample_density = 8.0
+        deck = o.origen_deck()
+        self.assertIn('cp -r /data/libs/EIRENE.mix0002.f33 .', deck)  # not <cwd>//data/libs/...
+        self.assertIn('file="EIRENE.mix0002.f33"', deck)
+
+    @patch('sample_decay_dose.SampleDose.get_last_position_for_case', return_value=20)
+    @patch('sample_decay_dose.SampleDose.get_f71_positions_index', return_value={})
+    def test_origen_mha_stages_relative_and_absolute_f71(self, _mock_idx, _mock_last):
+        for f71 in ('../msrr.f71', '/data/msrr.f71'):
+            o = sd.OrigenFromTritonMHA(_f71=f71, _MTiHM=0.4, _f71_case=20)
+            o.debug = 0
+            deck = o.origen_deck()
+            self.assertIn(f'cp -r {os.path.join(o.cwd, f71)} .', deck)
+            self.assertIn('file="msrr.f71" pos=19', deck)
 
     def test_origen_decay_box_deck_and_case_dir(self):
         o = sd.OrigenDecayBox({'co-60': 1e-3}, 2.0)
@@ -694,6 +714,32 @@ class TestHandlingContactResponses(unittest.TestCase):
         cell = hc.HotCellDoses(self.o)
         self._read(cell)
         self.assertAlmostEqual(cell.handling_dose['value'], 10.1)
+
+
+class TestBetaToGamma(unittest.TestCase):
+
+    def _write_spectra(self, case_dir: str, gamma_y: float, beta_y: float, neutron_y: float = 0.0):
+        for n, y in ((0, neutron_y), (1, gamma_y), (2, beta_y)):
+            with open(os.path.join(case_dir, f'origen.{n:018d}.plt'), 'w') as f:
+                f.write('\n'.join(['h'] * 6 + [f'   1.0 {y}', f'   2.0 {y}', '0 years']) + '\n')
+
+    def test_ratio_and_pure_beta_emitter_warning(self):
+        import tempfile
+        import warnings
+        with tempfile.TemporaryDirectory() as tmp:
+            o = sd.Origen()
+            o.cwd, o.case_dir = tmp, 'case'
+            os.mkdir(os.path.join(tmp, 'case'))
+            self._write_spectra(os.path.join(tmp, 'case'), gamma_y=4.0, beta_y=2.0, neutron_y=3.0)
+            self.assertAlmostEqual(o.get_beta_to_gamma(), 0.5)
+            self.assertAlmostEqual(o.get_neutron_integral(), 3.0)
+            self._write_spectra(os.path.join(tmp, 'case'), gamma_y=0.0, beta_y=2.0)
+            with self.assertWarns(UserWarning):  # pure beta emitter: the estimate cannot describe it
+                self.assertEqual(o.get_beta_to_gamma(), 0.0)
+            self._write_spectra(os.path.join(tmp, 'case'), gamma_y=0.0, beta_y=0.0)
+            with warnings.catch_warnings():
+                warnings.simplefilter('error')
+                self.assertEqual(o.get_beta_to_gamma(), 0.0)  # stable sample: no warning
 
 
 class TestReadOpus(unittest.TestCase):

@@ -31,6 +31,8 @@ class RadiatorBox(HotCellDoses):
     Source strength assumption: the F71 spectra are totals over the F71 material volume (obiwan "volume" row).
     The radiator holds all_pins_volume of that salt, so the sources are scaled by
     all_pins_volume / V_F71 unless source_multiplier is set.
+    run_mavric() names case_dir with a timestamp, so reuse_adjoint_flux needs adjoint_flux_file set to the
+    my_dose.adjoint.dff of an earlier run with the same radiator geometry and detector positions.
     """
     def __init__(self, _o: OrigenFromTriton = None):
         """ This reads decayed sample information from the Origen object """
@@ -110,6 +112,12 @@ class RadiatorBox(HotCellDoses):
         if len(self.layers_mats) != 2 or len(self.layers_temperature_K) != 2:
             raise ValueError(f"RadiatorBox needs two layers_mats and two layers_temperature_K (tube, between tubes), "
                              f"got {len(self.layers_mats)} and {len(self.layers_temperature_K)}")
+        if self.pin_OR > self.half_pitch:
+            raise ValueError(f"RadiatorBox: the tube outer radius {self.pin_OR:.5g} cm exceeds the half pitch "
+                             f"{self.half_pitch:.5g} cm, so neighbouring tubes overlap")
+        if not self.pin_IR > 0.0 or not self.pin_OR > self.pin_IR:
+            raise ValueError(f"RadiatorBox: need 0 < pin_ID < pin_OD, got pin_ID={self.radiator_geometry['pin_ID']} "
+                             f"and pin_OD={self.radiator_geometry['pin_OD']} cm")
 
     def _set_source_position(self):
         """ Source position and its time from the OrigenFromTriton object, which may have changed after __init__ """

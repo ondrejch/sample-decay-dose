@@ -196,8 +196,11 @@ class Origen:
         beta_spectrum_integral = integrate_opus(beta_spectrum_file)
         if gamma_spectrum_integral > 0:
             return beta_spectrum_integral / gamma_spectrum_integral
-        else:
-            return 0.0
+        if beta_spectrum_integral > 0:
+            warnings.warn(f"The decayed sample in {self.case_dir} emits {beta_spectrum_integral:.3g} betas/s but no "
+                          f"photons, so the beta dose estimate (beta_over_gamma times the photon dose) is zero. "
+                          f"The beta dose of a pure beta emitter needs another method.", stacklevel=2)
+        return 0.0
 
     def get_neutron_integral(self) -> float:
         """ Calculates spectral integral of neutrons to see if neutrons shoudl be transported by MAVRIC """
@@ -357,7 +360,7 @@ class OrigenFromTritonMHA(OrigenFromTriton):
         basename_burned_f71: str = os.path.basename(self.BURNED_MATERIAL_F71_file_name)
         origen_output: str = f'''
 =shell
-cp -r ${{INPDIR}}/../{self.BURNED_MATERIAL_F71_file_name} .
+cp -r {os.path.join(self.cwd, self.BURNED_MATERIAL_F71_file_name)} .
 end
 
 =origen
@@ -471,15 +474,15 @@ class OrigenIrradiation(Origen):
             raise ValueError(f"Irradiation time must be positive: {self.irradiate_days} days")
         if self.irradiate_steps < 3:
             raise ValueError("Too few irradiation steps")
-        # The self.F33_file_name potentially includes path to that file.
-        # It gets copied to temp directory, where it is just F33_file
+        # The self.F33_file_name may include a path, relative to cwd or absolute.
+        # It gets copied to the SCALE temp directory, where it is just F33_file
         F33_path, F33_file = os.path.split(self.F33_file_name)
         irr_days_min: float = min(0.0001, self.irradiate_days/1e3)
         my_line_time: str = self.decay_time_line(1.0e-4)
         origen_output: str = f'''
 =shell
 cp -r ${{INPDIR}}/{self.SAMPLE_ATOM_DENS_file_name_Origen} .
-cp -r {self.cwd}/{self.F33_file_name} .
+cp -r {os.path.join(self.cwd, self.F33_file_name)} .
 end
 
 =origen
@@ -810,7 +813,7 @@ class DoseEstimator:
         return {'value': self.beta_over_gamma * gamma_response['value'],
                 'stdev': self.beta_over_gamma * gamma_response['stdev']}
 
-    def run_mavric(self):
+    def run_mavric(self, nmpi: int = 1):
         """ Writes Mavric inputs and runs the case """
         if not os.path.isfile(self.cwd + '/' + self.ORIGEN_dir + '/' + self.DECAYED_SAMPLE_F71_file_name):
             raise FileNotFoundError(
@@ -831,7 +834,7 @@ class DoseEstimator:
 
             if self.debug > 0:
                 print(f"MAVRIC: running case {self.case_dir}/{self.MAVRIC_input_file_name}")
-            run_scale_or_raise(self.MAVRIC_input_file_name, context_dir=self.case_dir)
+            run_scale_or_raise(self.MAVRIC_input_file_name, nmpi, context_dir=self.case_dir)
         finally:
             os.chdir(self.cwd)
 
@@ -1608,7 +1611,7 @@ class MHATank(HandlingContactDoseEstimatorGenericTank):
         self.sample_density = get_rho_from_atom_density(self.decayed_atom_dens)
         if self.debug > 2:
             print(f'Initial sample density {self.sample_density} g/cm3')
-        os.chdir(self.ORIGEN_dir)
+        os.chdir(os.path.join(self.cwd, self.ORIGEN_dir))
         try:
             sample_gram_dict: dict = get_burned_nuclide_data(self.DECAYED_SAMPLE_F71_file_name,
                                                              self.DECAYED_SAMPLE_F71_position, 'gram')

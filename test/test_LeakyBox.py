@@ -757,3 +757,18 @@ class TestBoxBCDeckGrid(unittest.TestCase):
         self.assertIn('t=[5I 200.0 800.0]', deck)  # 7 times after the start state: positions 2..8
         self.assertIn('start=100.0', deck)
 
+
+class TestF71PositionGuard(unittest.TestCase):
+
+    @patch('sample_decay_dose.utils.subprocess.run')
+    def test_position_beyond_the_file_raises(self, mock_run):
+        from sample_decay_dose import utils
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stderr = b""
+        mock_run.return_value.stdout = b"case, 1, 2, 3,\nvolume, 1.0, 1.0, 1.0,\nXe135, 1e-5, 2e-5, 3e-5,\n"
+        self.assertEqual(utils.get_burned_nuclide_atom_dens('x.f71', 3), {'xe-135': 3e-5})
+        for pos in (4, 0):
+            with self.assertRaises(ValueError):
+                utils.get_burned_nuclide_atom_dens('x.f71', pos)
+            with self.assertRaises(ValueError):
+                utils.get_burned_nuclide_data('x.f71', pos, 'becq')

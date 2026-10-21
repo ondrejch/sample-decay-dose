@@ -455,6 +455,17 @@ class TestSampleDoseDecks(unittest.TestCase, DeckTestMixin):
         deck = box.mavric_deck()
         x_half = float(re.search(r'cuboid 99999\s+2p(\S+)', deck).group(1))
         self.assertGreaterEqual(x_half, box.handling_det_x + 10.0)
+
+    def test_radiator_rejects_overlapping_tubes(self):
+        box = self._radiator()
+        box.source_multiplier = 1.0
+        box.radiator_geometry['pin_OD'] = 2.0 * box.half_pitch + 0.1
+        with self.assertRaises(ValueError):
+            box.mavric_deck()
+        box.radiator_geometry['pin_OD'] = box.radiator_geometry['pin_ID'] * 0.5  # wall thickness < 0
+        with self.assertRaises(ValueError):
+            box.mavric_deck()
+
     def test_hot_cell_reuse_adjoint_flux(self):
         with tempfile.TemporaryDirectory() as tmp:
             o = DummyOrigen()

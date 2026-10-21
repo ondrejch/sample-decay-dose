@@ -12,6 +12,10 @@ from sample_decay_dose.constants import SCALE_bin_path
 NUCLIDE_RE = re.compile(r"^(?P<elem>[a-zA-Z]+)-?(?P<num>\d+)(?P<meta>m)?$")
 # Metastable suffix: an "m" that follows the mass number (am-242m, am242m). Natural "sm" and "tm" keep their "m".
 METASTABLE_SUFFIX_RE = re.compile(r'(?<=\d)m$')
+# Metastable nuclides with their own evaluations in the ENDF/B-VII.1 based SCALE libraries. Other isomers take the
+# ground-state cross sections in MAVRIC compositions.
+SCALE_LIBRARY_ISOMERS: frozenset = frozenset({'ag-110m', 'am-242m', 'am-244m', 'cd-115m', 'ho-166m', 'pm-148m',
+                                              'te-127m', 'te-129m'})
 # SCALE bound-scatterer composition IDs mapped to the nuclide whose mass they carry.
 # O and Be take the O-16 and Be-9 masses, which are the dominant (Be: only) stable isotopes.
 SCALE_BOUND_NUCLIDE_MASS_KEY: dict = {
@@ -178,6 +182,14 @@ def get_f71_elements_case(f71file: str, f71units: str = 'atom', my_cases=None) -
     return pd.read_csv(io.StringIO(output), skipinitialspace=True, index_col=0)
 
 
+def _check_f71_position(header: list[str], position: int, f71file: str):
+    """ The 'case' header row of obiwan's csv view lists one entry per F71 position (plus a trailing empty field).
+    A position beyond the file would otherwise return an empty dictionary. """
+    n_positions: int = len([d for d in header[1:] if d.strip() != ''])
+    if position < 1 or position > n_positions:
+        raise ValueError(f"F71 position {position} is not on {f71file}, which holds positions 1..{n_positions}")
+
+
 def get_burned_nuclide_atom_dens(f71file: str, position: int, my_cases: list[int] = None) -> dict:
     """ Read atom density of nuclides from SCALE's F71 file """
     runlist: list = [f"{SCALE_bin_path}/obiwan", "view", "-format=csv", "-prec=10", "-units=atom",
@@ -194,6 +206,8 @@ def get_burned_nuclide_atom_dens(f71file: str, position: int, my_cases: list[int
         data = line.split(',')
         if not data or data[0] == '':
             continue
+        if data[0].strip() == 'case':
+            _check_f71_position(data, position, f71file)
         if data[0].strip() in skip:
             continue
         if len(data) <= position:
@@ -228,6 +242,8 @@ def get_burned_nuclide_data(f71file: str, position: int, f71units: str = 'atom',
         data = line.split(',')
         if not data or data[0] == '':
             continue
+        if data[0].strip() == 'case':
+            _check_f71_position(data, position, f71file)
         if data[0].strip() in skip:
             continue
         if len(data) <= position:
@@ -431,11 +447,14 @@ def atom_dens_for_origen(adens: dict) -> str:
 
 
 def atom_dens_for_mavric(adens: dict, mix_number: int = 1, tempK: float = 873.0) -> str:
-    """ Print atom densities in SCALE CSAS/MAVRIC input format """
+    """ Print atom densities in SCALE CSAS/MAVRIC input format.
+    Isomers in SCALE_LIBRARY_ISOMERS (am-242m, ...) keep their name; other isomers take the ground state.
+    Natural "sm" and "tm" stay intact. """
     output = ''
     for k, v in adens.items():
         if v > 0.0:
-            k = METASTABLE_SUFFIX_RE.sub('', k)  # MAVRIC takes the ground state; natural "sm", "tm" stay intact
+            if re.sub(r'^([a-z]+)-?(\d+m)$', r'\1-\2', k.lower()) not in SCALE_LIBRARY_ISOMERS:
+                k = METASTABLE_SUFFIX_RE.sub('', k)
             output += f'{k} {mix_number} 0 {v} {tempK} end\n'
     return output
 

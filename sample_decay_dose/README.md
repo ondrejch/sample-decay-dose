@@ -75,6 +75,10 @@ The deck generator raises `FileNotFoundError` if the file does not exist.
   scalerte can exit with code 0 after a module aborts, which is why the output is checked.
 - `utils` reads `constants.ATOM_DENS_MINIMUM` at call time, so setting it on `sample_decay_dose.constants` takes effect.
 - `get_rho_from_atom_density()` maps SCALE bound-scatterer IDs such as `h-poly` to the nuclide mass, and gives metastable states the ground-state mass.
+- `atom_dens_for_mavric()` keeps the isomers that have their own evaluations in the SCALE libraries (`SCALE_LIBRARY_ISOMERS`:
+  am-242m, am-244m, ag-110m, cd-115m, ho-166m, pm-148m, te-127m, te-129m) and folds every other isomer onto its ground state.
+- `get_burned_nuclide_atom_dens()` and `get_burned_nuclide_data()` raise for an F71 position beyond the file instead of returning
+  an empty inventory.
 
 ## Predefined materials
 
