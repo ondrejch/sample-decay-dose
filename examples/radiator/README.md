@@ -3,7 +3,8 @@
 Example case under `examples/`.
 
 **Scripts**
-- `radiator_doses_decaytime.py` — Example radiator
+- `radiator_doses.py` — contact and handling doses from the salt in a tube-bundle radiator, read from one
+  F71 position (case 2, end of the burn) without a decay step
 
 **Data / inputs**
 - `origen.f71` — input or output data file

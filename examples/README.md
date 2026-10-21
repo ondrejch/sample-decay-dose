@@ -17,7 +17,7 @@ sample decay and dose workflow.
 - `hotcell`: Hotcell lead-shield dose example.
 - `irradiator`: Wastewater irradiator model example.
 - `pipe_gas`: Offgas pipe / MHA nuclides example.
-- `radiator`: Radiator decay-time scan example.
+- `radiator`: Radiator dose example (one F71 position, no decay scan).
 - `shielded_sample`: Shielded salt sample dose example.
 
 Each case folder includes its own `README.md`.

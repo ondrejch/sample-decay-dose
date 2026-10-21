@@ -4,7 +4,8 @@ Example case under `examples/`.
 
 **Scripts**
 - `flibe_doseplot.py` — Plotting gamma doses
-- `flibe_irr_dose.py` — Example use case of SampleDose - irradiation of FLi7Be
+- `flibe_irr_dose.py` — Example use case of SampleDose - irradiation of natural FLiBe (`my_flibe_nat`);
+  a Li-7 enriched composition `my_flibe_li7` is defined for comparison
 
 **Run**
 - From this directory: `python <script>.py`

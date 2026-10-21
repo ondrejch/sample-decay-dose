@@ -8,21 +8,7 @@ from sample_decay_dose import SampleDose
 import numpy as np
 import json5
 
-''' Atom density from SCALE's mixing table
-atomflibeLi7 1 1.95 3
-         3000 2
-         4000 1
-         9000 4
-         1.0 293.0
-         3007 99.995 3006 0.005 end
-atomflibeNat 1 1.95 3
-         3000 2
-         4000 1
-         9000 4
-         1.0 293.0
-         3007 95.15 3006 4.85 end         '''
-
-my_al = {'al-27': 6.030726e-02}  # Dict with atom density
+my_al = {'al-27': 6.030726e-02}  # Atom density [at/b-cm] of aluminium at 2.70 g/cm3
 
 r = {}
 d = {}

@@ -79,12 +79,9 @@ def make_plot(title: str, my_dir: str):
 
 
 def run():
-    for t, d in my_data.items():
-        print(f'Processing {t}, {d}')
-        make_plot(t, d)
-
     writer = pd.ExcelWriter('storage_dose.xlsx')
     for t, d in my_data.items():
+        print(f'Processing {t}, {d}')
         pd_dose, pd_stdev = make_plot(t, d)
         # header = f'Rows = Steel [cm], Columns = Concrete [cm]'
         # pd_dose.columns = pd.MultiIndex.from_product([[header],  pd_dose.columns])

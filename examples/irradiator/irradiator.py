@@ -69,7 +69,7 @@ class IrradiatorDose(SampleDose.Origen):
             self.irr_plate_density: float = _o.sample_density  # Mass density of the sample [g/cm3]
             self.irr_plate_volume: float = _o.sample_volume  # Sample volume [cm3]
             self.irr_plate_F71_file_name: str = _o.SAMPLE_F71_file_name
-            self.irr_plate_F71_position: int = _o.SAMPLE_F71_position
+            self.irr_plate_F71_position: int = _o.decayed_F71_position  # position 1 for a zero-day decay
             self.irr_plate_decay_days: float = _o.SAMPLE_DECAY_days  # Sample decay time [days]
             self.irr_plate_atom_dens: dict = _o.decayed_atom_dens  # Atom density of the decayed sample
             self.beta_over_gamma: float = _o.get_beta_to_gamma()  # Beta over gamma spectral ratio

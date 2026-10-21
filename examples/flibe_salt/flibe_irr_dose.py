@@ -1,6 +1,6 @@
 #!/bin/env python3
 """
-Example use case of SampleDose - irradiation of FLi7Be
+Example use case of SampleDose - irradiation of natural FLiBe (a Li-7 enriched composition is defined as well)
 Ondrej Chvala <ochvala@utexas.edu>
 """
 

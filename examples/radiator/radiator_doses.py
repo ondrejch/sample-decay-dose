@@ -1,23 +1,14 @@
 #!/bin/env python3
 """
-Example radiator
+Example radiator: contact and handling doses from the salt in a tube-bundle radiator, read directly from one
+F71 position (no decay step). Writes my_response.json.
 Ondrej Chvala <ochvala@utexas.edu>
 """
-import numpy as np
 import json5
-import os
 from sample_decay_dose.Radiator import RadiatorBox
 from sample_decay_dose.SampleDose import ADENS_SS316H_HOT, ADENS_DRYAIR_COLD, OrigenFromTriton, DAY_IN_SECONDS
-from joblib import Parallel, delayed, cpu_count
-n_jobs: int = cpu_count()  # How many MAVRIC cases to run in parallel
 
-cwd: str = os.getcwd()
-hotcell_inner_box2: float = 70.0 / 2.0  # 70 x 70 x 70 cm
-hotcell_lead_shield: float = 7.5        # 7.5 cm of lead shielding
-sample_mass: float = 0.1                # 0.1 g sample
-
-r = {}
-d = {}
+sample_mass: float = 0.1                # 0.1 g sample; the radiator source is scaled to the tube volume
 
 
 def single_run() -> dict:
@@ -39,18 +30,6 @@ def single_run() -> dict:
     radiator.run_mavric()
     radiator.get_responses()
     return radiator.responses
-
-# def dose_serial(decay_days) -> dict:
-#     results = {}
-#     for decay_day in decay_days:
-#         results[decay_day] = single_run(decay_day)
-#     return results
-#
-#
-# def dose_parallel(decay_days) -> dict:
-#     results = Parallel(n_jobs=n_jobs)(delayed(single_run)(decay_day) for decay_day in decay_days)
-#     print(results)
-#     return results
 
 
 def main():

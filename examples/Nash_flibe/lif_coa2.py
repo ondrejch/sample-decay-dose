@@ -1,6 +1,7 @@
 #!/bin/env python3
 """
-Example use case of SampleDose - irradiation of FLi7Be
+Example use case of SampleDose - short irradiation of a lithium sample (Li-6/Li-7 about 48/52) with trace
+Na, Mg, Ca, Ag, Ba, Rb and Sr, atom densities in my_adens
 Ondrej Chvala <ochvala@utexas.edu>
 """
 
