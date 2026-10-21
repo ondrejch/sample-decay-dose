@@ -1109,6 +1109,12 @@ class DoseEstimatorSquareTank(DoseEstimator):
         """ KENO-VI body ID of the outermost cylinder: the sample is body 1, layer k is body k + 2 """
         return len(self.layers_mats) + 1
 
+    def boundary_pad(self) -> float:
+        """ Distance from the outer layer to the problem boundary [cm]: box_a, or more when a detector standoff
+        would otherwise place the detector outside the boundary. The boundary stays 10 cm beyond the farthest
+        detector, as in the base-class geometry (box_a = det_x + 10). """
+        return max(self.box_a, self.det_standoff_distance + 10.0)
+
     def _validate_layers(self):
         """ The layer lists are usually assigned after __init__, so they are checked before each deck """
         n_layers: int = len(self.layers_mats)
@@ -1180,7 +1186,7 @@ global unit 1
     media {k + 10}  1 -{k + 1} {k + 2}'''
             x_planes.append(tank_r)
         self._set_computed_detectors(tank_r + self.det_standoff_distance)  # Detector is next to the tank
-        box_a: float = self.box_a + tank_r  # problem half-width; self.box_a stays the offset
+        box_a: float = self.boundary_pad() + tank_r  # problem half-width; self.box_a stays the offset
         x_planes_str: str = " ".join([f' {x:.5f} -{x:.5f}' for x in x_planes])
 
         mavric_output += f'''
@@ -1243,6 +1249,7 @@ class DoseEstimatorStorageTank(DoseEstimatorSquareTank):
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
         self._validate_layers()
+        pad: float = self.boundary_pad()  # outer layer to problem boundary [cm]
         tank_inner_volume: float = self.sample_volume + self.sample_volume * self.plenum_volume_fraction
         self.cyl_r = get_cyl_r_4_1(tank_inner_volume)
         tank_r: float = self.cyl_r  # current outer layer radius [cm]
@@ -1286,7 +1293,7 @@ global unit 1
         z_planes.append(self.det_z - self.planes_xy_around_det)
         z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
         mavric_output += f'''
-    cuboid 99999  4p {tank_r + self.box_a} 2p {tank_h2 + self.box_a}  
+    cuboid 99999  4p {tank_r + pad} 2p {tank_h2 + pad}  
     media 0 1 99999 {outside_tank}
 boundary 99999
 end geometry
@@ -1309,15 +1316,15 @@ read definitions
         mavric_output += f'''
     gridGeometry 1
         title="Grid over the problem, location at +x"
-        xLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a}
-'        yLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a} 
-'        zLinear {self.N_planes_box} {tank_h2} {tank_h2 + self.box_a}
+        xLinear {self.N_planes_box} {tank_r} {tank_r + pad}
+'        yLinear {self.N_planes_box} {tank_r} {tank_r + pad} 
+'        zLinear {self.N_planes_box} {tank_h2} {tank_h2 + pad}
         xLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         yLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         zLinear {self.N_planes_cyl}  {sample_z_min} {sample_z_max}
-        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.det_x - self.planes_xy_around_det} {self.det_x + self.planes_xy_around_det} end
-        yPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
-        zPlanes {z_planes_str} {tank_h2 + self.box_a} {-tank_h2 - self.box_a} end
+        xPlanes {xy_planes_str} {tank_r + pad} {-tank_r - pad} {self.det_x - self.planes_xy_around_det} {self.det_x + self.planes_xy_around_det} end
+        yPlanes {xy_planes_str} {tank_r + pad} {-tank_r - pad} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
+        zPlanes {z_planes_str} {tank_h2 + pad} {-tank_h2 - pad} end
     end gridGeometry
 end definitions
 '''
@@ -1342,6 +1349,7 @@ class DoseEstimatorGenericTank(DoseEstimatorSquareTank):
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
         self._validate_layers()
+        pad: float = self.boundary_pad()  # outer layer to problem boundary [cm]
         self.sample_h2 = get_cyl_h(self.sample_volume, self.cyl_r) / 2.0
         tank_r: float = self.cyl_r
         tank_h2: float = self.sample_h2
@@ -1375,7 +1383,7 @@ global unit 1
         z_planes.append(self.det_z - self.planes_xy_around_det)
         z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
         mavric_output += f'''
-    cuboid 99999  4p {tank_r + self.box_a} 2p {tank_h2 + self.box_a}  
+    cuboid 99999  4p {tank_r + pad} 2p {tank_h2 + pad}  
     media 0 1 99999 -{self.outer_body}
 boundary 99999
 end geometry
@@ -1398,15 +1406,15 @@ read definitions
         mavric_output += f'''
     gridGeometry 1
         title="Grid over the problem, location at +x"
-        xLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a}
-'        yLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a} 
-'        zLinear {self.N_planes_box} {tank_h2} {tank_h2 + self.box_a}
+        xLinear {self.N_planes_box} {tank_r} {tank_r + pad}
+'        yLinear {self.N_planes_box} {tank_r} {tank_r + pad} 
+'        zLinear {self.N_planes_box} {tank_h2} {tank_h2 + pad}
         xLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         yLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         zLinear {self.N_planes_cyl}  {sample_z_min} {sample_z_max}
-        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.det_x - self.planes_xy_around_det} {self.det_x + self.planes_xy_around_det} end
-        yPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
-        zPlanes {z_planes_str} {tank_h2 + self.box_a} {-tank_h2 - self.box_a} end
+        xPlanes {xy_planes_str} {tank_r + pad} {-tank_r - pad} {self.det_x - self.planes_xy_around_det} {self.det_x + self.planes_xy_around_det} end
+        yPlanes {xy_planes_str} {tank_r + pad} {-tank_r - pad} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
+        zPlanes {z_planes_str} {tank_h2 + pad} {-tank_h2 - pad} end
     end gridGeometry
 end definitions
 '''
@@ -1440,9 +1448,14 @@ class HandlingContactDoseEstimatorGenericTank(DoseEstimatorSquareTank):
         self.handling_det_standoff_distance = 30.0  # [cm] handing dose
         self.box_a: float = self.handling_det_standoff_distance + 10.0
 
+    def boundary_pad(self) -> float:
+        """ Distance from the outer layer to the problem boundary [cm]; encloses both detectors with 10 cm to spare """
+        return max(self.box_a, self.det_standoff_distance + 10.0, self.handling_det_standoff_distance + 10.0)
+
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
         self._validate_layers()
+        pad: float = self.boundary_pad()  # outer layer to problem boundary [cm]
         self.sample_h2 = get_cyl_h(self.sample_volume, self.cyl_r) / 2.0
         tank_r: float = self.cyl_r
         tank_h2: float = self.sample_h2
@@ -1477,7 +1490,7 @@ global unit 1
         z_planes.append(self.det_z - self.planes_xy_around_det)
         z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
         mavric_output += f'''
-    cuboid 99999  4p {tank_r + self.box_a} 2p {tank_h2 + self.box_a}  
+    cuboid 99999  4p {tank_r + pad} 2p {tank_h2 + pad}  
     media 0 1 99999 -{self.outer_body}
 boundary 99999
 end geometry
@@ -1503,16 +1516,16 @@ read definitions
         mavric_output += f'''
     gridGeometry 1
         title="Grid over the problem, location at +x"
-        xLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a}
-'        yLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a} 
-'        zLinear {self.N_planes_box} {tank_h2} {tank_h2 + self.box_a}
+        xLinear {self.N_planes_box} {tank_r} {tank_r + pad}
+'        yLinear {self.N_planes_box} {tank_r} {tank_r + pad} 
+'        zLinear {self.N_planes_box} {tank_h2} {tank_h2 + pad}
         xLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         yLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         zLinear {self.N_planes_cyl}  {sample_z_min} {sample_z_max}
-        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.det_x - self.planes_xy_around_det} {self.det_x + self.planes_xy_around_det} end
-        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.handling_det_x - self.planes_xy_around_det} {self.handling_det_x + self.planes_xy_around_det} end
-        yPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
-        zPlanes {z_planes_str} {tank_h2 + self.box_a} {-tank_h2 - self.box_a} end
+        xPlanes {xy_planes_str} {tank_r + pad} {-tank_r - pad} {self.det_x - self.planes_xy_around_det} {self.det_x + self.planes_xy_around_det} end
+        xPlanes {xy_planes_str} {tank_r + pad} {-tank_r - pad} {self.handling_det_x - self.planes_xy_around_det} {self.handling_det_x + self.planes_xy_around_det} end
+        yPlanes {xy_planes_str} {tank_r + pad} {-tank_r - pad} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
+        zPlanes {z_planes_str} {tank_h2 + pad} {-tank_h2 - pad} end
     end gridGeometry
 end definitions
 '''
@@ -1619,6 +1632,7 @@ class MHATank(HandlingContactDoseEstimatorGenericTank):
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
         self._validate_layers()
+        pad: float = self.boundary_pad()  # outer layer to problem boundary [cm]
         tank_r: float = self.cyl_r
         tank_h2: float = self.sample_h2
         sample_z_max: float = self.sample_h2
@@ -1653,7 +1667,7 @@ global unit 1
         z_planes.append(self.det_z - self.planes_xy_around_det)
         z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
         mavric_output += f'''
-    cuboid 99999  4p {tank_r + self.box_a} 2p {tank_h2 + self.box_a}  
+    cuboid 99999  4p {tank_r + pad} 2p {tank_h2 + pad}  
     media 0 1 99999 -{self.outer_body}
 boundary 99999
 end geometry
@@ -1679,16 +1693,16 @@ read definitions
         mavric_output += f'''
     gridGeometry 1
         title="Grid over the problem, location at +x"
-        xLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a}
-'        yLinear {self.N_planes_box} {tank_r} {tank_r + self.box_a} 
-'        zLinear {self.N_planes_box} {tank_h2} {tank_h2 + self.box_a}
+        xLinear {self.N_planes_box} {tank_r} {tank_r + pad}
+'        yLinear {self.N_planes_box} {tank_r} {tank_r + pad} 
+'        zLinear {self.N_planes_box} {tank_h2} {tank_h2 + pad}
         xLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         yLinear {self.N_planes_cyl} -{self.cyl_r} {self.cyl_r}
         zLinear {self.N_planes_cyl}  {sample_z_min} {sample_z_max}
-        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.det_x - self.planes_xy_around_det} {self.det_x + self.planes_xy_around_det} end
-        xPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.handling_det_x - self.planes_xy_around_det} {self.handling_det_x + self.planes_xy_around_det} end
-        yPlanes {xy_planes_str} {tank_r + self.box_a} {-tank_r - self.box_a} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
-        zPlanes {z_planes_str} {tank_h2 + self.box_a} {-tank_h2 - self.box_a} end
+        xPlanes {xy_planes_str} {tank_r + pad} {-tank_r - pad} {self.det_x - self.planes_xy_around_det} {self.det_x + self.planes_xy_around_det} end
+        xPlanes {xy_planes_str} {tank_r + pad} {-tank_r - pad} {self.handling_det_x - self.planes_xy_around_det} {self.handling_det_x + self.planes_xy_around_det} end
+        yPlanes {xy_planes_str} {tank_r + pad} {-tank_r - pad} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
+        zPlanes {z_planes_str} {tank_h2 + pad} {-tank_h2 - pad} end
     end gridGeometry
 end definitions
 '''

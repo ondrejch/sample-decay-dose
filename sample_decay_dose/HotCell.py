@@ -42,6 +42,7 @@ class HotCellDoses(HandlingContactDoseEstimatorGenericTank):
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
         self._validate_layers()
+        pad: float = self.boundary_pad()  # outer layer to problem boundary [cm]
         if not self.det_z:
             self.det_z = 0.0
         adjoint_flux_file: str = self._reused_adjoint_flux_path(self._layer_case_dir()) \
@@ -106,7 +107,7 @@ global unit 1
         z_planes.append(self.det_z - self.planes_xy_around_det)
         z_planes_str: str = " ".join([f' {x:.5f}' for x in z_planes])
         mavric_output += f'''
-    cuboid 99999  4p {box_xy2 + self.box_a} 2p {box_z2 + self.box_a}  
+    cuboid 99999  4p {box_xy2 + pad} 2p {box_z2 + pad}  
     media 0 1 99999 -{self.outer_body}
 boundary 99999
 end geometry
@@ -147,16 +148,17 @@ read definitions
 
     gridGeometry 1
         title="Grid over the problem, location at +x"
-        xLinear {self.N_planes_box}  {sample_r}  {box_xy2 + self.box_a}
-        xLinear {self.N_planes_box} -{sample_r} -{box_xy2 + self.box_a}
-        yLinear {self.N_planes_box}  {sample_r}  {box_xy2 + self.box_a} 
-        yLinear {self.N_planes_box} -{sample_r} -{box_xy2 + self.box_a} 
-        zLinear {self.N_planes_box}  {sample_h2}  {box_z2 + self.box_a}
-        zLinear {self.N_planes_box} -{sample_h2} -{box_z2 + self.box_a}
+        xLinear {self.N_planes_box}  {sample_r}  {box_xy2 + pad}
+        xLinear {self.N_planes_box} -{sample_r} -{box_xy2 + pad}
+        yLinear {self.N_planes_box}  {sample_r}  {box_xy2 + pad} 
+        yLinear {self.N_planes_box} -{sample_r} -{box_xy2 + pad} 
+        zLinear {self.N_planes_box}  {sample_h2}  {box_z2 + pad}
+        zLinear {self.N_planes_box} -{sample_h2} -{box_z2 + pad}
         xLinear {self.N_planes_cyl} -{sample_r} {sample_r}          
         yLinear {self.N_planes_cyl} -{sample_r} {sample_r}
         zLinear {self.N_planes_cyl} -{sample_h2} {sample_h2}
         xPlanes {xy_planes_str} {self.det_x - self.planes_xy_around_det} {self.det_x + self.planes_xy_around_det} end
+        xPlanes {self.handling_det_x - self.planes_xy_around_det} {self.handling_det_x + self.planes_xy_around_det} end
         yPlanes {xy_planes_str} {self.planes_xy_around_det} {-self.planes_xy_around_det} end
         zPlanes {z_planes_str} end
     end gridGeometry

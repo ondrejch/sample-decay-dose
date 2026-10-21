@@ -178,6 +178,7 @@ class RadiatorBox(HotCellDoses):
     def mavric_deck(self) -> str:
         """ MAVRIC dose calculation input file """
         self._validate_layers()
+        pad: float = self.boundary_pad()  # outer layer to problem boundary [cm]
         if not self.det_z:
             self.det_z = 0.0
         record: dict = self._set_source_position()
@@ -206,12 +207,12 @@ class RadiatorBox(HotCellDoses):
         # Grid planes over the radiator, plus the problem boundary and both detectors: Monaco stops when a particle
         # leaves the importance map inside the geometry
         x_planes: list[float] = list(np.linspace(-box_x2, box_x2, nX))      # boundaries for gridgeometry
-        x_planes += [-box_x2 - self.box_a, box_x2 + self.box_a,
+        x_planes += [-box_x2 - pad, box_x2 + pad,
                      self.handling_det_x - self.planes_xy_around_det, self.handling_det_x + self.planes_xy_around_det]
         y_planes: list[float] = list(np.linspace(-box_y2, box_y2, self.N_planes_box))
-        y_planes += [-box_y2 - self.box_a, box_y2 + self.box_a]
+        y_planes += [-box_y2 - pad, box_y2 + pad]
         z_planes: list[float] = list(np.linspace(-box_z2, box_z2, nZ))
-        z_planes += [-box_z2 - self.box_a, box_z2 + self.box_a]
+        z_planes += [-box_z2 - pad, box_z2 + pad]
 
         x_planes_str: str = " ".join([f' {x:.5f}' for x in x_planes])
         y_planes_str: str = " ".join([f' {x:.5f}' for x in y_planes])
@@ -258,7 +259,7 @@ boundary 30
 global unit 1
     cuboid 1 2p{box_x2} 2p{box_y2} 2p{box_z2}
     array 7 1  place 1 1 1 {place_x} {place_y} {place_z}
-    cuboid 99999  2p{box_x2 + self.box_a} 2p{box_y2 + self.box_a} 2p{box_z2 + self.box_a}  
+    cuboid 99999  2p{box_x2 + pad} 2p{box_y2 + pad} 2p{box_z2 + pad}  
     media 0 1 99999 -1
 boundary 99999
 end geometry

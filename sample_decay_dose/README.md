@@ -27,6 +27,8 @@ Responses are point-detector doses in rem/h (ANSI-1991 flux-to-dose factors) wit
 - The tank estimators place the detector `det_standoff_distance` from the outer surface of the last layer.
   The three layer lists (`layers_thicknesses`, `layers_mats`, `layers_temperature_K`) must have equal lengths, and every deck checks them.
   Empty lists give a bare sample.
+  The problem boundary sits `box_a` (10 cm) outside the last layer, or 10 cm beyond the farthest detector when a standoff is larger
+  (`boundary_pad()`), so a detector never ends up outside the geometry.
 - `HandlingContactDoseEstimatorGenericTank`, `MHATank`, and `HotCellDoses` have a contact detector (location 1, 0.1 cm) and a handling detector (location 2, 30 cm).
   Their responses are keyed by point-detector ID: `'1'`/`'2'` neutron/photon at contact and `'5'`/`'6'` at handling.
   `contact_dose` and `handling_dose` hold the two totals. `total_dose` returns `contact_dose`.

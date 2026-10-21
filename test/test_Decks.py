@@ -416,6 +416,45 @@ class TestSampleDoseDecks(unittest.TestCase, DeckTestMixin):
             self.assertIsNone(est2.neutron_intensity)
             self.assertTrue(any('predate' in str(x.message) for x in w2))
 
+    def _boundary_half_extents(self, deck: str) -> tuple[float, float]:
+        """ (xy, z) half-extents of the global boundary cuboid 99999 """
+        m = re.search(r'cuboid 99999\s+(?:4p\s+(\S+)\s+2p\s+(\S+)|6p\s+(\S+))', deck)
+        self.assertIsNotNone(m, deck)
+        if m.group(3):
+            return float(m.group(3)), float(m.group(3))
+        return float(m.group(1)), float(m.group(2))
+
+    def test_detector_standoffs_stay_inside_the_boundary(self):
+        """ A detector standoff larger than box_a grows the boundary instead of leaving the detector outside """
+        est = sd.DoseEstimatorSquareTank(self.o)
+        est.debug = 0
+        est.det_standoff_distance = 50.0
+        deck = est.mavric_deck()
+        self.check_common(deck)
+        xy, _ = self._boundary_half_extents(deck)
+        self.assertGreaterEqual(xy, est.det_x + 10.0)
+        self.assertEqual(est.box_a, 10.0)  # the user offset is not mutated
+        for cls in (sd.HandlingContactDoseEstimatorGenericTank, hc.HotCellDoses):
+            est = cls(self.o)
+            est.debug = 0
+            if cls is sd.HandlingContactDoseEstimatorGenericTank:
+                est.cyl_r = 5.0
+            else:
+                est.layers_thicknesses = [35.0, 7.5]
+                est.layers_mats = [sd.ADENS_DRYAIR_COLD, sd.ADENS_LEAD_COLD]
+                est.layers_temperature_K = [300.0, 300.0]
+            est.handling_det_standoff_distance = 100.0
+            deck = est.mavric_deck()
+            self.check_common(deck)
+            xy, _ = self._boundary_half_extents(deck)
+            self.assertGreaterEqual(xy, est.handling_det_x + 10.0, cls.__name__)
+            self.assertGreaterEqual(max(plane_values(deck, 'xPlanes')), est.handling_det_x)
+        box = self._radiator()
+        box.handling_det_standoff_distance = 200.0
+        box.source_multiplier = 1.0
+        deck = box.mavric_deck()
+        x_half = float(re.search(r'cuboid 99999\s+2p(\S+)', deck).group(1))
+        self.assertGreaterEqual(x_half, box.handling_det_x + 10.0)
     def test_hot_cell_reuse_adjoint_flux(self):
         with tempfile.TemporaryDirectory() as tmp:
             o = DummyOrigen()
