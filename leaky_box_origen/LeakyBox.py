@@ -27,7 +27,8 @@ import json5
 import math
 from sample_decay_dose.SampleDose import NOW
 from sample_decay_dose.utils import nicely_print_atom_dens, get_f71_positions_index, get_burned_nuclide_atom_dens, \
-    get_burned_nuclide_data, get_burned_material_total_mass_dens, run_scale, atom_dens_for_origen
+    get_burned_nuclide_data, get_burned_material_total_mass_dens, get_last_position_for_case, run_scale, \
+    atom_dens_for_origen
 
 PCTperDAY: float = 0.000000115740740741
 DEFAULT_F71_PATH: str = os.getenv(
@@ -735,10 +736,17 @@ def _find_case_f71(case_dirs: list[str], f71_name: str = 'origen.f71',
     return None
 
 
-def _total_activity_from_f71(f71_path: str, position: int = -1) -> float:
+def _step_activity_from_f71(f71_path: str, position: int | None = None) -> dict:
+    # Nuclide activities (Bq) at a position of a box B/C step F71. None reads the end of the step: each step deck
+    # runs one ORIGEN case, and its last position holds the final_atom_dens state recorded in the box json.
+    if position is None:
+        position = get_last_position_for_case(f71_path)
+    return get_burned_nuclide_data(f71_path, position, f71units='becq')
+
+
+def _total_activity_from_f71(f71_path: str, position: int | None = None) -> float:
     # Sum nuclide activities (Bq) at a given position from an ORIGEN F71 file.
-    activity = get_burned_nuclide_data(f71_path, position, f71units='becq')
-    return float(sum(activity.values()))
+    return float(sum(_step_activity_from_f71(f71_path, position).values()))
 
 
 def _case_dir_name(box: str, run_prefix: str | None, step: int | None = None) -> str:
@@ -772,7 +780,7 @@ def _step_case_dirs(case_prefix: str, step: int, run_prefix: str | None) -> list
 
 
 def _activity_timeseries_from_box_json(box_json_path: str, case_prefix: str,
-                                       position: int = -1, run_prefix: str | None = None) -> pd.DataFrame:
+                                       position: int | None = None, run_prefix: str | None = None) -> pd.DataFrame:
     # Build total activity vs time from per-case F71 outputs referenced by a box json5 file.
     # run_prefix defaults to the prefix encoded in the json name (boxB_xe135.json5 -> xe135).
     box_root = os.path.dirname(os.path.abspath(box_json_path))
@@ -827,7 +835,7 @@ def _write_activity_csv(pd_B_act: pd.DataFrame, pd_C_act: pd.DataFrame, out_pref
 
 
 def _activity_timeseries_per_nuclide_from_box_json(box_json_path: str, case_prefix: str,
-                                                   position: int = -1,
+                                                   position: int | None = None,
                                                    run_prefix: str | None = None) -> pd.DataFrame:
     # Build per-nuclide activity (Bq) vs time from per-case F71 outputs.
     # run_prefix defaults to the prefix encoded in the json name (boxB_xe135.json5 -> xe135).
@@ -849,7 +857,7 @@ def _activity_timeseries_per_nuclide_from_box_json(box_json_path: str, case_pref
         if f71_path is None:  # a zero row here would integrate a hole into the cumulative dose
             raise FileNotFoundError(f"No F71 found for {case_prefix} step {k_int:04d}; searched {case_dirs} under "
                                     f"{box_root}. Rerun the leaky-box calculation or pass run_prefix.")
-        activity = get_burned_nuclide_data(f71_path, position, f71units='becq')
+        activity = _step_activity_from_f71(f71_path, position)
         row = {'time [s]': time_s, 'time [d]': time_s / float(24 * 60 * 60)}
         row.update(activity)
         rows.append(row)

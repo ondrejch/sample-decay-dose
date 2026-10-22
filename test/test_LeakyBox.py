@@ -535,7 +535,8 @@ class TestCaseDirNaming(unittest.TestCase):
             def fake_data(path, pos, f71units='becq'):
                 return {'xe-135': float(len(os.path.basename(os.path.dirname(path))))}
 
-            with patch('leaky_box_origen.LeakyBox.get_burned_nuclide_data', side_effect=fake_data) as data:
+            with patch('leaky_box_origen.LeakyBox.get_burned_nuclide_data', side_effect=fake_data) as data, \
+                 patch('leaky_box_origen.LeakyBox.get_last_position_for_case', return_value=2):
                 df = _activity_timeseries_per_nuclide_from_box_json(box_json, 'box_B')
             used = [os.path.basename(os.path.dirname(c[0][0])) for c in data.call_args_list]
         self.assertEqual(used, ['_box_B_xe135_0002_leak', '_box_B_0003_leak'])  # legacy fallback for step 3
@@ -565,6 +566,7 @@ class TestComputeDoseFromBox(unittest.TestCase):
             kwargs = dict(chi_q_schedule=1e-3, breathing_rate_m3_s=3.3e-4, out_prefix='t',
                           activity_representation='inventory_bq', removal_rate_s=1e-5)
             with patch('leaky_box_origen.LeakyBox.get_burned_nuclide_data', side_effect=fake_data), \
+                 patch('leaky_box_origen.LeakyBox.get_last_position_for_case', return_value=2), \
                  patch('leaky_box_origen.LeakyBox.plot_dose_timeseries', return_value='x.png'):
                 per_cm3 = compute_dose_from_box(box_json, 'box_B', dcf_csv, **kwargs)
                 scaled = compute_dose_from_box(box_json, 'box_B', dcf_csv, activity_scale=5.0e5, **kwargs)
@@ -680,6 +682,7 @@ class TestDoseFromBoxReleaseSemantics(unittest.TestCase):
             box_json, dcf_csv = self._box_run(tmpdir)
             fake = lambda path, pos, f71units='becq': {'i-131': 1.0e6}
             with patch('leaky_box_origen.LeakyBox.get_burned_nuclide_data', side_effect=fake), \
+                 patch('leaky_box_origen.LeakyBox.get_last_position_for_case', return_value=2), \
                  patch('leaky_box_origen.LeakyBox.plot_dose_timeseries', return_value='x.png'):
                 with self.assertRaises(ValueError):  # no rates file and no removal_rate_s
                     compute_dose_from_box(box_json, 'box_B', dcf_csv, chi_q_schedule=1e-3, dcf_immersion_csv=None)
@@ -708,6 +711,7 @@ class TestDoseFromBoxReleaseSemantics(unittest.TestCase):
             box_json, dcf_csv = self._box_run(tmpdir)
             fake = lambda path, pos, f71units='becq': {'i-131': 1.0e6, 'kr-85': 1.0e9}
             with patch('leaky_box_origen.LeakyBox.get_burned_nuclide_data', side_effect=fake), \
+                 patch('leaky_box_origen.LeakyBox.get_last_position_for_case', return_value=2), \
                  patch('leaky_box_origen.LeakyBox.plot_dose_timeseries', return_value='x.png'):
                 out = compute_dose_from_box(box_json, 'box_B', dcf_csv, removal_rate_s=1e-5)
         self.assertAlmostEqual(out.loc[0, 'chi/Q [s/m^3]'], chi_q_schedule_rg145_400m()[0][1])
@@ -772,3 +776,32 @@ class TestF71PositionGuard(unittest.TestCase):
                 utils.get_burned_nuclide_atom_dens('x.f71', pos)
             with self.assertRaises(ValueError):
                 utils.get_burned_nuclide_data('x.f71', pos, 'becq')
+
+    @patch('sample_decay_dose.utils.subprocess.run')
+    def test_step_readers_default_to_the_last_position(self, mock_run):
+        # obiwan's info and csv views of a one-case step F71 with three positions; the readers' default
+        # position must pass the guard and select the end of the step.
+        import json5
+        from types import SimpleNamespace
+        from leaky_box_origen.LeakyBox import (_activity_timeseries_per_nuclide_from_box_json,
+                                               _activity_timeseries_from_box_json)
+        info = (b"   pos  time  power  flux  fluence  energy  initialhm  libpos  case  step  DCGNAB\n"
+                b"   (-)  (s)  (MW)  (n/cm2-s)  (n/cm2)  (MWd)  (MTIHM)  (-)  (-)  (-)  (-)\n"
+                + b"".join(b"  %d  %.1f  0  0  0  0  0  11  1  %d  DC----\n" % (p, 50.0 * (p - 1), p - 1)
+                           for p in (1, 2, 3)))
+        csv = b"case, 1, 1, 1\nstep, 0, 1, 2\nvolume, 1.0, 1.0, 1.0\nXe135, 1e3, 2e3, 3e3\nI131, 1e1, 2e1, 3e1\n"
+        mock_run.side_effect = lambda cmd, **kw: SimpleNamespace(
+            returncode=0, stderr=b"", stdout=info if '-format=info' in cmd else csv)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, '_box_B_0001_leak'))
+            open(os.path.join(tmpdir, '_box_B_0001_leak', 'origen.f71'), 'w').close()
+            box_json = os.path.join(tmpdir, 'boxB.json5')
+            with open(box_json, 'w') as f:
+                json5.dump({'1': {'time': 100.0, 'adens': {}}}, f)
+            per_nuclide = _activity_timeseries_per_nuclide_from_box_json(box_json, 'box_B')
+            total = _activity_timeseries_from_box_json(box_json, 'box_B')
+            first = _activity_timeseries_from_box_json(box_json, 'box_B', position=1)
+        self.assertEqual(per_nuclide.loc[0, 'xe-135'], 3e3)
+        self.assertEqual(per_nuclide.loc[0, 'i-131'], 3e1)
+        self.assertAlmostEqual(total.loc[0, 'activity [Bq]'], 3.03e3)
+        self.assertAlmostEqual(first.loc[0, 'activity [Bq]'], 1.01e3)
