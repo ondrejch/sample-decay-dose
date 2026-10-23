@@ -5,6 +5,7 @@ Anchor values are the published numbers read from the source pages:
     (OSTI copy 6294233.pdf, PDF pp. 131-162 and 191).
   - ICRP-72 (Annals of the ICRP 26(1)): Table A.2 adult e(50) [Sv/Bq], Table A.3 HTO, and
     Table A.4 immersion [Sv/day per Bq/m^3] (ANIB_26_1.pdf, printed pp. 44-89).
+  - FGR-12 (EPA-402-R-93-081): Table III.1 air-submersion h_E [Sv per Bq s m^-3] (402-r-93-081.pdf).
 A bad extraction (exponent misread, row shift, wrong absorption type) moves an anchor by at least
 a factor of 1.5, so each anchor must match within that factor.
 """
@@ -16,11 +17,13 @@ import numpy as np
 import pytest
 
 from leaky_box_origen import extract_fgr11_dcf as fgr
+from leaky_box_origen import extract_fgr12_dcf as fgr12
 from leaky_box_origen import extract_icrp72_dcf as icrp
 from leaky_box_origen.LeakyBox import LEAKY_BOX_DATA_DIR, MAX_DCF, MIN_DCF, _load_dcf_csv, _load_dcf_immersion_csv
 
 DATA = Path(LEAKY_BOX_DATA_DIR)
 HR_TO_DAY = 24.0
+S_TO_DAY = 86400.0
 
 # table file -> (header, {nuclide: published value in the CSV units})
 ANCHORS = {
@@ -54,6 +57,17 @@ ANCHORS = {
     }),
     'dcf_icrp72_immersion_adult.csv': ('nuclide,dcf_sv_per_bq_m3_day', {
         'ar-41': 5.3e-9, 'kr-85': 2.2e-11, 'kr-87': 3.4e-9, 'xe-133': 1.2e-10, 'xe-138': 4.7e-9,
+    }),
+    'dcf_fgr12_submersion.csv': ('nuclide,dcf_sv_per_bq_m3_day', {
+        'h-3': 3.31e-19 * S_TO_DAY,     # elemental
+        'ar-41': 6.50e-14 * S_TO_DAY,
+        'kr-85': 1.19e-16 * S_TO_DAY,
+        'kr-87': 4.12e-14 * S_TO_DAY,
+        'xe-133': 1.56e-15 * S_TO_DAY,
+        'xe-138': 5.77e-14 * S_TO_DAY,
+        'i-131': 1.82e-14 * S_TO_DAY,
+        'te-132': 1.03e-14 * S_TO_DAY,
+        'co-60': 1.26e-13 * S_TO_DAY,
     }),
 }
 
@@ -301,3 +315,57 @@ def test_icrp_fix_tables_are_plausible():
     for (_, _), name in icrp.NAME_FIXES.items():
         assert fgr.is_plausible_nuclide(name)
     assert icrp.HTO_ADULT_SV_BQ == pytest.approx(1.8e-11)
+
+
+def test_fgr12_and_fgr11_noble_gas_submersion_agree():
+    # FGR-12 Table III.1 replaces FGR-11 Table 2.3 with minor changes to the effective dose. Both CSVs hold
+    # Sv/day per Bq/m^3, so a unit slip (per hour against per second) would show up as a factor of 24 or 3600.
+    fgr11_sub = _load('dcf_fgr11_submersion_worker.csv')
+    fgr12_sub = _load('dcf_fgr12_submersion.csv')
+    common = [n for n in ('ar-41', 'kr-85', 'kr-85m', 'kr-87', 'kr-88', 'xe-133', 'xe-135', 'xe-138')
+              if n in fgr11_sub]
+    assert len(common) >= 6
+    for nuclide in common:
+        assert 0.7 <= fgr12_sub[nuclide] / fgr11_sub[nuclide] <= 1.3, nuclide
+
+
+# ------------------------------------------------------------------------------------------------
+# FGR-12 extractor helpers
+# ------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize('label, expected', [
+    ('H-31,2', 'h-3'),         # footnotes 1 and 2
+    ('Ar-372', 'ar-37'),       # footnote 2 printed against the mass number
+    ('Kr-85', 'kr-85'),
+    ('Sb-124n5', 'sb-124m2'),  # ICRP-38 second metastable state (20.2 min)
+    ('Sb-124m6', 'sb-124m'),   # 93 s state
+    ('Sb-128a', 'sb-128m'),    # 10.4 min isomer of an a/b pair
+    ('Xe-999', None),          # no Table A.1 entry
+])
+def test_fgr12_resolve_label(label, expected):
+    valid = {'H-3', 'Ar-37', 'Kr-85', 'Sb-124', 'Sb-124m', 'Sb-124n', 'Sb-128a', 'Sb-128b'}
+    assert fgr12.resolve_label(label, valid) == expected
+
+
+def test_fgr12_table_rows_are_checked_against_the_effective_sum():
+    lines = [
+        '                    Table III.1.   Dose Coefficients for Air Submersion',
+        'Nuclide     Gonad    Breast   Lung    R Marrow BSurface Thyroid Remainder Effective Skin',
+        'Hydrogen',
+        ' H-31,2    0.0      0.0      2.75E-18 0.0       0.0      0.0     0.0      3.31E-19 0.0',
+        ' Be-7      2.31E-15 2.64E-15 2.29E-15 2.20E-15 4.16E-15 2.35E-15 2.19E-15 2.36E-15 2.74E-15',
+        ' Be-10     1.16E-17 1.40E-17 9.69E-18 8.24E-18 3.37E-17 1.10E-17 9.19E-18 1.12E-16 1.29E-14',
+        ' Ca-41     0.0       0.0      0.0      0.0      0.0      0.0      0.0      0.0      0.0',
+        '                    Table III.2.   Dose Coefficients for Water Immersion',
+        '   Table A.1.   Summary Information on the Nuclear Transformation of the Radionuclides',
+        'H-3         12.35y B-                       -    0.006     -',
+        'Be-7         53.3d EC                       -    0.000   0.050',
+        'Be-10       1.6E6y B-                       -    0.252     -',
+        'Ca-41       1.4E5y EC                       -    0.000     -',
+        'Rn-218         35msA         Po-214   1.000E+00',
+    ]
+    valid = fgr12.table_a1_labels(lines)
+    assert valid == {'H-3', 'Be-7', 'Be-10', 'Ca-41', 'Rn-218'}
+    data, bad = fgr12.submersion_table(fgr12.parse_table_iii1(lines, valid))
+    assert data == {'h-3': pytest.approx(3.31e-19 * S_TO_DAY), 'be-7': pytest.approx(2.36e-15 * S_TO_DAY)}
+    assert [r.label for r in bad] == ['Be-10']  # effective printed 10x the weighted organ sum
