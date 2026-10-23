@@ -188,6 +188,7 @@ examples/**/*.xlsx
 
 # Local, untracked agent skills (copied from scale-deck-debug-agent)
 .opencode/
-# Local agent knowledge base and task cards
+# Local agent instructions, knowledge base and task cards
+AGENTS.md
 .kb/
 .collab/
