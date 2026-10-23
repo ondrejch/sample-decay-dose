@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+import warnings
 from unittest.mock import patch
 
 import numpy as np
@@ -134,6 +135,45 @@ class TestLeakyBoxHelpers(unittest.TestCase):
         for ele in LEAKED_ELEMENTS:
             self.assertIn(f'ele=[{ele}]', deck)
         self.assertNotIn('ele=[cs]', deck)
+
+    def test_inventory_to_release_rate_per_element(self):
+        df = pd.DataFrame({
+            "time [s]": [0.0, 1.0],
+            "time [d]": [0.0, 1.0 / 86400.0],
+            "xe-135": [10.0, 10.0],
+            "i-131": [10.0, 10.0],
+            "te-132": [10.0, 10.0],  # released only by a per-element schedule
+            "cs-137": [10.0, 10.0],  # no rate given, retained
+        })
+        mha = {"Xe": 5e-9, "kr": 5e-9, "i": 5e-10, "te": 5e-10}  # PSAR MHA enclosure rates
+        out = _inventory_to_release_rate(df, removal_rate_s=mha)
+        self.assertAlmostEqual(out.loc[0, "xe-135"], 10.0 * 5e-9)  # keys are lower-cased
+        self.assertAlmostEqual(out.loc[0, "i-131"], 10.0 * 5e-10)
+        self.assertAlmostEqual(out.loc[0, "te-132"], 10.0 * 5e-10)
+        self.assertEqual(out.loc[0, "cs-137"], 0.0)
+        # An element list narrows a per-element schedule; it cannot add elements to it.
+        out_i = _inventory_to_release_rate(df, removal_rate_s=mha, released_elements=["i", "cs"])
+        self.assertAlmostEqual(out_i.loc[0, "i-131"], 10.0 * 5e-10)
+        self.assertEqual(out_i.loc[0, "xe-135"], 0.0)
+        self.assertEqual(out_i.loc[0, "cs-137"], 0.0)
+        with self.assertRaises(ValueError):  # a zero rate would silently retain the element
+            _inventory_to_release_rate(df, removal_rate_s={"xe": 5e-9, "i": 0.0})
+        with self.assertRaises(ValueError):  # nothing left to release
+            _inventory_to_release_rate(df, removal_rate_s={"xe": 1e-9}, released_elements=["cs"])
+        with self.assertRaises(ValueError):
+            _inventory_to_release_rate(df, removal_rate_s={"Kr": 1e-9, "kr": 2e-9})
+
+    def test_deck_emits_per_element_removal_rates(self):
+        box = LeakyBox()
+        base = _make_box_a()
+        box.removal_rate = {"ar": 5e-9, "kr": 5e-9, "xe": 5e-9, "i": 5e-10, "te": 5e-10}
+        box.setup_cases(base)
+        self.assertEqual(tuple(box.nuclide_removal_rates), ("ar", "kr", "xe", "i", "te"))
+        self.assertEqual(box.nuc_leak, ["ar", "kr", "xe", "i", "te"])
+        deck = base.origen_deck()
+        self.assertIn("removal { rate=5e-09 ele=[xe] }", deck)
+        self.assertIn("removal { rate=5e-10 ele=[te] }", deck)
+        self.assertNotIn("ele=[h]", deck)  # elements absent from the dict keep their inventory
 
     def test_setup_cases_appends_leak_once(self):
         base = _make_box_a()
@@ -704,6 +744,59 @@ class TestDoseFromBoxReleaseSemantics(unittest.TestCase):
                     compute_dose_from_box(box_json, 'box_C', dcf_csv, chi_q_schedule=1e-3, dcf_immersion_csv=None,
                                           removal_rate_s=1e-5, run_prefix='xe135')
         self.assertAlmostEqual(BREATHING_RATE_M3_S, 22.2 / 86400.0)
+
+    def test_per_element_rates_read_from_the_run(self):
+        # A per-element run writes one rate per element; the dose step must read and apply them per element.
+        import json5
+        from leaky_box_origen.LeakyBox import (compute_dose_from_box, _removal_rate_from_run,
+                                               BREATHING_RATE_M3_S)
+        rates = {'box_A': {'removal_rate_s': {'xe': 5e-9, 'i': 5e-10, 'te': 5e-10}},
+                 'box_B': {'removal_rate_s': {'xe': 1e-7, 'i': 1e-7, 'te': 1e-7}},
+                 'box_C': {'removal_rate_s': {'xe': 0.0, 'i': 0.0}},
+                 'released_elements': ['xe', 'i', 'te']}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            box_json, dcf_csv = self._box_run(tmpdir)  # inhalation DCF for i-131 only
+            with open(os.path.join(tmpdir, 'leaky_boxes_rates_xe135.json5'), 'w') as f:
+                json5.dump(rates, f)
+            self.assertEqual(_removal_rate_from_run(box_json, 'box_B', 'xe135'),
+                             {'xe': 1e-7, 'i': 1e-7, 'te': 1e-7})
+            with self.assertRaises(ValueError):  # all-zero box C stays a surrogate, not a release
+                _removal_rate_from_run(box_json, 'box_C', 'xe135')
+            fake = lambda path, pos, f71units='becq': {'i-131': 1.0e6, 'xe-133': 1.0e6}
+            with patch('leaky_box_origen.LeakyBox.get_burned_nuclide_data', side_effect=fake), \
+                 patch('leaky_box_origen.LeakyBox.get_last_position_for_case', return_value=2), \
+                 patch('leaky_box_origen.LeakyBox.plot_dose_timeseries', return_value='x.png'):
+                out = compute_dose_from_box(box_json, 'box_B', dcf_csv, chi_q_schedule=1e-3,
+                                            dcf_immersion_csv=None, max_missing_dcf_fraction=None)
+        # i-131 releases at its own element rate; xe-133 has no DCF here and adds nothing.
+        expected_rate = 1e-3 * BREATHING_RATE_M3_S * (1.0e6 * 1e-7) * 1e-8
+        self.assertAlmostEqual(out.loc[0, 'dose_rate [Sv/s]'] / expected_rate, 1.0)
+
+    def test_leaking_box_c_releases_physically(self):
+        # A run that gives box C a removal rate of its own (a third leaking compartment) releases
+        # eps_C * A_C(t); the surrogate warning belongs to collector-only box C runs.
+        import json5
+        from leaky_box_origen.LeakyBox import compute_dose_from_box, _run_box_leaks, BREATHING_RATE_M3_S
+        with tempfile.TemporaryDirectory() as tmpdir:
+            box_json, dcf_csv = self._box_run(tmpdir)
+            boxc_json = os.path.join(tmpdir, 'boxC_xe135.json5')
+            with open(boxc_json, 'w') as f:
+                json5.dump({'1': {'time': 0.0, 'adens': {}}, '2': {'time': 100.0, 'adens': {}}}, f)
+            rates_path = os.path.join(tmpdir, 'leaky_boxes_rates_xe135.json5')
+            with open(rates_path, 'w') as f:
+                json5.dump({'box_B': {'removal_rate_s': 1e-7}, 'box_C': {'removal_rate_s': 5e-8}}, f)
+            self.assertTrue(_run_box_leaks(boxc_json, 'box_C', 'xe135'))
+            fake = lambda path, pos, f71units='becq': {'i-131': 1.0e6}
+            with patch('leaky_box_origen.LeakyBox.get_burned_nuclide_data', side_effect=fake), \
+                 patch('leaky_box_origen.LeakyBox.get_last_position_for_case', return_value=2), \
+                 patch('leaky_box_origen.LeakyBox.plot_dose_timeseries', return_value='x.png'):
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter('always')
+                    out = compute_dose_from_box(boxc_json, 'box_C', dcf_csv, chi_q_schedule=1e-3,
+                                                dcf_immersion_csv=None)
+        self.assertFalse([w for w in caught if 'surrogate' in str(w.message)])
+        expected_rate = 1e-3 * BREATHING_RATE_M3_S * (1.0e6 * 5e-8) * 1e-8  # the run's own eps_C
+        self.assertAlmostEqual(out.loc[0, 'dose_rate [Sv/s]'] / expected_rate, 1.0)
 
     def test_default_schedule_and_immersion_table(self):
         from leaky_box_origen.LeakyBox import compute_dose_from_box, chi_q_schedule_rg145_400m

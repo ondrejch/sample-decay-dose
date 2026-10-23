@@ -1,0 +1,48 @@
+=origen
+% MSRR PSAR Rev 0 EOL bounding isotopics (ACU_PSAR_REV_0)
+% Conservative: 1 MWth x 5 MW-years, no UF4 addition, off-gas off
+% => all fission products retained incl. gases (no removal block).
+% Library: pwr.rev04.orglib (thermal PWR f33; t100.f33 not in this install)
+% Provenance and caveats: README.md in this directory.
+
+options{
+    digits=6    % high-precision output
+}
+
+case(msrr_eol){
+    title="MSRR EOL bounding: 1 MWth x 5 MW-years, all FPs+gases retained (PSAR Rev 0)"
+
+    lib{
+        file="${DATA}/origen_library/pwr.rev04.orglib"
+        pos=1
+    }
+
+    % <500 kg UF4 @ 19.75% U-235 => 1595 mol U => 378.8 kg U (nominal 500 kg)
+    mat{
+        units=GRAMS
+        iso=[ u235=74050.0 u238=304700.0 ]
+    }
+
+    time{
+        t=[1 2 3 4 5]
+        units=YEARS
+    }
+    power=[5r1.0]    % 1 MWth, 5 annual steps
+
+    % print ALL nuclides (absolute cutoff 0.0), summed across sublibs
+    print{
+        rel_cutoff=no
+        cutoffs[ GRAMS=0.0 CURIES=0.0 ]
+        nuc{
+            total=yes
+            units=[GRAMS CURIES]
+        }
+        fisrate=ABS
+    }
+
+    save{
+        file="msrr_psar_eol.f71"
+        steps=ALL
+    }
+}
+end
