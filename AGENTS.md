@@ -10,10 +10,14 @@ This repository computes dose rates from decaying samples using SCALE/ORIGEN/MAV
 
 - `sample_decay_dose/`: core Python library (`SampleDose.py`, helpers, constants, data).
 - `examples/`: runnable scripts for common workflows and plotting.
-- `leaky_box_origen/`: leaky-box ORIGEN utilities and related scripts. `data/` holds the FGR-11 and ICRP-72 DCF
-  tables, regenerated from local PDFs by `extract_fgr11_dcf.py` and `extract_icrp72_dcf.py`.
+- `leaky_box_origen/`: leaky-box ORIGEN utilities and related scripts. `data/` holds the FGR-11, FGR-12 and ICRP-72
+  DCF tables, regenerated from local PDFs by `extract_fgr11_dcf.py`, `extract_fgr12_dcf.py` and
+  `extract_icrp72_dcf.py`.
 - `concrete_irrad/`: concrete-lid activation + MAVRIC dose how-to and the concrete/rebar mixed-layer homogenizer (`concrete_rebar_mixer.py`).
 - `play/`: scratch and experimental scripts outside the stable API.
+- `.kb/`: distilled, verified findings from work sessions (one file per topic; index in `.kb/README.md`). Local only, git-ignored.
+- `.collab/`: task cards for planned work, named `TASK-<DATE>-<summary>.md` (e.g. `TASK-2026-10-22-psar-mha-reproduction.md`).
+  Local only, git-ignored.
 - `test/`: unit tests.
 - Generated artifacts (`*.json5`, `*.json`, `*.csv`, `*.png`, `*.xlsx`) land in run directories and example launch
   directories, listed under Typical Outputs. They are not tracked.
@@ -38,6 +42,8 @@ This repository computes dose rates from decaying samples using SCALE/ORIGEN/MAV
 - Prefer editing source under `sample_decay_dose/`, `examples/`, `leaky_box_origen/`, and `test/`.
 - If a change affects physics assumptions or units, document the assumption in code comments and/or README.
 - Add or update tests when behavior changes.
+- Planned multi-step work gets a task card in `.collab/TASK-<DATE>-<summary>.md` (parameters, steps, resume context);
+  distilled findings from finished work go to `.kb/`, and the card is removed or marked done when the work lands.
 - When running heavy SCALE-dependent scripts, confirm intent before long runs.
 
 ## Typical Outputs
