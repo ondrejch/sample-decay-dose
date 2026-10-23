@@ -750,7 +750,7 @@ class TestDoseFromBoxReleaseSemantics(unittest.TestCase):
         import json5
         from leaky_box_origen.LeakyBox import (compute_dose_from_box, _removal_rate_from_run,
                                                BREATHING_RATE_M3_S)
-        rates = {'box_A': {'removal_rate_s': {'xe': 5e-9, 'i': 5e-10, 'te': 5e-10}},
+        rates = {'box_A': {'removal_rate_s': {'xe': 5e-9, 'i': 5e-10, 'te': 5e-10, 'cs': 0.0}},
                  'box_B': {'removal_rate_s': {'xe': 1e-7, 'i': 1e-7, 'te': 1e-7}},
                  'box_C': {'removal_rate_s': {'xe': 0.0, 'i': 0.0}},
                  'released_elements': ['xe', 'i', 'te']}
@@ -760,6 +760,8 @@ class TestDoseFromBoxReleaseSemantics(unittest.TestCase):
                 json5.dump(rates, f)
             self.assertEqual(_removal_rate_from_run(box_json, 'box_B', 'xe135'),
                              {'xe': 1e-7, 'i': 1e-7, 'te': 1e-7})
+            self.assertEqual(_removal_rate_from_run(box_json, 'box_A', 'xe135'),  # a zero rate retains cs
+                             {'xe': 5e-9, 'i': 5e-10, 'te': 5e-10})
             with self.assertRaises(ValueError):  # all-zero box C stays a surrogate, not a release
                 _removal_rate_from_run(box_json, 'box_C', 'xe135')
             fake = lambda path, pos, f71units='becq': {'i-131': 1.0e6, 'xe-133': 1.0e6}
@@ -898,3 +900,60 @@ class TestF71PositionGuard(unittest.TestCase):
         self.assertEqual(per_nuclide.loc[0, 'i-131'], 3e1)
         self.assertAlmostEqual(total.loc[0, 'activity [Bq]'], 3.03e3)
         self.assertAlmostEqual(first.loc[0, 'activity [Bq]'], 1.01e3)
+
+
+class TestRunSimulationRemovalRates(unittest.TestCase):
+    """ Every box removes the elements the run releases, and the rates file records what ORIGEN applied """
+
+    def _run(self, **leak_rates):
+        import json5
+        from leaky_box_origen.LeakyBox import DecayBoxB, _run_simulation
+        removal: dict = {}  # case directory -> removal rates handed to its ORIGEN deck
+
+        def fake_run_case(self):
+            removal[self.decay_leaks.case_dir] = dict(self.decay_leaks.nuclide_removal_rates or {})
+            self.decay_leaks.final_atom_dens = {'te-132': 0.5}
+
+        def fake_leak(self):
+            for i, t in ((1, 0.0), (2, 100.0)):
+                self.leak_rates[i] = {'time': t, 'rate': {'te-132': 1e-6}}
+                self.adens[i] = {'time': t, 'adens': {'te-132': 1.0}}
+
+        def fake_decay_c(self):
+            removal[self.case_dir] = dict(self.nuclide_removal_rates or {})
+            self.final_atom_dens = {'te-132': 0.1}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            start_cwd = os.getcwd()
+            try:
+                os.chdir(tmpdir)
+                with patch.object(LeakyBox, 'run_case', fake_run_case), \
+                     patch.object(LeakyBox, 'get_leak_rate_parallel', fake_leak), \
+                     patch.object(DecayBoxB, 'run_decay_sample', fake_decay_c):
+                    _run_simulation(_make_box_a(), False, False, 'run', **leak_rates)
+                with open('leaky_boxes_rates_run.json5') as f:
+                    recorded = json5.load(f)
+            finally:
+                os.chdir(start_cwd)
+        return removal, recorded
+
+    def test_scalar_pit_rate_removes_the_per_element_release_set(self):
+        # PSAR MHA pit reading: per-element enclosure and cell rates with Te, one pit rate for box C.
+        # Box C must remove Te as well, or ORIGEN keeps the Te inventory that the dose step releases.
+        enclosure = {'xe': 5e-9, 'i': 5e-10, 'te': 5e-10, 'cs': 0.0}  # cs is retained
+        cell = {'xe': 1e-7, 'i': 1e-7, 'te': 1e-7}
+        removal, recorded = self._run(box_A_leak_rate=enclosure, box_B_leak_rate=cell, box_C_leak_rate=1e-7)
+        self.assertEqual(removal['_box_C_run_0002'], {'xe': 1e-7, 'i': 1e-7, 'te': 1e-7})
+        self.assertEqual(removal['_box_B_run_0002_leak'], cell)
+        self.assertEqual(recorded['box_A']['removal_rate_s'], {'xe': 5e-9, 'i': 5e-10, 'te': 5e-10})
+        self.assertEqual(recorded['box_C']['removal_rate_s'], {'xe': 1e-7, 'i': 1e-7, 'te': 1e-7})
+        self.assertEqual(recorded['released_elements'], ['xe', 'i', 'te'])
+
+    def test_journal_scalars_keep_leaked_elements_and_a_collector_box_c(self):
+        from leaky_box_origen.LeakyBox import PCTperDAY
+        removal, recorded = self._run()
+        self.assertEqual(tuple(removal['_box_A_run_leak']), LEAKED_ELEMENTS)
+        self.assertEqual(set(removal['_box_B_run_0002_leak'].values()), {PCTperDAY * 0.1})
+        self.assertEqual(removal['_box_C_run_0002'], {})
+        self.assertEqual(recorded['box_A']['removal_rate_s'], {ele: PCTperDAY for ele in LEAKED_ELEMENTS})
+        self.assertEqual(recorded['box_C']['removal_rate_s'], 0.0)

@@ -72,11 +72,32 @@ def _element_removal_rates(removal_rate: float | Mapping[str, float],
         if len(rates) != len(removal_rate):
             raise ValueError(f"removal_rate keys collide after lower-casing: {sorted(removal_rate)}")
     else:
-        raise ValueError("removal_rate must be a positive number or a non-empty {element: rate [1/s]} mapping")
+        raise ValueError("removal_rate must be a non-negative number or a non-empty {element: rate [1/s]} mapping")
     for ele, rate in rates.items():
         if not math.isfinite(rate) or rate < 0.0:
             raise ValueError(f"removal rate of '{ele}' must be a finite non-negative number per second, got {rate!r}")
     return rates
+
+
+def _run_removal_rates(box_A_leak_rate: float | Mapping[str, float], box_B_leak_rate: float | Mapping[str, float],
+                       box_C_leak_rate: float | Mapping[str, float]
+                       ) -> tuple[dict[str, float], dict[str, float], dict[str, float], list[str]]:
+    """ Positive {element: rate [1/s]} removal rates that ORIGEN applies to boxes A, B and C, and the run's
+    released elements.
+
+    A scalar rate applies to every element the run releases. That set is the elements with a positive rate in
+    the per-element rates of any box, or LEAKED_ELEMENTS when every box takes one rate (the journal method).
+    A scalar box among per-element boxes therefore removes the same elements as its neighbours, so an element
+    that leaks into a box also leaks out of it. An empty dict leaves the box without removal (box C as a
+    collector).
+    """
+    given = (box_A_leak_rate, box_B_leak_rate, box_C_leak_rate)
+    run_elements: tuple[str, ...] = tuple(dict.fromkeys(
+        ele for rate in given if isinstance(rate, Mapping)
+        for ele, value in _element_removal_rates(rate).items() if value > 0.0)) or LEAKED_ELEMENTS
+    rates_A, rates_B, rates_C = ({ele: value for ele, value in _element_removal_rates(rate, run_elements).items()
+                                  if value > 0.0} for rate in given)
+    return rates_A, rates_B, rates_C, list(dict.fromkeys(rates_A | rates_B | rates_C))
 
 
 class Origen:
@@ -898,6 +919,12 @@ def _dcf_missing_hint(resolved: Path) -> str:
                 f"'python -m leaky_box_origen.extract_fgr11_dcf --pdf <path>' needs a local copy of the "
                 f"EPA FGR-11 PDF, which is not distributed with the repository "
                 f"(and pdftotext, pdftoppm and tesseract).")
+    if 'fgr12' in resolved.name:
+        return (f"DCF CSV not found: {resolved}. The FGR-12 table ships with the repository under "
+                f"{LEAKY_BOX_DATA_DIR}/; restore it from version control "
+                f"(git checkout -- leaky_box_origen/data/) or regenerate it with "
+                f"'python -m leaky_box_origen.extract_fgr12_dcf --pdf <path>' from the EPA PDF "
+                f"402-r-93-081.pdf (needs pdftotext).")
     if 'site-packages' in str(LEAKY_BOX_DATA_DIR):
         return (f"DCF CSV not found: {resolved}. Expected under {LEAKY_BOX_DATA_DIR}/; "
                 f"reinstall the sample_decay_dose package to restore bundled data.")
@@ -1229,7 +1256,8 @@ def plot_dose_rate_comparison(csv_a: str, csv_b: str, label_a: str, label_b: str
 def _removal_rate_from_run(box_json_path: str, case_prefix: str,
                            run_prefix: str | None) -> float | dict[str, float]:
     # The removal rate ORIGEN applied to this box, from the rates file _run_simulation writes next to the box json.
-    # Scalar for the journal runs; a per-element run records one rate per element and the dict is returned as-is.
+    # Older journal runs record a scalar. Per-element rates come back as a dict of the positive entries, because a
+    # zero rate leaves that element in the box.
     rates_path = os.path.join(os.path.dirname(os.path.abspath(box_json_path)),
                               _out_name(run_prefix, 'leaky_boxes_rates', '.json5'))
 
@@ -1251,13 +1279,13 @@ def _removal_rate_from_run(box_json_path: str, case_prefix: str,
             applied = {str(ele).strip().lower(): float(rate) for ele, rate in applied.items()}
         except (TypeError, ValueError):
             raise no_rate() from None
+        applied = {ele: rate for ele, rate in applied.items() if rate > 0.0}
     else:
         try:
             applied = float(applied)
         except (TypeError, ValueError):
             raise no_rate() from None
-    positive = applied.values() if isinstance(applied, Mapping) else (applied,)
-    if not all(rate > 0.0 for rate in positive):
+    if not (applied if isinstance(applied, Mapping) else applied > 0.0):
         raise ValueError(f"{case_prefix} has no removal in the ORIGEN run ({rates_path}), so its inventory is not "
                          f"released at a rate of its own. Pass removal_rate_s explicitly to use rate * A(t) as a "
                          f"release-rate surrogate, or use case_prefix='box_B' for the environmental release.")
@@ -1268,11 +1296,10 @@ def _run_box_leaks(box_json_path: str, case_prefix: str, run_prefix: str | None)
     # True when the run gave this box a positive removal rate of its own, i.e. it is a leaking
     # compartment rather than a collector, so rate * A(t) is its physical release rather than a surrogate.
     try:
-        rate = _removal_rate_from_run(box_json_path, case_prefix, run_prefix)
+        _removal_rate_from_run(box_json_path, case_prefix, run_prefix)
     except ValueError:
         return False
-    rates = rate.values() if isinstance(rate, Mapping) else (rate,)
-    return all(r > 0.0 for r in rates)
+    return True
 
 
 def compute_dose_from_box(box_json_path: str, case_prefix: str,
@@ -1298,8 +1325,10 @@ def compute_dose_from_box(box_json_path: str, case_prefix: str,
     The release to the environment is the leak out of box B, removal_rate_s(box B) * A_B(t), so the
     environmental dose comes from case_prefix='box_B' with the default 'inventory_bq'. Box C collects that
     release and, in the journal method, has no removal, so its inventory is a cumulative amount. The journal
-    method treats removal_rate_s * A_C(t) as a conservative release-rate surrogate; box C with 'inventory_bq'
-    then needs an explicit removal_rate_s and warns that the result is a surrogate. A run that gives box C a
+    method uses removal_rate_s * A_C(t) as a release-rate surrogate; box C with 'inventory_bq' then needs an
+    explicit removal_rate_s and warns that the result is a surrogate. The surrogate is about removal_rate_s / lambda
+    of the box-B release for a nuclide with decay constant lambda >> removal_rate_s (about 1 % for I-131 at
+    0.1 %/day), so it is far below the physical release for the nuclides that dominate the dose. A run that gives box C a
     positive removal rate of its own (a leaking third compartment, see `_run_simulation`) releases
     ε_C * A_C(t) physically, and that case_prefix carries no surrogate warning.
 
@@ -1334,9 +1363,10 @@ def compute_dose_from_box(box_json_path: str, case_prefix: str,
         chi_q_schedule = chi_q_schedule_rg145_400m()
     if activity_representation == 'inventory_bq' and case_prefix.lower().startswith('box_c'):
         if not _run_box_leaks(box_json_path, case_prefix, run_prefix or _run_prefix_from_box_json(box_json_path)):
-            warnings.warn("Box C has no removal, so removal_rate_s * A_C(t) is a conservative release-rate surrogate "
-                          "(journal method), not the physical release. The environmental release is the box-B leak: "
-                          "case_prefix='box_B'.", stacklevel=2)
+            warnings.warn("Box C has no removal, so removal_rate_s * A_C(t) is a release-rate surrogate (journal "
+                          "method). For a nuclide with decay constant lambda >> removal_rate_s it is about "
+                          "removal_rate_s / lambda of the physical release. The environmental release is the box-B "
+                          "leak: case_prefix='box_B'.", stacklevel=2)
     if activity_representation == 'inventory_bq' and removal_rate_s is None:
         removal_rate_s = _removal_rate_from_run(box_json_path, case_prefix,
                                                 run_prefix or _run_prefix_from_box_json(box_json_path))
@@ -1428,13 +1458,12 @@ def _run_simulation(box_a: DecayBoxA, apply_volume_scaling: bool, do_skip_calcs:
                     box_C_leak_rate: float | dict[str, float] = 0.0
                     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, float, float, float]:
     # Core leaky-box simulation (A->B->C) shared by tests and F71 runs. A leak rate is either one
-    # removal constant for every released element or an {element: rate} mapping (PSAR MHA style).
+    # removal constant for every released element or an {element: rate} mapping (PSAR MHA style);
+    # _run_removal_rates resolves both to the per-element rates ORIGEN applies.
     # Box C collects the Box B leak and has no removal by default; a positive box_C_leak_rate turns it
     # into a real third compartment that leaks on its own, as the PSAR MHA pit is read to do.
-    box_C_rates: dict[str, float] = {ele: rate for ele, rate in _element_removal_rates(box_C_leak_rate).items()
-                                     if rate > 0.0}
-    released_elements: list[str] = list(dict.fromkeys(
-        _element_removal_rates(box_A_leak_rate) | _element_removal_rates(box_B_leak_rate) | box_C_rates))
+    box_A_rates, box_B_rates, box_C_rates, released_elements = _run_removal_rates(
+        box_A_leak_rate, box_B_leak_rate, box_C_leak_rate)
 
     # Boxes B and C are modelled as 1 cm^3 volumes. Box A atom densities are per cm^3, so each B/C
     # feed is the leak from 1 cm^3 of box A (unless apply_volume_scaling rescales it). B/C
@@ -1445,7 +1474,7 @@ def _run_simulation(box_a: DecayBoxA, apply_volume_scaling: bool, do_skip_calcs:
     # (e.g. the xe135 and xe136 tests) do not overwrite each other's F71 files.
     box_a.case_dir = _case_dir_name('box_A', out_prefix)
     box_A = LeakyBox()
-    box_A.removal_rate = box_A_leak_rate
+    box_A.removal_rate = box_A_rates or 0.0
     box_A.setup_cases(box_a)
     box_A.run_case()
     box_A.get_leak_rate_parallel()
@@ -1455,8 +1484,10 @@ def _run_simulation(box_a: DecayBoxA, apply_volume_scaling: bool, do_skip_calcs:
     with open(_out_name(out_prefix, 'boxA_leak_rate', '.json5'), 'w') as f:  # Save to json
         json5.dump(box_A.leak_rates, f, indent=4)
     with open(_out_name(out_prefix, 'leaky_boxes_rates', '.json5'), 'w') as f:  # removal rates for the dose step
-        json5.dump({'box_A': {'removal_rate_s': box_A_leak_rate}, 'box_B': {'removal_rate_s': box_B_leak_rate},
-                    'box_C': {'removal_rate_s': box_C_leak_rate}, 'volume_cm3': volume,
+        # The per-element rates ORIGEN applied, so the dose step releases only what each box lost. A box
+        # without removal records 0.0.
+        json5.dump({'box_A': {'removal_rate_s': box_A_rates or 0.0}, 'box_B': {'removal_rate_s': box_B_rates or 0.0},
+                    'box_C': {'removal_rate_s': box_C_rates or 0.0}, 'volume_cm3': volume,
                     'released_elements': released_elements}, f, indent=4)
 
     origen_box_B: dict = {}  # ORIGEN runs that describe decay of box_B nuclides without leak
@@ -1493,7 +1524,7 @@ def _run_simulation(box_a: DecayBoxA, apply_volume_scaling: bool, do_skip_calcs:
         origen_box_B[k].case_dir = _case_dir_name('box_B', out_prefix, k)
 
         box_B[k] = LeakyBox()
-        box_B[k].removal_rate = box_B_leak_rate
+        box_B[k].removal_rate = box_B_rates or 0.0
         box_B[k].setup_cases(origen_box_B[k])
         box_B[k].run_case()
         box_B[k].get_leak_rate_parallel()

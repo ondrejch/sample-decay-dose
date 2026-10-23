@@ -42,9 +42,11 @@ F71-based leakage simulations live.
   removal rates it applied to `leaky_boxes_rates_<prefix>.json5`, and
   `compute_dose_from_box(boxB_<prefix>.json5, 'box_B')` reads `eps_B` from there
   unless `removal_rate_s` is given. Box C has no removal, so its inventory is the
-  cumulative release. The journal method uses `eps * A_C(t)` as a conservative
-  release-rate surrogate; box C with `inventory_bq` therefore needs an explicit
-  `removal_rate_s` and warns that the result is a surrogate.
+  cumulative release. The journal method uses `eps * A_C(t)` as a release-rate
+  surrogate; box C with `inventory_bq` therefore needs an explicit
+  `removal_rate_s` and warns that the result is a surrogate. For a nuclide with
+  decay constant `lambda >> eps` the surrogate is about `eps / lambda` of the
+  box-B release (about 1 % for I-131 at 0.1 %/day), so it is a screening number.
 - Dose defaults (journal method): chi/Q from `chi_q_schedule_rg145_400m()`
   (RG 1.145, 400 m), breathing rate `BREATHING_RATE_M3_S` (22.2 m^3/d), ICRP-72 maximum
   inhalation DCF across types F/M/S, and the ICRP-72 immersion table for the noble
@@ -75,10 +77,16 @@ F71-based leakage simulations live.
 | `dcf_icrp72_anib26_1_adult.csv` | ICRP-72 Table A.2, adult | e(50) [Sv/Bq] | Type M where listed, otherwise the fastest listed type | 738 |
 | `dcf_icrp72_inhalation_adult_max.csv` | ICRP-72 Table A.2, adult | e(50) [Sv/Bq] | largest value over the listed types (F/M/S) | 738 |
 | `dcf_icrp72_immersion_adult.csv` | ICRP-72 Table A.4 | effective dose rate [Sv/day per Bq/m^3] | tabulated value | 26 |
+| `dcf_fgr12_submersion.csv` | FGR-12 Table III.1 | h_E [Sv/day per Bq/m^3] (`dcf_sv_per_bq_m3_day`) | tabulated value x 86400 (FGR-12 prints Sv per Bq s m^-3); rows with h_E = 0 left out | 806 |
 
-- Sources: EPA Federal Guidance Report No. 11, EPA-520/1-88-020 (1988), and ICRP
-  Publication 72, Annals of the ICRP 26(1) (1996). ANIB_26_1 is the file name of that
-  Annals issue.
+- Sources: EPA Federal Guidance Report No. 11, EPA-520/1-88-020 (1988), EPA Federal
+  Guidance Report No. 12, EPA-402-R-93-081 (1993), and ICRP Publication 72, Annals of
+  the ICRP 26(1) (1996). ANIB_26_1 is the file name of that Annals issue.
+- FGR-12 Table III.1 gives air-submersion coefficients for 825 radionuclides, iodine and
+  tellurium included, and replaces FGR-11 Table 2.3. Short-lived noble gases such as
+  Kr-89, Kr-90, Xe-137, Xe-139 and Xe-140 are not tabulated. Its H-3 row is elemental
+  tritium. ICRP-38 isomer labels (Nb-89a/b, Sb-124n, Ir-190n, ...) are mapped by half-life
+  to the ground, `m` and `m2` names used by ORIGEN.
 - FGR-11 values are for workers (ICRP-30 lung model). ICRP-72 values are for adult
   members of the public (ICRP-66 lung model). Mercury in ICRP-72 lists organic and
   inorganic forms; the larger value of each type is kept.
@@ -116,6 +124,10 @@ F71-based leakage simulations live.
   within 1.2%. Rows the automatic pass cannot settle are read by eye from the page
   images and listed with their page number in `MANUAL_CORRECTIONS` (17 of 1351 Table
   2.1 rows).
+- FGR-12: `python -m leaky_box_origen.extract_fgr12_dcf [--pdf PDF/402-r-93-081.pdf]`. It needs
+  `pdftotext`. The EPA PDF has an exact text layer, so the table is parsed without OCR. Every
+  row must satisfy h_E = sum_T w_T h_T with the ICRP-26 weights, and Table A.1 of the report
+  resolves the footnote markers printed against the nuclide labels.
 - ICRP-72: `python -m leaky_box_origen.extract_icrp72_dcf [--pdf PDF/ANIB_26_1.pdf] [--audit <dir>]`.
   It needs `pdftoppm` and `tesseract`, plus numpy, scipy and Pillow. Each Table A.2 page
   is read five times (three full-page readings and two readings of the value columns).
