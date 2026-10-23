@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 """Leaky-box PSAR cases for the MSRR (1 MWth molten-salt research reactor) journal paper.
 
-Two source-term cases share one driver and one run directory:
+Two cases share one driver and one run directory:
 
   eol - bounding end-of-life inventory (5 years at 1 MWth, off-gas off, no UF4 make-up) with the
         journal-standard leak rates (Box A 1 %/d, Box B 0.1 %/d), 90-day horizon, ICRP-72 and
         FGR-11 dose coefficients, and the RG 1.145 / 400 m chi/Q schedule.
 
-  mha - reproduction of the PSAR Rev 0 Section 13.1.1 Maximum Hypothetical Accident: one-year
-        source term (f71 position 2), the PSAR barrier leak rates as per-element removal rates
-        (Box A enclosure 0.05 %/d for the noble gases and 0.005 %/d for the other released
-        elements, Box B reactor cell 1 %/d for all of them), Te released with the volatiles,
-        60-day horizon, FGR-11 dose coefficients, the PSAR constant chi/Q = 1/115.6 s/m^3
-        (100 m, stability class F, 1 m/s, building wake) and the ICRP-23 0.958 m^3/h inhalation
-        rate. The PSAR reports 48.66 mrem at 100 m over 60 days, which the report phase compares
-        against Box B.
+  mha - the methodology of the PSAR Rev 0 Section 13.1.1 Maximum Hypothetical Accident. The
+        one-year source term (f71 position 2) liberates Te, I, Xe, Br and Kr (PSAR Table 13.1-1)
+        together with the other enclosure gases H, He, O, N and Ar. They pass through three
+        compartments: the reactor enclosure (Box A: 0.05 %/d for Ar, Kr and Xe, 0.005 %/d for the
+        rest), the reactor cell (Box B: 1 %/d) and the systems pit (Box C). The release
+        to the atmosphere is the pit leak, L_pit times the pit activity (PSAR Eq. 13.1-2), and the
+        research bay above the pit has no holdup. The PSAR defines L_pit without a value; the
+        driver takes 1 %/d from the Section 13.1.1 statement that the cell leaks at 1 %/d into
+        the pit and from the pit into the research bay. Dose: 60 days, FGR-11 inhalation and FGR-12
+        air-submersion coefficients, the PSAR constant chi/Q = 1/115.6 s/m^3 (100 m, stability
+        class F, 1 m/s, building wake) and the ICRP-23 0.958 m^3/h breathing rate. The report phase prints the published 48.66 mrem
+        for context; the PSAR solved the transport for selected mass chains in MATLAB and
+        integrated a fitted dose-rate curve, so the two numbers come from different calculations.
 
 Both f71 positions are mass-only ORIGEN output, so the same 5.5e5 volume rescaling applies to
 both: the driver divides Box A atom densities by the salt volume and uses that volume as the
@@ -23,8 +28,9 @@ dose-phase activity_scale. See README.md in this directory for provenance and ca
 Usage:  run_psar_eol_leaky_box.py [phase] [case]      phase = sim | dose | report | all
                                                       case  = eol | mha      (default: all eol)
 
-Long runs: launch the sim phase detached, `setsid nohup python3 ... < /dev/null &` (a plain
-`nohup ... &` dies with the launching shell's process group).
+Long runs: launch the sim phase detached, `(setsid python3 ... </dev/null >log 2>&1 &)`. A plain
+`nohup ... &` dies with the launching shell's process group, and without the parentheses the launching
+shell waits on the job's terminal.
 """
 import os
 import sys
@@ -73,17 +79,24 @@ ICRP72_INHAL = 'dcf_icrp72_inhalation_adult_max.csv'
 ICRP72_IMMERSION = 'dcf_icrp72_immersion_adult.csv'
 FGR11_INHAL = 'dcf_fgr11_inhalation_worker.csv'
 FGR11_SUBMERSION = 'dcf_fgr11_submersion_worker.csv'
+FGR12_SUBMERSION = 'dcf_fgr12_submersion.csv'
 DCF_ICRP72 = ('icrp72', ICRP72_INHAL, ICRP72_IMMERSION)
 DCF_FGR11 = ('fgr11', FGR11_INHAL, FGR11_SUBMERSION)
+# PSAR Sec. 13.1.1 combines FGR-11 inhalation with FGR-12 external (air-submersion) coefficients.
+DCF_PSAR = ('fgr11_fgr12', FGR11_INHAL, FGR12_SUBMERSION)
 
 # PSAR Sec. 13.1.1 MHA assumptions (Table 13.1-1, Eqs. 13.1-5/13.1-8, Ref. 13.4-9).
 DAY_S = 86400.0
 MHA_NOBLE_RATE_S = 0.05e-2 / DAY_S      # enclosure leak, noble-gas radionuclides
 MHA_OTHER_RATE_S = 0.005e-2 / DAY_S     # enclosure leak, all other nuclides
 MHA_CELL_RATE_S = 1e-2 / DAY_S          # reactor cell leak, all gases
-# Box A removes the nine journal elements plus Te, which the PSAR treats as a vapor species.
-# Adding cs/rb here would release the salt's in-grown Cs/Rb too, which the PSAR keeps behind its
-# five-element liberation rule, so they stay out and the few-percent bias is stated in the paper.
+# Systems pit leak L_pit of Eq. 13.1-2. The PSAR gives no value; Sec. 13.1.1 states that the cell
+# leaks at 1 %/d into the pit and from the pit into the research bay, which has no holdup.
+MHA_PIT_RATE_S = MHA_CELL_RATE_S
+# Table 13.1-1 liberates 100 % of Te, I, Xe, Br and Kr at the start of the MHA. H, He, O, N and Ar
+# are gases in the enclosure as well and leak with them, Ar at the noble-gas rate, so the released set
+# is the nine journal elements plus Te. Daughters of other elements (Cs, Rb, Sr) stay in the box they
+# are born in, because element-level removal of Cs/Rb would also release the salt's own Cs/Rb.
 MHA_LEAKED_ELEMENTS: tuple[str, ...] = LEAKED_ELEMENTS + ('te',)
 MHA_BOX_A_RATES: dict[str, float] = {**{ele: MHA_NOBLE_RATE_S for ele in ('ar', 'kr', 'xe')},
                                      **{ele: MHA_OTHER_RATE_S
@@ -91,7 +104,7 @@ MHA_BOX_A_RATES: dict[str, float] = {**{ele: MHA_NOBLE_RATE_S for ele in ('ar', 
 MHA_BOX_B_RATES: dict[str, float] = {ele: MHA_CELL_RATE_S for ele in MHA_LEAKED_ELEMENTS}
 MHA_CHI_Q_S_M3 = 1.0 / 115.6            # Eq. 13.1-5, 100 m, class F, 1 m/s, with building wake
 MHA_BREATHING_M3_S = 0.958 * 24.0 / DAY_S   # ICRP-23 reference man, 22.992 m^3/d
-MHA_DOSE_MREM = 48.66                   # PSAR Fig. 13.1-1 integrated over 60 d at 100 m
+MHA_DOSE_MREM = 48.66                   # PSAR fit to Fig. 13.1-1 integrated over 60 d at 100 m
 
 CASES: dict[str, dict[str, Any]] = {
     'eol': {
@@ -108,8 +121,10 @@ CASES: dict[str, dict[str, Any]] = {
         'breathing_m3_s': None,         # default 22.2 m^3/d
         'box_c_rate_s': PCTperDAY * 0.1,
         'release_box': 'boxB',
+        'dose_boxes': ('boxB', 'boxC'),  # Box B release and the journal Box C surrogate
         'reference_mrem': None,
         'plot_comparison': True,
+        'plot_mha_dose': False,
     },
     'mha': {
         'f71_time_s': 3.15576e7,        # position 2: one year of operation (1 MW-year)
@@ -118,35 +133,17 @@ CASES: dict[str, dict[str, Any]] = {
         'plot_isotopes': ('te-132', 'i-131', 'i-133', 'xe-133', 'kr-85'),
         'box_A_leak_rate': MHA_BOX_A_RATES,
         'box_B_leak_rate': MHA_BOX_B_RATES,
-        'box_c_leak_rate': 0.0,         # pit read as pass-through: no holdup, no extra delay
+        'box_c_leak_rate': MHA_PIT_RATE_S,   # one rate for every element the run releases
         'released_elements': MHA_LEAKED_ELEMENTS,
-        'dcf_tables': (DCF_FGR11,),     # the PSAR number is an FGR-11 result
+        'dcf_tables': (DCF_PSAR,),      # FGR-11 inhalation and FGR-12 submersion, as the PSAR
         'chi_q': MHA_CHI_Q_S_M3,
         'breathing_m3_s': MHA_BREATHING_M3_S,
-        'box_c_rate_s': MHA_CELL_RATE_S,   # surrogate rate for the Box C screening number only
-        'release_box': 'boxB',
+        'box_c_rate_s': None,           # the pit leaks at its own rate: read it from the run
+        'release_box': 'boxC',          # Eq. 13.1-2: the atmosphere receives the pit leak
+        'dose_boxes': ('boxC',),        # the Box B leak feeds the pit and reaches no receptor
         'reference_mrem': MHA_DOSE_MREM,
         'plot_comparison': False,       # one DCF set: nothing to compare
-    },
-    'mha_pit': {
-        # Same MHA, but the systems pit is read as a third leaking compartment (PSAR Eq 13.1-2 uses
-        # L_pit and Table 13.1-1 lists no pit rate, so 1 %/day is the reading under test). The
-        # environmental release is then the Box C leak, and Box C needs no surrogate rate.
-        'f71_time_s': 3.15576e7,
-        'decay_days': 60.0,
-        'out_prefix': 'f71_psar_mha_pit_60d',
-        'plot_isotopes': ('te-132', 'i-131', 'i-133', 'xe-133', 'kr-85'),
-        'box_A_leak_rate': MHA_BOX_A_RATES,
-        'box_B_leak_rate': MHA_BOX_B_RATES,
-        'box_c_leak_rate': MHA_CELL_RATE_S,
-        'released_elements': MHA_LEAKED_ELEMENTS,
-        'dcf_tables': (DCF_FGR11,),
-        'chi_q': MHA_CHI_Q_S_M3,
-        'breathing_m3_s': MHA_BREATHING_M3_S,
-        'box_c_rate_s': None,           # physical: read the run's own box-C rate
-        'release_box': 'boxC',
-        'reference_mrem': MHA_DOSE_MREM,
-        'plot_comparison': False,
+        'plot_mha_dose': True,          # dose rate and cumulative dose, as PSAR Fig. 13.1-1
     },
 }
 
@@ -205,7 +202,8 @@ def dose_kwargs(case: dict[str, Any], tag: str, box: str) -> dict[str, Any]:
     if box == 'boxC':
         if case['box_c_rate_s'] is not None:
             # Box C has no removal of its own; the journal method uses the cell removal rate times
-            # the cumulative Box C inventory as a conservative release-rate surrogate.
+            # the cumulative Box C inventory as a release-rate surrogate. For I-131 it is about
+            # removal rate / decay constant of the Box B release, so it is a screening number only.
             kwargs['removal_rate_s'] = case['box_c_rate_s']
         # else: this run leaks Box C for real, so the dose step reads the run's own box-C rate.
     return kwargs
@@ -215,7 +213,8 @@ def run_dose(case: dict[str, Any]) -> None:
     out_prefix = case['out_prefix']
     with _in_directory(RUN_DIR):
         for tag, _, _ in case['dcf_tables']:
-            for box, case_prefix in (('boxB', 'box_B'), ('boxC', 'box_C')):
+            for box in case['dose_boxes']:
+                case_prefix = {'boxB': 'box_B', 'boxC': 'box_C'}[box]
                 compute_dose_from_box(_out_name(out_prefix, box, '.json5'), case_prefix,
                                       **dose_kwargs(case, tag, box))
 
@@ -234,16 +233,16 @@ def run_dose(case: dict[str, Any]) -> None:
 
 
 def run_report(case: dict[str, Any]) -> None:
-    """Print the horizon dose against the PSAR reference and the per-nuclide attribution.
+    """Print the horizon dose of the case's environmental release and its per-nuclide attribution.
 
     Dose is linear in the DCF-weighted release, so a nuclide's share comes from re-running the dose
-    machinery with a single-nuclide DCF map. Box B is the environmental release; Box C is the
-    journal surrogate.
+    machinery with a single-nuclide DCF map. The release is the Box B leak for eol and the systems-pit
+    (Box C) leak for mha.
     """
     import pandas as pd
 
     tag, dcf_inhal_csv, dcf_imm_csv = case['dcf_tables'][0]
-    box = case['release_box']                       # boxB: pass-through pit; boxC: leaking pit
+    box = case['release_box']
     case_prefix = {'boxB': 'box_B', 'boxC': 'box_C'}[box]
     out_prefix = case['out_prefix']
     chi_q = case['chi_q'] if case['chi_q'] is not None else chi_q_schedule_rg145_400m()
@@ -263,8 +262,8 @@ def run_report(case: dict[str, Any]) -> None:
         dose_mrem = float(total['dose [rem]'].iloc[-1]) * 1000.0
         print(f'{box} ({case_prefix}) {case["decay_days"]:.0f}-day dose, {tag}: {dose_mrem:.4f} mrem')
         if case['reference_mrem']:
-            print(f'PSAR MHA reference {case["reference_mrem"]} mrem -> '
-                  f'ratio {dose_mrem / case["reference_mrem"]:.3f}')
+            print(f'PSAR Sec. 13.1.1 publishes {case["reference_mrem"]} mrem from its own calculation '
+                  f'(selected mass chains, fitted dose rate)')
 
         rows: list[tuple[str, float]] = []
         for nuclide in nuclide_cols:
@@ -279,47 +278,35 @@ def run_report(case: dict[str, Any]) -> None:
                 rows.append((nuclide, share))
         rows.sort(key=lambda r: -r[1])
         attributed = sum(s for _, s in rows)
+        # Nuclides without a DCF add nothing to either sum, so the two agree up to rounding.
         print(f'attributed {attributed:.4f} mrem of {dose_mrem:.4f} mrem '
-              f'({100.0 * attributed / dose_mrem:.1f}%; the rest is nuclides with no DCF)')
+              f'({100.0 * attributed / dose_mrem:.1f}%, sum of the single-nuclide doses)')
         for nuclide, share in rows[:12]:
             print(f'  {nuclide:10s} {share:12.4f} mrem  {100.0 * share / dose_mrem:5.1f}%')
         pd.DataFrame(rows, columns=['nuclide', 'dose_mrem']).to_csv(
             _out_name(out_prefix, f'leaky_boxes_attribution_{tag}_{box}', '.csv'), index=False)
-        if box == 'boxC':  # the pit reading is the second half of the bracket
-            bracket = plot_mha_bracket()
-            if bracket:
-                print(f'bracket figure: {bracket}')
+        if case['plot_mha_dose']:
+            print(f'dose figure: {plot_mha_dose(f"{out_prefix}_{tag}_{box}")}')
     print(f'report phase complete: {RUN_DIR} (prefix {out_prefix})')
 
 
-def plot_mha_bracket(out_prefix_other: str = 'f71_psar_mha_60d', out_prefix_pit: str = 'f71_psar_mha_pit_60d',
-                     reference_mrem: float = MHA_DOSE_MREM) -> str | None:
-    """Cumulative dose for the two MHA compartment readings against the PSAR figure.
-
-    The enclosure-cell release (Box B, pass-through pit) and the enclosure-cell-pit release (Box C
-    leaking at 1 %/day) bound how PSAR Eq 13.1-2 can be read, since Table 13.1-1 lists no pit rate.
-    """
+def plot_mha_dose(dose_prefix: str) -> str:
+    """Dose rate and cumulative dose of the MHA release at 100 m, in the units of PSAR Fig. 13.1-1."""
     import pandas as pd
     import matplotlib.pyplot as plt
 
-    curves = [(f'{out_prefix_other}_fgr11_boxB', 'Enclosure + cell leak (Box B)', 'tab:blue'),
-              (f'{out_prefix_pit}_fgr11_boxC', 'Enclosure + cell + pit leak (Box C)', 'tab:orange')]
-    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
-    for prefix, label, color in curves:
-        fname = _out_name(prefix, 'leaky_boxes_dose', '.csv')
-        if not os.path.isfile(fname):
-            return ''
-        df = pd.read_csv(fname)
-        ax.plot(df['time [d]'], df['dose [rem]'] * 1000.0, label=label, color=color, linewidth=1.8)
-    ax.axhline(reference_mrem, color='k', linestyle='--', linewidth=1.2,
-               label=f'PSAR MHA at 100 m, {reference_mrem} mrem')
-    ax.set_xlabel('time [days]')
-    ax.set_ylabel('cumulative dose [mrem]')
-    ax.set_title('PSAR MHA source term, 60 d, FGR-11, chi/Q = 1/115.6 s/m$^3$')
-    ax.grid(True, which='both', linestyle=':', alpha=0.5)
-    ax.legend()
+    df = pd.read_csv(_out_name(dose_prefix, 'leaky_boxes_dose', '.csv'))
+    fig, (ax_rate, ax_dose) = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
+    ax_rate.plot(df['time [d]'], df['dose_rate [Sv/s]'] * 1.0e5 * 3600.0, color='tab:blue', linewidth=1.8)
+    ax_rate.set_ylabel('dose rate [mrem/h]')
+    ax_rate.set_title('PSAR MHA methodology: systems-pit release, FGR-11/FGR-12, chi/Q = 1/115.6 s/m$^3$')
+    ax_dose.plot(df['time [d]'], df['dose [rem]'] * 1000.0, color='tab:blue', linewidth=1.8)
+    ax_dose.set_ylabel('cumulative dose [mrem]')
+    ax_dose.set_xlabel('time [days]')
+    for ax in (ax_rate, ax_dose):
+        ax.grid(True, which='both', linestyle=':', alpha=0.5)
     fig.tight_layout()
-    fname = _out_name(out_prefix_pit, 'leaky_boxes_dose_mha_bracket', '.png')
+    fname = _out_name(dose_prefix, 'leaky_boxes_dose_mha', '.png')
     fig.savefig(fname, dpi=200)
     plt.close(fig)
     return fname

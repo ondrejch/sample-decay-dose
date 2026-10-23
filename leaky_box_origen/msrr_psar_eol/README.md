@@ -96,12 +96,14 @@ python3 leaky_box_origen/msrr_psar_eol/run_psar_eol_leaky_box.py all mha    # PS
 ```
 
 The driver takes `[phase] [case]`: phase `sim | dose | report | all`, case `eol | mha`
-(default `all eol`). `mha` runs the PSAR §13.1.1 Maximum Hypothetical Accident instead: f71
-position 2 (one year), per-element barrier rates (Box A 0.05 %/day noble gases and 0.005 %/day the
-others, Te included; Box B 1 %/day for all), 60-day horizon, FGR-11 coefficients at the PSAR's
-constant χ/Q = 1/115.6 s/m³ (100 m, class F, 1 m/s) and the ICRP-23 0.958 m³/h breathing rate, and
-`report` prints the Box B horizon dose against the PSAR's 48.66 mrem with the per-nuclide
-attribution. Its artifacts use the prefix `f71_psar_mha_60d` in the same run directory.
+(default `all eol`). `mha` carries out the PSAR §13.1.1 Maximum Hypothetical Accident
+methodology instead: f71 position 2 (one year), the enclosure → cell → systems pit chain as Boxes
+A → B → C with per-element rates (Box A 0.05 %/day noble gases and 0.005 %/day the others, Te
+included; Boxes B and C 1 %/day for all), the pit leak as the release, 60-day horizon, FGR-11
+coefficients at the PSAR's constant χ/Q = 1/115.6 s/m³ (100 m, class F, 1 m/s) and the ICRP-23
+0.958 m³/h breathing rate. `report` prints the Box C horizon dose with the per-nuclide attribution
+and writes the dose-rate figure. Its artifacts use the prefix `f71_psar_mha_60d` in the same run
+directory.
 
 Artifacts land in `run_2026-10-22/` under prefix `f71_psar_eol_90d`.
 
@@ -120,38 +122,39 @@ volume would be ~4 cm³ and the dose wrong by ~5 orders of magnitude.
 the MHA rates of PSAR §13.1.1 (Table 13.1-1): enclosure 0.05 %/day
 (noble gases) / 0.005 %/day (other nuclides), cell 1 %/day (all gases). Box A
 (1 %/day) matches the cell rate; Box B (0.1 %/day) is 2× the enclosure
-noble-gas rate and 20× the non-noble rate. The `mha` and `mha_pit` cases below
-run the PSAR rates themselves, with Te added to the released set. MHA
+noble-gas rate and 20× the non-noble rate. The `mha` case below carries out
+the PSAR methodology itself, with Te added to the released set and the systems
+pit as a third compartment. MHA
 reference dose: 48.66 mrem at 100 m over 60 d (FGR-11,
 χ/Q = 1/115.6 s/m³). See `.kb/msrr-psar-eol-origen.md` for the full check.
 
 ### MHA result (2026-10-22)
 
-`mha` maps the PSAR §13.1.1 accident onto the boxes: Box A is the enclosure
-(Ar/Kr/Xe at 0.05 %/day, H/He/O/N/I/Br/**Te** at 0.005 %/day), Box B is the
-reactor cell (all of them at 1 %/day), the source term is f71 position 2 (one
-operating year), and the horizon is 60 days. The dose step uses FGR-11 only,
-χ/Q = 1/115.6 s/m³ as a constant, and the ICRP-23 breathing rate of
-0.958 m³/h.
+`mha` follows the compartment chain of PSAR §13.1.1: the reactor enclosure
+leaks into the reactor cell, the cell into the systems pit, and the pit into a
+research bay that has no holdup, so the pit leak reaches the atmosphere (PSAR
+Eq. 13.1-2, `Q_i = L_pit λ_i N_i^pit`). Box A is the enclosure (Ar/Kr/Xe at
+0.05 %/day, H/He/O/N/I/Br/**Te** at 0.005 %/day), Box B the cell and Box C the
+systems pit (all ten elements at 1 %/day each). The PSAR defines `L_pit`
+without a value; the driver takes 1 %/day from the §13.1.1 statement that the
+cell leaks at 1 %/day into the pit and from the pit into the research bay. The
+source term is f71 position 2 (one operating year) and the horizon is 60 days.
+The dose step uses FGR-11 inhalation and FGR-12 submersion, χ/Q = 1/115.6 s/m³
+as a constant, and the ICRP-23 breathing rate of 0.958 m³/h.
 
-PSAR Eq. 13.1-2 releases from the systems pit with a leak rate `L_pit`, and
-Table 13.1-1 lists no pit rate, so the driver runs both readings:
+60-day dose at 100 m from the systems-pit release: **14.96 mrem**, with FGR-11
+inhalation and FGR-12 air-submersion coefficients as in the PSAR. I-131 carries
+73.4 %, Te-129m 16.1 %, Te-127m 6.8 % and Te-132 2.4 %; submersion gives 1.5 % of
+the dose. The release fraction without a dose coefficient peaks at 3.3 %, under
+the 5 % default.
 
-| Pit-stage reading | Release term | 60-day dose | Ratio to 48.66 mrem |
-|---|---|---|---|
-| Pass-through pit (`mha`) | Box B leak | **142.64 mrem** | 2.93 |
-| Pit at 1 %/day (`mha_pit`) | Box C leak | **15.34 mrem** | 0.32 |
-
-Box B gives 142.64 mrem in both runs, which isolates the pit stage as the
-difference. The published figure sits between the readings, within 4 % of
-their geometric mean (46.82 mrem). I-131 carries 78.1 % of the Box B dose and
-71.0 % of the Box C dose; Te-129m, Te-132 and Te-127m carry most of the rest.
-Te-127m and Te-129m (20.8 mrem, 14.6 % of Box B) lie outside the mass chains
-the PSAR names, and our FGR-11 table is the maximum over lung-clearance
-classes, so both conventions push our values upward. FGR-11 leaves 7.4 % of
-the Box B release without a dose coefficient (xe-137, kr-89, xe-139, kr-90,
-xe-140, all half-lives < 10 min), so this case also runs warn-only. Full
-report: `.kb/psar-mha-reproduction-report.md`.
+The PSAR publishes 48.66 mrem for the same methodology from its own
+calculation: a MATLAB solution for mass chains 131-135, 137 and 85, 87-91 and
+a line of best fit to the dose rate integrated over 60 days. The model follows every ORIGEN
+nuclide (Te-127m and Te-129m give 23 % of its dose from outside those chains),
+takes the largest FGR-11 value over lung-clearance classes, and integrates the
+computed dose rate. No model parameter is tuned toward the published value.
+Full report: `.kb/psar-mha-reproduction-report.md`.
 
 ### Result (2026-10-22)
 
@@ -163,19 +166,19 @@ report: `.kb/psar-mha-reproduction-report.md`.
 | Box C (surrogate) | 7.1e-6 Sv | 8.5e-6 Sv |
 
 Inhalation dominates (>99.9 %). Box B exceeds Box C over a 90-day window
-because the surrogate only becomes conservative at longer times; the
-environmental release is the Box B leak.
+because the surrogate is about eps_B / lambda of the Box B release for I-131
+(0.9 % here); the environmental release is the Box B leak.
 
 Dominant contributors (ICRP-72, Box B, per-nuclide attribution):
 **I-131 = 98.4 %** (short-lived, from the in-operation EOL inventory), I-133
 1.4 %, Xe-133 0.1 %, the rest negligible. I-129, Kr-85, and the Xe immersions
 are small individually but set the long-time tail.
 
-**DCF coverage note.** ICRP-72 leaves 5.38 % of the release without an
-inhalation DCF (xe-137, kr-89, br-85, i-136, xe-139; all half-lives < 10 min),
-marginally above the 5 % fail-closed default, so the driver passes
-`max_missing_dcf_fraction=None` (warn-only). FGR-11 leaves 2.15 % (under the
-default). The short-lived missing nuclides' 90-day dose contribution is
+**DCF coverage note.** ICRP-72 and FGR-11 both leave 5.38 % of the Box B
+release without a dose coefficient (xe-137, kr-89, br-85, i-136, xe-139; all
+half-lives < 10 min), marginally above the 5 % fail-closed default, so the
+driver passes `max_missing_dcf_fraction=None` (warn-only). The Box C surrogate
+leaves 2.15 % uncovered. The short-lived missing nuclides' 90-day dose contribution is
 negligible.
 
 ## Caveats (state with any result)
