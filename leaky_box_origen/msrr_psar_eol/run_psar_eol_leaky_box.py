@@ -52,6 +52,7 @@ from leaky_box_origen.LeakyBox import (
     _inventory_to_release_rate,
     _removal_rate_from_run,
     _run_prefix_from_box_json,
+    _with_empty_start,
     _load_dcf_csv,
     _load_dcf_immersion_csv,
     _resolve_input_file,
@@ -161,7 +162,7 @@ def run_sim(case: dict[str, Any]) -> None:
     box_a.density = SALT_MASS_G / SALT_VOLUME_CM3
 
     with _in_directory(RUN_DIR):
-        pd_A, pd_B, pd_C, volume, _, _ = _run_simulation(
+        pd_A, pd_B, pd_C, volume = _run_simulation(
             box_a, apply_volume_scaling=False, do_skip_calcs=False, out_prefix=out_prefix,
             box_A_leak_rate=case['box_A_leak_rate'], box_B_leak_rate=case['box_B_leak_rate'],
             box_C_leak_rate=case['box_c_leak_rate'])
@@ -202,8 +203,8 @@ def dose_kwargs(case: dict[str, Any], tag: str, box: str) -> dict[str, Any]:
     if box == 'boxC':
         if case['box_c_rate_s'] is not None:
             # Box C has no removal of its own; the journal method uses the cell removal rate times
-            # the cumulative Box C inventory as a release-rate surrogate. For I-131 it is about
-            # removal rate / decay constant of the Box B release, so it is a screening number only.
+            # the cumulative Box C inventory as a release-rate surrogate. Integrated over the run it is
+            # removal rate / decay constant of the Box B release (1.16 % for I-131), a screening number only.
             kwargs['removal_rate_s'] = case['box_c_rate_s']
         # else: this run leaks Box C for real, so the dose step reads the run's own box-C rate.
     return kwargs
@@ -251,7 +252,7 @@ def run_report(case: dict[str, Any]) -> None:
         box_json = _out_name(out_prefix, box, '.json5')
         inh = _load_dcf_csv(_resolve_input_file(dcf_inhal_csv, LEAKY_BOX_DATA_DIR))
         imm = _load_dcf_immersion_csv(_resolve_input_file(dcf_imm_csv, LEAKY_BOX_DATA_DIR))
-        act = _activity_timeseries_per_nuclide_from_box_json(box_json, case_prefix)
+        act = _with_empty_start(_activity_timeseries_per_nuclide_from_box_json(box_json, case_prefix), case_prefix)
         leak_rate = _removal_rate_from_run(box_json, case_prefix,
                                           _run_prefix_from_box_json(box_json))  # the rate ORIGEN applied
         act = _inventory_to_release_rate(act, leak_rate, case['released_elements'])

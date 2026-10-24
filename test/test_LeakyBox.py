@@ -957,3 +957,46 @@ class TestRunSimulationRemovalRates(unittest.TestCase):
         self.assertEqual(removal['_box_C_run_0002'], {})
         self.assertEqual(recorded['box_A']['removal_rate_s'], {ele: PCTperDAY for ele in LEAKED_ELEMENTS})
         self.assertEqual(recorded['box_C']['removal_rate_s'], 0.0)
+
+    def test_psar_mha_driver_rates_release_te_from_every_box(self):
+        # The 14.96 mrem MHA configuration: enclosure noble gases at 0.05 %/d and the other liberated
+        # elements (Te included) at 0.005 %/d, cell and systems pit at 1 %/d for every released element.
+        from leaky_box_origen.LeakyBox import _run_removal_rates
+        from leaky_box_origen.msrr_psar_eol import run_psar_eol_leaky_box as drv
+        mha = drv.CASES['mha']
+        rates_A, rates_B, rates_C, released = _run_removal_rates(
+            mha['box_A_leak_rate'], mha['box_B_leak_rate'], mha['box_c_leak_rate'])
+        day = 86400.0
+        self.assertEqual(set(released), set(LEAKED_ELEMENTS) | {'te'})
+        for rates in (rates_A, rates_B, rates_C):
+            self.assertEqual(set(rates), set(released))
+        for ele in ('ar', 'kr', 'xe'):
+            self.assertAlmostEqual(rates_A[ele] * day, 0.05e-2)
+        for ele in ('h', 'he', 'o', 'n', 'i', 'br', 'te'):
+            self.assertAlmostEqual(rates_A[ele] * day, 0.005e-2)
+        for rates in (rates_B, rates_C):
+            self.assertEqual({round(r * day, 12) for r in rates.values()}, {1e-2})
+        self.assertIsNone(mha['box_c_rate_s'])  # the dose step reads the pit's own rate from the run
+
+
+class TestDoseIntegralStartsAtZero(unittest.TestCase):
+    """ Boxes B and C start empty, so the dose integral runs from t = 0 even though their json starts later """
+
+    def test_box_b_frame_gets_an_empty_start_row(self):
+        from leaky_box_origen.LeakyBox import _with_empty_start, compute_dose_timeseries
+        df = pd.DataFrame({'time [s]': [864.0, 1864.0], 'time [d]': [0.01, 1864.0 / 86400.0],
+                           'i-131': [2.0, 2.0]})
+        out = _with_empty_start(df, 'box_B')
+        self.assertEqual(list(out['time [s]']), [0.0, 864.0, 1864.0])
+        self.assertEqual(list(out['i-131']), [0.0, 2.0, 2.0])
+        # The release ramps from zero over the first interval: half of 864 s at the step-1 rate.
+        dose = compute_dose_timeseries(out, {'i-131': 1e-8}, 1e-3, 1.0, {}, max_missing_dcf_fraction=None)
+        self.assertAlmostEqual(dose['dose [Sv]'].iloc[1] / (1e-3 * 1e-8 * 2.0 * 432.0), 1.0)
+        self.assertAlmostEqual(dose['dose [Sv]'].iloc[2] / (1e-3 * 1e-8 * 2.0 * 1432.0), 1.0)
+
+    def test_box_a_and_zero_start_frames_pass_through(self):
+        from leaky_box_origen.LeakyBox import _with_empty_start
+        late = pd.DataFrame({'time [s]': [864.0], 'time [d]': [0.01], 'i-131': [2.0]})
+        self.assertIs(_with_empty_start(late, 'box_A'), late)
+        early = pd.DataFrame({'time [s]': [0.0, 864.0], 'time [d]': [0.0, 0.01], 'i-131': [0.0, 2.0]})
+        self.assertIs(_with_empty_start(early, 'box_C'), early)

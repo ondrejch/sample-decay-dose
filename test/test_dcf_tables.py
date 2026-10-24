@@ -3,8 +3,8 @@
 Anchor values are the published numbers read from the source pages:
   - FGR-11 (EPA-520/1-88-020): Table 2.1 h_E,50 [Sv/Bq] and Table 2.3 h_E,ext [Sv/hr per Bq/m^3]
     (OSTI copy 6294233.pdf, PDF pp. 131-162 and 191).
-  - ICRP-72 (Annals of the ICRP 26(1)): Table A.2 adult e(50) [Sv/Bq], Table A.3 HTO, and
-    Table A.4 immersion [Sv/day per Bq/m^3] (ANIB_26_1.pdf, printed pp. 44-89).
+  - ICRP-72 (Annals of the ICRP 26(1)): Table A.2 adult e(50) [Sv/Bq], Table A.3 HTO and elemental
+    iodine vapour, and Table A.4 immersion [Sv/day per Bq/m^3] (ANIB_26_1.pdf, printed pp. 44-89).
   - FGR-12 (EPA-402-R-93-081): Table III.1 air-submersion h_E [Sv per Bq s m^-3] (402-r-93-081.pdf).
 A bad extraction (exponent misread, row shift, wrong absorption type) moves an anchor by at least
 a factor of 1.5, so each anchor must match within that factor.
@@ -58,6 +58,9 @@ ANCHORS = {
     'dcf_icrp72_immersion_adult.csv': ('nuclide,dcf_sv_per_bq_m3_day', {
         'ar-41': 5.3e-9, 'kr-85': 2.2e-11, 'kr-87': 3.4e-9, 'xe-133': 1.2e-10, 'xe-138': 4.7e-9,
     }),
+    'dcf_icrp72_iodine_vapour_adult.csv': ('nuclide,dcf_sv_bq', {  # Table A.3 elemental iodine
+        'i-129': 9.6e-8, 'i-131': 2.0e-8, 'i-133': 4.0e-9, 'i-135': 9.2e-10,
+    }),
     'dcf_fgr12_submersion.csv': ('nuclide,dcf_sv_per_bq_m3_day', {
         'h-3': 3.31e-19 * S_TO_DAY,     # elemental
         'ar-41': 6.50e-14 * S_TO_DAY,
@@ -105,6 +108,18 @@ def test_anchor_values_within_factor_1p5(name):
         assert nuclide in table, f'{nuclide} missing from {name}'
         ratio = table[nuclide] / published
         assert 1 / 1.5 <= ratio <= 1.5, f'{name} {nuclide}: {table[nuclide]:.3g} vs published {published:.3g}'
+
+
+def test_iodine_vapour_exceeds_the_particulate_coefficient():
+    # Elemental iodine vapour deposits fully and is absorbed as fast as Type F, so its adult coefficient sits
+    # above the Type F particulate value of every isotope. Reading a neighbouring age column instead of the adult
+    # column breaks the I-131 ratio of 2.7.
+    vapour = _load('dcf_icrp72_iodine_vapour_adult.csv')
+    type_f = _load('dcf_icrp72_inhalation_adult.csv')
+    assert len(vapour) == 16
+    for nuclide, value in vapour.items():
+        assert value > type_f[nuclide], nuclide
+    assert vapour['i-131'] / type_f['i-131'] == pytest.approx(2.0e-8 / 7.4e-9)
 
 
 def test_icrp72_type_tables_are_ordered_per_nuclide():

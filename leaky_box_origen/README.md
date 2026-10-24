@@ -19,7 +19,12 @@ F71-based leakage simulations live.
   `tracked_activity_bq`). The tracked nuclide is F-18 by default (`--track-nuclide`),
   the fluorine activation product in fluoride salt. F-19 is stable.
 - `extract_fgr11_dcf.py` regenerates the two FGR-11 DCF CSVs in `data/`.
+- `extract_fgr12_dcf.py` regenerates the FGR-12 air-submersion CSV in `data/`.
 - `extract_icrp72_dcf.py` regenerates the four ICRP-72 DCF CSVs in `data/`.
+- `msrr_psar_eol/run_psar_eol_leaky_box.py` runs the MSRR PSAR cases of the journal paper
+  (90-day EOL leak and the PSAR Section 13.1.1 MHA); see `msrr_psar_eol/README.md`.
+- `paper/` regenerates the numbers and figures the journal paper quotes from those runs;
+  see `paper/README.md`.
 
 **Outputs**
 - Runs write all artifacts under `leaky_box_origen/run_YYYY-MM-DD/`.
@@ -34,7 +39,9 @@ F71-based leakage simulations live.
 - Leaked elements: boxes A and B remove H, He, O, N, I, Br, Ar, Kr and Xe
   (`LEAKED_ELEMENTS`, one ORIGEN `removal` entry per element). All other elements,
   including decay daughters such as Rb, Sr, Cs and Ba, stay in the box. Box C has no
-  removal; it collects what box B releases.
+  removal by default; it collects what box B releases. `_run_simulation` also takes one
+  `{element: rate}` mapping per box and a positive `box_C_leak_rate`, which makes box C a
+  third leaking compartment (the PSAR MHA chain).
   `compute_dose_from_box` converts inventories to release rates for those elements
   only (`released_elements` overrides the list).
 - Environmental release: the release to the environment is the leak out of box B,
@@ -44,15 +51,19 @@ F71-based leakage simulations live.
   unless `removal_rate_s` is given. Box C has no removal, so its inventory is the
   cumulative release. The journal method uses `eps * A_C(t)` as a release-rate
   surrogate; box C with `inventory_bq` therefore needs an explicit
-  `removal_rate_s` and warns that the result is a surrogate. For a nuclide with
-  decay constant `lambda >> eps` the surrogate is about `eps / lambda` of the
-  box-B release (about 1 % for I-131 at 0.1 %/day), so it is a screening number.
+  `removal_rate_s` and warns that the result is a surrogate. Integrating
+  `dA_C/dt = eps * A_B - lambda * A_C` over a run long enough for box C to decay gives
+  `int A_C dt = (eps / lambda) int A_B dt`, so the time-integrated surrogate is
+  `eps / lambda` of the box-B release (1.16 % for I-131 at 0.1 %/day), and less under a
+  chi/Q schedule that weights early times. It is a screening number.
 - Dose defaults (journal method): chi/Q from `chi_q_schedule_rg145_400m()`
   (RG 1.145, 400 m), breathing rate `BREATHING_RATE_M3_S` (22.2 m^3/d), ICRP-72 maximum
   inhalation DCF across types F/M/S, and the ICRP-72 immersion table for the noble
   gases. The cumulative dose splits every ORIGEN interval at the chi/Q schedule
   boundaries (2 h, 8 h, 24 h, 4 d, 30 d), so the early windows are integrated with
-  their own chi/Q also when they fall between two ORIGEN time points.
+  their own chi/Q also when they fall between two ORIGEN time points. Boxes B and C
+  start empty, so the dose step adds a zero-release row at t = 0 ahead of their first
+  stored step.
 - Normalization: boxes B and C are 1 cm^3 volumes fed by the leak from 1 cm^3 of box A
   (default `apply_volume_scaling=False`). Their inventories, activities and the doses
   computed from them are therefore per cm^3 of box A. Pass
@@ -78,6 +89,7 @@ F71-based leakage simulations live.
 | `dcf_icrp72_inhalation_adult_max.csv` | ICRP-72 Table A.2, adult | e(50) [Sv/Bq] | largest value over the listed types (F/M/S) | 738 |
 | `dcf_icrp72_immersion_adult.csv` | ICRP-72 Table A.4 | effective dose rate [Sv/day per Bq/m^3] | tabulated value | 26 |
 | `dcf_fgr12_submersion.csv` | FGR-12 Table III.1 | h_E [Sv/day per Bq/m^3] (`dcf_sv_per_bq_m3_day`) | tabulated value x 86400 (FGR-12 prints Sv per Bq s m^-3); rows with h_E = 0 left out | 806 |
+| `dcf_icrp72_iodine_vapour_adult.csv` | ICRP-72 Table A.3, adult | e(50) [Sv/Bq] | elemental iodine vapour (I-120 to I-135), read by eye from printed pp. 86-87 | 16 |
 
 - Sources: EPA Federal Guidance Report No. 11, EPA-520/1-88-020 (1988), EPA Federal
   Guidance Report No. 12, EPA-402-R-93-081 (1993), and ICRP Publication 72, Annals of
@@ -87,6 +99,10 @@ F71-based leakage simulations live.
   Kr-89, Kr-90, Xe-137, Xe-139 and Xe-140 are not tabulated. Its H-3 row is elemental
   tritium. ICRP-38 isomer labels (Nb-89a/b, Sb-124n, Ir-190n, ...) are mapped by half-life
   to the ground, `m` and `m2` names used by ORIGEN.
+- The maximum over types F/M/S bounds the particulate forms. Gases and vapours are in
+  ICRP-72 Table A.3: elemental iodine vapour is 2.0e-8 Sv/Bq for I-131, 2.7 times the
+  Type F value, and methyl iodide 1.5e-8 Sv/Bq. The iodine-vapour table serves the
+  chemical-form sensitivity of the paper (`ICRP72_IODINE_VAPOUR_CSV`).
 - FGR-11 values are for workers (ICRP-30 lung model). ICRP-72 values are for adult
   members of the public (ICRP-66 lung model). Mercury in ICRP-72 lists organic and
   inorganic forms; the larger value of each type is kept.

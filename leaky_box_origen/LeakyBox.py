@@ -46,13 +46,17 @@ LEAKED_ELEMENTS: tuple[str, ...] = ('h', 'he', 'o', 'n', 'i', 'br', 'ar', 'kr', 
 # Fail-closed default: raise when more than 5% of the release rate has no DCF.
 # Pass max_missing_dcf_fraction=None to warn instead of raising.
 DEFAULT_MAX_MISSING_DCF_FRACTION: float = 0.05
-# Conservative ICRP-72 inhalation table for paper runs: maximum adult DCF across
-# types F/M/S per nuclide (journal method). The Type-F table
-# (dcf_icrp72_inhalation_adult.csv) is lower for insoluble forms.
+# ICRP-72 inhalation table for paper runs: maximum adult DCF across types F/M/S per nuclide
+# (journal method), the upper bound over particulate forms. The Type-F table
+# (dcf_icrp72_inhalation_adult.csv) is lower for insoluble forms. Gases and vapours (Table A.3) sit
+# outside it: elemental iodine vapour is 2.7 times the Type F value for I-131.
 DEFAULT_ICRP72_INHALATION_CSV: str = 'dcf_icrp72_inhalation_adult_max.csv'
+# ICRP-72 Table A.3 adult coefficients for elemental iodine vapour (I-120 to I-135), the iodine-vapour sensitivity.
+ICRP72_IODINE_VAPOUR_CSV: str = 'dcf_icrp72_iodine_vapour_adult.csv'
 # ICRP-72 adult immersion (cloudshine) table, the default for the noble-gas dose.
 DEFAULT_ICRP72_IMMERSION_CSV: str = 'dcf_icrp72_immersion_adult.csv'
-# Adult breathing rate of the journal method: 22.2 m^3/d (ICRP-66 daily average) in m^3/s.
+# Adult breathing rate of the journal method: 22.2 m^3/d (ICRP-66 adult male daily average, the ICRP-89
+# reference value) in m^3/s.
 BREATHING_RATE_M3_S: float = 22.2 / 86400.0
 
 
@@ -1135,6 +1139,16 @@ def compute_dose_timeseries(activity_df: pd.DataFrame, dcf_inhal_map: dict[str, 
     return out
 
 
+def _with_empty_start(activity_df: pd.DataFrame, case_prefix: str) -> pd.DataFrame:
+    # Boxes B and C start empty at t = 0 and their json holds end-of-step states only, so a zero row at t = 0
+    # closes the first interval of the dose integral. Box A, and frames that already start at t = 0, pass through.
+    if (not case_prefix.lower().startswith(('box_b', 'box_c')) or activity_df.empty
+            or float(activity_df['time [s]'].min()) <= 0.0):
+        return activity_df
+    start = pd.DataFrame([{c: 0.0 for c in activity_df.columns}])
+    return pd.concat([start, activity_df], ignore_index=True)
+
+
 def _element_of(nuclide: str) -> str:
     # 'kr-85m' -> 'kr'
     return re.sub('-.*', '', str(nuclide)).strip().lower()
@@ -1326,10 +1340,11 @@ def compute_dose_from_box(box_json_path: str, case_prefix: str,
     environmental dose comes from case_prefix='box_B' with the default 'inventory_bq'. Box C collects that
     release and, in the journal method, has no removal, so its inventory is a cumulative amount. The journal
     method uses removal_rate_s * A_C(t) as a release-rate surrogate; box C with 'inventory_bq' then needs an
-    explicit removal_rate_s and warns that the result is a surrogate. The surrogate is about removal_rate_s / lambda
-    of the box-B release for a nuclide with decay constant lambda >> removal_rate_s (about 1 % for I-131 at
-    0.1 %/day), so it is far below the physical release for the nuclides that dominate the dose. A run that gives box C a
-    positive removal rate of its own (a leaking third compartment, see `_run_simulation`) releases
+    explicit removal_rate_s and warns that the result is a surrogate. Integrating dA_C/dt = eps_B A_B - lambda A_C
+    over a run long enough for A_C to decay gives int A_C dt = (eps_B / lambda) int A_B dt, so the time-integrated
+    surrogate is eps_B / lambda of the box-B release (1.16 % for I-131 at 0.1 %/day), and a chi/Q schedule that
+    weights early times lowers the dose ratio further. The instantaneous ratio A_C / A_B grows with time. A run that
+    gives box C a positive removal rate of its own (a leaking third compartment, see `_run_simulation`) releases
     ε_C * A_C(t) physically, and that case_prefix carries no surrogate warning.
 
     Args:
@@ -1364,8 +1379,8 @@ def compute_dose_from_box(box_json_path: str, case_prefix: str,
     if activity_representation == 'inventory_bq' and case_prefix.lower().startswith('box_c'):
         if not _run_box_leaks(box_json_path, case_prefix, run_prefix or _run_prefix_from_box_json(box_json_path)):
             warnings.warn("Box C has no removal, so removal_rate_s * A_C(t) is a release-rate surrogate (journal "
-                          "method). For a nuclide with decay constant lambda >> removal_rate_s it is about "
-                          "removal_rate_s / lambda of the physical release. The environmental release is the box-B "
+                          "method). Integrated over the run it is removal_rate_s / lambda of the physical release "
+                          "for a nuclide with decay constant lambda. The environmental release is the box-B "
                           "leak: case_prefix='box_B'.", stacklevel=2)
     if activity_representation == 'inventory_bq' and removal_rate_s is None:
         removal_rate_s = _removal_rate_from_run(box_json_path, case_prefix,
@@ -1375,8 +1390,9 @@ def compute_dose_from_box(box_json_path: str, case_prefix: str,
     with _in_directory(os.path.dirname(os.path.abspath(box_json_path))):
         dcf_inhal = _load_dcf_csv(dcf_inhal_csv)
         dcf_imm = _load_dcf_immersion_csv(dcf_immersion_csv) if dcf_immersion_csv else {}
-        activity_df = _activity_timeseries_per_nuclide_from_box_json(box_json_path, case_prefix,
-                                                                     run_prefix=run_prefix)
+        activity_df = _with_empty_start(
+            _activity_timeseries_per_nuclide_from_box_json(box_json_path, case_prefix, run_prefix=run_prefix),
+            case_prefix)
         if activity_representation == 'inventory_bq':
             activity_df = _inventory_to_release_rate(activity_df, removal_rate_s, released_elements)
         elif activity_representation != 'release_rate_bq_s':
@@ -1456,7 +1472,7 @@ def _run_simulation(box_a: DecayBoxA, apply_volume_scaling: bool, do_skip_calcs:
                     box_A_leak_rate: float | dict[str, float] = PCTperDAY,
                     box_B_leak_rate: float | dict[str, float] = PCTperDAY * 0.1,
                     box_C_leak_rate: float | dict[str, float] = 0.0
-                    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, float, float, float]:
+                    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, float]:
     # Core leaky-box simulation (A->B->C) shared by tests and F71 runs. A leak rate is either one
     # removal constant for every released element or an {element: rate} mapping (PSAR MHA style);
     # _run_removal_rates resolves both to the per-element rates ORIGEN applies.
@@ -1577,7 +1593,7 @@ def _run_simulation(box_a: DecayBoxA, apply_volume_scaling: bool, do_skip_calcs:
     pd_B: pd.DataFrame = get_dataframe(box_B_adens)
     pd_C: pd.DataFrame = get_dataframe(box_C_adens)
 
-    return pd_A, pd_B, pd_C, volume, box_A_leak_rate, box_B_leak_rate
+    return pd_A, pd_B, pd_C, volume
 
 
 def run_test(isotope: str, lambda_decay: float | None, apply_volume_scaling: bool,
@@ -1596,8 +1612,11 @@ def run_test(isotope: str, lambda_decay: float | None, apply_volume_scaling: boo
             f71_path, f71_case, f71_time_seconds, sample_mass_g, do_skip_calcs, decay_days, steps_per_day
         )
         origen_triton_box_A.atom_dens = {isotope: 1.0}
-        pd_A, pd_B, pd_C, volume, box_A_leak_rate, box_B_leak_rate = _run_simulation(
-            origen_triton_box_A, apply_volume_scaling, do_skip_calcs, out_prefix
+        # The analytic solution takes one rate per box, so the test runs the scalar journal rates.
+        box_A_leak_rate, box_B_leak_rate = PCTperDAY, PCTperDAY * 0.1
+        pd_A, pd_B, pd_C, volume = _run_simulation(
+            origen_triton_box_A, apply_volume_scaling, do_skip_calcs, out_prefix,
+            box_A_leak_rate=box_A_leak_rate, box_B_leak_rate=box_B_leak_rate
         )
 
         pd_B['total'] = pd_B[isotope] * volume
@@ -1628,7 +1647,7 @@ def run_from_f71(apply_volume_scaling: bool, do_skip_calcs: bool, out_prefix: st
         origen_triton_box_A = _setup_box_a(
             f71_path, f71_case, f71_time_seconds, sample_mass_g, do_skip_calcs, decay_days, steps_per_day
         )
-        pd_A, pd_B, pd_C, volume, _, _ = _run_simulation(
+        pd_A, pd_B, pd_C, volume = _run_simulation(
             origen_triton_box_A, apply_volume_scaling, do_skip_calcs, out_prefix
         )
 

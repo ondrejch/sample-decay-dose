@@ -2,7 +2,7 @@
 
 ORIGEN-AR burn that computes the end-of-life fuel isotopics for the MSRR
 (1 MWth molten-salt research reactor) from the bounding assumptions in the
-MSRR Plant Specific Application Report, Rev 0. This is the source-term input
+MSRR Preliminary Safety Analysis Report (PSAR), Rev 0. This is the source-term input
 (Box A inventory) for the MSRR PSAR test case of the leaky-box paper.
 
 Full distilled notes (inputs, derivation, caveats, integration): `.kb/msrr-psar-eol-origen.md`.
@@ -100,10 +100,11 @@ The driver takes `[phase] [case]`: phase `sim | dose | report | all`, case `eol 
 methodology instead: f71 position 2 (one year), the enclosure → cell → systems pit chain as Boxes
 A → B → C with per-element rates (Box A 0.05 %/day noble gases and 0.005 %/day the others, Te
 included; Boxes B and C 1 %/day for all), the pit leak as the release, 60-day horizon, FGR-11
-coefficients at the PSAR's constant χ/Q = 1/115.6 s/m³ (100 m, class F, 1 m/s) and the ICRP-23
-0.958 m³/h breathing rate. `report` prints the Box C horizon dose with the per-nuclide attribution
-and writes the dose-rate figure. Its artifacts use the prefix `f71_psar_mha_60d` in the same run
-directory.
+inhalation and FGR-12 air-submersion coefficients at the PSAR's constant χ/Q = 1/115.6 s/m³
+(100 m, class F, 1 m/s) and the ICRP-23 0.958 m³/h breathing rate. `report` prints the Box C
+horizon dose with the per-nuclide attribution and writes the dose-rate figure. Its artifacts use
+the prefix `f71_psar_mha_60d` in the same run directory. The numbers the paper quotes from these
+runs come from `leaky_box_origen/paper/psar_numbers.py`.
 
 Artifacts land in `run_2026-10-22/` under prefix `f71_psar_eol_90d`.
 
@@ -158,16 +159,17 @@ Full report: `.kb/psar-mha-reproduction-report.md`.
 
 ### Result (2026-10-22)
 
-90-day cumulative dose to a worker (RG 1.145, 400 m, 22.2 m³/d):
+90-day cumulative dose at 400 m (RG 1.145, 22.2 m³/d), with the ICRP-72 public and FGR-11 worker coefficients:
 
 | Box / basis | ICRP-72 (max F/M/S) | FGR-11 (worker) |
 |---|---|---|
 | Box B (physical release) | **8.1e-4 Sv (0.81 mSv)** | **9.7e-4 Sv (0.97 mSv)** |
 | Box C (surrogate) | 7.1e-6 Sv | 8.5e-6 Sv |
 
-Inhalation dominates (>99.9 %). Box B exceeds Box C over a 90-day window
-because the surrogate is about eps_B / lambda of the Box B release for I-131
-(0.9 % here); the environmental release is the Box B leak.
+Inhalation dominates (>99.9 %). The surrogate integrates to eps_B / lambda of the
+Box B release (1.16 % for I-131) under a constant chi/Q; the RG 1.145 schedule
+weights the first days, when Box C has filled less, which gives 0.87 % here. The
+environmental release is the Box B leak.
 
 Dominant contributors (ICRP-72, Box B, per-nuclide attribution):
 **I-131 = 98.4 %** (short-lived, from the in-operation EOL inventory), I-133

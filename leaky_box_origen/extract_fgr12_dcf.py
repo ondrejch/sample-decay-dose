@@ -66,7 +66,7 @@ ISOMER_NAMES: dict[str, str] = {
 
 _VALUE = r'(?:0\.0|\d\.\d\dE[+-]\d\d)'
 # Nuclide label followed by the 9 columns Gonad .. Remainder, Effective, Skin.
-_ROW_RE = re.compile(rf'^\s*(\S+)' + rf'\s+({_VALUE})' * 9 + r'\s*$')
+_ROW_RE = re.compile(r'^\s*(\S+)' + rf'\s+({_VALUE})' * 9 + r'\s*$')
 # Table A.1 row: label, then the half-life ('12.35y', '122m', '115E3y'), which can run into the decay mode
 # ('35msA', '164.3µsA').
 _A1_RE = re.compile(r'^\s*([A-Z][a-z]?-\d+[a-z]?)\s+[\d.]+(?:E\d+)?(?:us|µs|ms|s|m|h|d|y)(?=\s|[A-Z])')
